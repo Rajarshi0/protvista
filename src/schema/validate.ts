@@ -485,6 +485,15 @@ function checkRows(
   // group — it must carry its own rendering path).
   for (const entry of c.rows) {
     if (!isGroupConfig(entry)) {
+      // A standalone row has no collapsed view, so `detailOnly` is inert.
+      if (entry.detailOnly) {
+        issues.push({
+          path: entry.id,
+          severity: 'warning',
+          message: `Track ${entry.id}: detailOnly has no effect on a standalone track (there is no group aggregate).`,
+          code: 'detail-only-standalone',
+        });
+      }
       checkTrack(undefined, entry, sourceKeys, sources, registry, issues);
       continue;
     }
@@ -494,6 +503,17 @@ function checkRows(
         path: `${group.id}`,
         message: `Unknown component: '${group.component}' on group ${group.id}. Valid components: ${knownComponentList(registry)}. Register custom components with registerComponent().`,
         code: 'unknown-component',
+      });
+    }
+    // With no track feeding it, the collapsed view has nothing to draw —
+    // whatever `component:` says. A warning, not an error: the runtime
+    // falls back to the canvas component and an empty collapsed view.
+    if (group.tracks.length > 0 && group.tracks.every((t) => t.detailOnly)) {
+      issues.push({
+        path: group.id,
+        severity: 'warning',
+        message: `Group ${group.id}: every track is marked detailOnly, so the collapsed aggregate has nothing to draw. Un-mark at least one track.`,
+        code: 'all-tracks-detail-only',
       });
     }
     for (const track of group.tracks) {

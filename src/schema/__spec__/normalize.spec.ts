@@ -26,14 +26,20 @@
  *     error downstream).
  */
 
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
+  aggregateTracks,
   normalizeConfig,
   titleCaseId,
   type NormalizedConfig,
 } from '../normalize.js';
+import { loadConfig } from '../load.js';
 import { createRegistry } from '../registry.js';
 import type {
+  GroupConfig,
   ProtvistaViewerConfig,
   TopLevelEntry,
   TrackConfig,
@@ -1047,6 +1053,147 @@ describe('normalizeConfig — group component inference', () => {
       })
     );
     expect(out.rows[0].component).toBe('nightingale-track-canvas');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// detailOnly — tracks that don't feed the collapsed aggregate
+// ─────────────────────────────────────────────────────────────
+
+describe('aggregateTracks', () => {
+  type Item = { id: string; detailOnly?: boolean };
+
+  it('keeps the tracks that are not detailOnly, in order', () => {
+    const a: Item = { id: 'a' };
+    const b: Item = { id: 'b', detailOnly: true };
+    const c: Item = { id: 'c', detailOnly: false };
+    const d: Item = { id: 'd' };
+    expect(aggregateTracks([a, b, c, d])).toEqual([a, c, d]);
+  });
+
+  it('returns an empty list when every track is detailOnly', () => {
+    expect(aggregateTracks([{ id: 'a', detailOnly: true }])).toEqual([]);
+  });
+});
+
+describe('normalizeConfig — detailOnly', () => {
+  const groupComponent = (
+    tracks: TrackConfig[],
+    component?: GroupConfig['component']
+  ) =>
+    normalizeConfig(
+      cfg({
+        sources: { features: 'https://x' },
+        rows: [{ id: 'G', ...(component ? { component } : {}), tracks }],
+      }),
+      { registry: createRegistry() }
+    ).rows[0].component;
+
+  it('infers the shared component when every track has the same kind', () => {
+    expect(
+      groupComponent([
+        track({ id: 'a', kind: 'linegraph' }),
+        track({ id: 'b', kind: 'linegraph' }),
+      ])
+    ).toBe('nightingale-linegraph-track');
+  });
+
+  it('falls back to the canvas track when the kinds are mixed', () => {
+    expect(
+      groupComponent([
+        track({ id: 'a', kind: 'variant-counts' }),
+        track({ id: 'b', kind: 'variants' }),
+      ])
+    ).toBe('nightingale-track-canvas');
+  });
+
+  it('ignores a detailOnly track when inferring the component', () => {
+    expect(
+      groupComponent([
+        track({ id: 'a', kind: 'variant-counts' }),
+        track({ id: 'b', kind: 'variants', detailOnly: true }),
+      ])
+    ).toBe('nightingale-linegraph-track');
+  });
+
+  it('ignores a detailOnly track even when it comes first', () => {
+    expect(
+      groupComponent([
+        track({ id: 'a', kind: 'alphamissense-heatmap', detailOnly: true }),
+        track({ id: 'b', kind: 'alphamissense-pathogenicity' }),
+      ])
+    ).toBe('nightingale-colored-sequence');
+  });
+
+  it('falls back to the canvas track when every track is detailOnly', () => {
+    expect(
+      groupComponent([
+        track({ id: 'a', kind: 'linegraph', detailOnly: true }),
+        track({ id: 'b', kind: 'linegraph', detailOnly: true }),
+      ])
+    ).toBe('nightingale-track-canvas');
+  });
+
+  it('lets an explicit group component win over inference', () => {
+    expect(
+      groupComponent(
+        [
+          track({ id: 'a', kind: 'variant-counts' }),
+          track({ id: 'b', kind: 'variants', detailOnly: true }),
+        ],
+        'nightingale-track-canvas'
+      )
+    ).toBe('nightingale-track-canvas');
+  });
+
+  it('carries detailOnly onto the normalized track, and omits it when unset', () => {
+    const out = normalizeConfig(
+      cfg({
+        sources: { features: 'https://x' },
+        rows: [
+          {
+            id: 'G',
+            tracks: [
+              track({ id: 'a', kind: 'linegraph' }),
+              track({ id: 'b', kind: 'linegraph', detailOnly: true }),
+            ],
+          },
+        ],
+      }),
+      { registry: createRegistry() }
+    );
+    expect(out.rows[0].tracks[0]).not.toHaveProperty('detailOnly');
+    expect(out.rows[0].tracks[1].detailOnly).toBe(true);
+  });
+});
+
+describe('default-config.yaml — groups that pair a summary with a detail track', () => {
+  const loadDefault = async () =>
+    loadConfig(
+      await readFile(
+        resolve(
+          dirname(fileURLToPath(import.meta.url)),
+          '../../default-config.yaml'
+        ),
+        'utf8'
+      ),
+      { registry: createRegistry(), accession: 'P05067' }
+    );
+
+  it.each([
+    ['VARIATION', 'nightingale-linegraph-track'],
+    ['RNA_EDITING', 'nightingale-linegraph-track'],
+    ['ALPHAMISSENSE_PATHOGENICITY', 'nightingale-colored-sequence'],
+  ])('%s resolves its collapsed view to %s', async (id, component) => {
+    const config = await loadDefault();
+    const row = config.rows.find((r) => r.id === id);
+    expect(row?.component).toBe(component);
+  });
+
+  it('keeps the AlphaMissense group colour ramp', async () => {
+    const config = await loadDefault();
+    const row = config.rows.find((r) => r.id === 'ALPHAMISSENSE_PATHOGENICITY');
+    expect(row?.rendering.colorScale).toEqual({ theme: 'alphamissense-ramp' });
   });
 });
 

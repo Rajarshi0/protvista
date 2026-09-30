@@ -468,6 +468,18 @@ export interface TrackConfig {
    */
   hidden?: boolean;
 
+  /**
+   * Keep this track out of its group's collapsed (aggregate) view: it is
+   * ignored when the group's component is inferred and when the collapsed
+   * view's data is chosen. Use it on the detail half of a summary + detail
+   * pair (e.g. a variants track alongside its counts graph).
+   *
+   * It does not change the track's own visibility, filter UI or rendering
+   * when the group is expanded. It has no effect on a standalone track,
+   * which has no aggregate. Defaults to `false`.
+   */
+  detailOnly?: boolean;
+
   /** Track-level rendering overrides; merged on top of group defaults. */
   rendering?: RenderingOptions;
 }

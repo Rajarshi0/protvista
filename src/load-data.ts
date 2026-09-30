@@ -18,8 +18,9 @@
  *      looks up in the registry) and run it, apply the single-type filter
  *      if the track has one, and assign the result to
  *      `data[`${group}-${track}`]`.
- *   4. Assign a group-level aggregate at `data[group]` — which is
- *      `.flat()` for most components, or `groupData[0]` for
+ *   4. Assign a group-level aggregate at `data[group]`, built from the
+ *      tracks that are not `detailOnly` (`aggregateTracks`) — which is
+ *      their `.flat()` for most components, or the first one's data for
  *      linegraph / colored-sequence groups.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM. Tracks that
@@ -32,6 +33,7 @@
  */
 
 import {
+  aggregateTracks,
   isAuthoredSource,
   type NormalizedConfig,
   type NormalizedTrack,
@@ -612,20 +614,29 @@ export async function loadProtvistaData(
       })
     );
 
+    // `groupData` follows `group.tracks` order, so look each feeding
+    // track's payload up by track rather than by position — a `detailOnly`
+    // track may sit anywhere in the group (and a user can reorder it).
+    const dataByTrack = new Map(
+      group.tracks.map((track, i) => [track, groupData[i]])
+    );
+    const aggregateData = aggregateTracks(group.tracks).map((track) =>
+      dataByTrack.get(track)
+    );
     data[groupId] =
       group.component === 'nightingale-linegraph-track' ||
       group.component === 'nightingale-colored-sequence'
-        ? // Graph groups render only their first track, so a failed
-          // first track legitimately leaves the aggregate `undefined`
+        ? // Graph groups render only their first feeding track, so a
+          // failed one legitimately leaves the aggregate `undefined`
           // (the component reads that as "no data" and shows the error
           // row). Keep it as-is.
-          groupData[0]
+          aggregateData[0]
         : // Flattened multi-track aggregate: drop the `undefined` slots a
           // failed (or empty) track leaves behind. Without this the array
           // is truthy-but-holey — the holes reach Nightingale's `.data`
           // setter, and an all-failed group reads as "has data" instead of
           // routing to the error row.
-          groupData.flat().filter((entry) => entry != null);
+          aggregateData.flat().filter((entry) => entry != null);
   }
 
   return { rawData, data, hasData, trackUrls };

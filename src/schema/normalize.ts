@@ -165,6 +165,11 @@ export interface NormalizedTrack {
    * `NormalizedRow.hidden`.
    */
   hidden?: boolean;
+  /**
+   * When `true`, this track does not feed its group's collapsed view — see
+   * `aggregateTracks`.
+   */
+  detailOnly?: boolean;
   /** Resolved cascade: defaults → group → kind preset → track. */
   rendering: RenderingOptions;
 }
@@ -290,6 +295,19 @@ export function normalizeConfig(
 // Group
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * The tracks that feed a group's collapsed (aggregate) view: every track
+ * not marked `detailOnly`, in order. The single source of truth for
+ * component inference, the loader's aggregate payload, the renderer's
+ * aggregate rebuild and series-label detection, so they cannot drift apart.
+ * Empty when every track is `detailOnly`.
+ */
+export function aggregateTracks<T extends { detailOnly?: boolean }>(
+  tracks: readonly T[]
+): T[] {
+  return tracks.filter((t) => !t.detailOnly);
+}
+
 function normalizeGroup(
   c: GroupConfig,
   defaults: NormalizedDefaults,
@@ -313,14 +331,16 @@ function normalizeGroup(
   );
 
   // Group component inference. Explicit wins; otherwise look at
-  // the child tracks' resolved components — if they all agree, use
-  // that; if they diverge, fall back to the generic canvas track
-  // (which can render mixed content).
+  // the resolved components of the tracks that feed the collapsed view
+  // (`detailOnly` tracks don't) — if they all agree, use that; if they
+  // diverge, fall back to the generic canvas track (which can render
+  // mixed content).
+  const feeding = aggregateTracks(tracks);
   let component: ComponentName;
   if (c.component) {
     component = c.component;
-  } else if (tracks.length > 0) {
-    const childComponents = new Set(tracks.map((t) => t.component));
+  } else if (feeding.length > 0) {
+    const childComponents = new Set(feeding.map((t) => t.component));
     if (childComponents.size === 1) {
       // Iterator#next is the only way to pull the single value out
       // without casting through an array.
@@ -329,8 +349,9 @@ function normalizeGroup(
       component = 'nightingale-track-canvas';
     }
   } else {
-    // Zero-track group — pick a sensible default so nothing
-    // downstream blows up if the group ends up rendered anyway.
+    // Zero-track group, or every track is `detailOnly` — pick a
+    // sensible default so nothing downstream blows up if the group ends
+    // up rendered anyway.
     component = 'nightingale-track-canvas';
   }
 
@@ -456,6 +477,7 @@ function normalizeTrack(
     ...(t.filter !== undefined ? { filter: t.filter } : {}),
     ...(t.filterUI !== undefined ? { filterUI: t.filterUI } : {}),
     ...(t.hidden !== undefined ? { hidden: t.hidden } : {}),
+    ...(t.detailOnly !== undefined ? { detailOnly: t.detailOnly } : {}),
     rendering,
   };
 }

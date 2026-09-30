@@ -155,6 +155,10 @@
           "type": "boolean",
           "description": "Ship this track hidden. The track is absent from the render but is listed as a stub in customize mode so a user can reveal it. This is the same field the show/hide control writes, so an author's choice and a user's are the same state and getConfig() exports whichever is current. Defaults to false."
         },
+        "detailOnly": {
+          "type": "boolean",
+          "description": "Keep this track out of its group's collapsed (aggregate) view: it is ignored when the group's component is inferred and when the collapsed view's data is chosen. Use it on the detail half of a summary + detail pair. It does not change the track's own visibility, filter UI or expanded rendering, and has no effect on a standalone track. Defaults to false."
+        },
         "rendering": { "$ref": "#/$defs/RenderingOptions" }
       }
     },

@@ -212,10 +212,11 @@ interface GroupConfig {
 
   /**
    * Component used for the *collapsed / aggregate* group-level
-   * track. Optional — if omitted, inferred from the child tracks'
-   * `kind`s. When all child tracks resolve to the same component,
-   * that component is used; mixed components fall back to
-   * `nightingale-track-canvas`.
+   * track. Optional — if omitted, inferred from the `kind`s of the
+   * child tracks that feed the collapsed view (every track not marked
+   * `detailOnly`). When those tracks resolve to the same component,
+   * that component is used; mixed components — or no feeding tracks
+   * at all — fall back to `nightingale-track-canvas`.
    */
   component?: ComponentName;
 
@@ -381,6 +382,14 @@ interface TrackConfig {
    * variant filter). This is a UI concern, not a data concern.
    */
   filterUI?: 'nightingale-filter';
+
+  /**
+   * Keep this track out of its group's collapsed (aggregate) view: it
+   * is ignored when the group's component is inferred and when the
+   * collapsed view's data is chosen. See _Detail-only tracks_ below.
+   * Defaults to `false`.
+   */
+  detailOnly?: boolean;
 
   /** Track-level rendering overrides; merged on top of group defaults. */
   rendering?: RenderingOptions;
@@ -691,6 +700,33 @@ Field names follow the sequence vocabulary (`position`, `begin`, `end`, `score`)
 `linegraph` is the one kind that is bring-your-own-data by nature rather than by extension — it has no provider feed at all, which is why it keeps a bare adapter name (`adapter: linegraph`) alongside `kind: linegraph`; kinds and adapters are separate registries. The `variation` adapter family is likewise distinct from `uniprot-variation-json`, which feeds the same component but applies UniProt-specific transforms.
 
 A variation payload is the one shape the viewer completes: `nightingale-variation-canvas` needs the protein `sequence` to lay out its residue rows, and an author's file has none, so the viewer injects the sequence it already fetched for `accession`. The reserved names `track`, `colored-sequence`, and `heatmap` remain unregistered; `variation` is now taken by the adapter family above, and needs no generic *kind* because `variants` itself accepts author data.
+
+### Detail-only tracks
+
+A group that pairs a summary track with a detail view — variant counts (a line graph) alongside the variants themselves, or average pathogenicity (a coloured sequence) alongside its full heatmap — marks the detail track `detailOnly: true`:
+
+```yaml
+- id: VARIATION
+  tracks:
+    - id: variation_graph
+      kind: variant-counts # feeds the collapsed view
+      data: variation
+    - id: variation
+      kind: variants
+      data: variation
+      detailOnly: true # expanded view only
+```
+
+A `detailOnly` track does not feed the group's collapsed view. It is left out in two places:
+
+- **Component inference.** `GroupConfig.component` is inferred from the non-`detailOnly` tracks only, so the group above resolves to `nightingale-linegraph-track` without an explicit `component:`. An explicit `component:` still wins.
+- **The collapsed view's data.** A linegraph or coloured-sequence group draws its first non-`detailOnly` track; any other group flattens the non-`detailOnly` tracks together. The choice follows the flag, not position, so reordering the tracks in a group (`moveTrack`, or a user dragging them) never makes the collapsed view draw the detail track's data.
+
+It does not change anything else about the track. A `detailOnly` track shows, hides, filters (`filterUI`), reorders and renders exactly as before when its group is expanded; when the group is collapsed no individual track renders anyway.
+
+The flag is per-track only. The schema rejects it on `defaults` or on a group. On a standalone track, which has no collapsed view, it is accepted but has no effect, and the validator warns (`detail-only-standalone`). A group in which *every* track is `detailOnly` has nothing to draw when collapsed: it falls back to `nightingale-track-canvas` with an empty collapsed view, and the validator warns (`all-tracks-detail-only`).
+
+`summaryOnly` is reserved for the converse — a track that exists only as the collapsed view — and is not implemented.
 
 ### Shape and format (normative)
 
@@ -1408,6 +1444,8 @@ A `.bed` file behaves the same way via the `bed` adapter, with two format-specif
 | `colorScale` has neither `theme` nor `stops`                                                                                      | Config validation fails: `"colorScale must specify either 'theme' or 'stops' ..."`.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `version` is explicitly set to an unsupported value                                                                               | Validation fails: `"Unsupported config version: '<value>'. Supported: '1.0'."`. Omitting `version` is allowed (defaults to "1.0").                                                                                                                                                                                                                                                                                                                                                      |
 | A group has zero tracks                                                                                                           | Validation warning emitted; group is skipped (not rendered).                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Every track in a group is `detailOnly`                                                                                            | Validation warning (`all-tracks-detail-only`): `"Group <groupId>: every track is marked detailOnly, so the collapsed aggregate has nothing to draw. Un-mark at least one track."`. The config still loads; the group's inferred component falls back to `nightingale-track-canvas` and its collapsed view is empty. Applies whatever the group's `component:` is, and to a single-track group too.                                                                                          |
+| `detailOnly` on a standalone track                                                                                                | Validation warning (`detail-only-standalone`): `"Track <trackId>: detailOnly has no effect on a standalone track (there is no group aggregate)."`. The flag is ignored.                                                                                                                                                                                                                                                                                                                  |
 | `from: inline` with `inlineData` missing or null                                                                                  | Validation fails: `"inlineData is required when 'from' is 'inline' in track <groupId>/<trackId>."`.                                                                                                                                                                                                                                                                                                                                                                                     |
 | `from: custom` but `setTrackData()` never called at runtime                                                                       | Track renders as empty/hidden. A `console.info` is emitted after initial load: `"Track <groupId>/<trackId> is 'from: custom' but no data was provided via setTrackData()."`.                                                                                                                                                                                                                                                                                                            |
 | `extends` target cannot be fetched (404, file missing, or value is neither a URL nor file path and no `opts.resolver` handled it) | Validation fails: `"Cannot resolve extends: '<value>'. ..."`. Viewer does not mount.                                                                                                                                                                                                                                                                                                                                                                                                    |

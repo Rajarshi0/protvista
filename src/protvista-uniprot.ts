@@ -58,7 +58,7 @@ import type {
   NormalizedTrack,
 } from './schema/normalize.js';
 import { renderingToAttrs } from './renderer/render-helpers.js';
-import { isAuthoredSource } from './schema/normalize.js';
+import { aggregateTracks, isAuthoredSource } from './schema/normalize.js';
 import {
   type LayoutPatch,
   type DisplayRow,
@@ -1139,7 +1139,9 @@ class ProtvistaUniprot extends LitElement {
         reloadedKeys.has(`${group.id}-${t.id}`)
       );
       if (!touched) continue;
-      const trackValues = group.tracks.map((t) => merged[`${group.id}-${t.id}`]);
+      const trackValues = aggregateTracks(group.tracks).map(
+        (t) => merged[`${group.id}-${t.id}`]
+      );
       merged[group.id] =
         group.component === 'nightingale-linegraph-track' ||
         group.component === 'nightingale-colored-sequence'
@@ -2390,15 +2392,16 @@ class ProtvistaUniprot extends LitElement {
                 groupAttrs.scale,
                 groupAttrs.colorRange,
                 // Keyed off the track the aggregate actually draws, not the
-                // visible list. A graph group's aggregate payload is
-                // `groupData[0]` (see `load-data.ts`), which maps
-                // `group.tracks` in config order and ignores `hidden` — so
-                // asking `tracks` (the *visible* ones) can disagree in both
-                // directions: hide the first track and the aggregate still
-                // draws its series while the label logic no longer sees it,
-                // or put a bring-your-own series second and the label is
-                // suppressed for a UniProt series that wanted it.
-                showsSeriesLabel(group.tracks.slice(0, 1))
+                // visible list. A graph group's aggregate payload is its
+                // first non-`detailOnly` track (`aggregateTracks`, see
+                // `load-data.ts`), taken in `group.tracks` order and
+                // ignoring `hidden` — so asking `tracks` (the *visible* ones)
+                // can disagree in both directions: hide the first track and
+                // the aggregate still draws its series while the label logic
+                // no longer sees it, or put a bring-your-own series second
+                // and the label is suppressed for a UniProt series that
+                // wanted it.
+                showsSeriesLabel(aggregateTracks(group.tracks).slice(0, 1))
               )
             : ''}
         </div>

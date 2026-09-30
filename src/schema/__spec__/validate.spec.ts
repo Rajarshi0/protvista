@@ -1171,3 +1171,118 @@ describe('validateConfig — adapters removed by the shape/format split', () => 
     expect(issue?.message).toContain(replacement);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// detailOnly
+// ─────────────────────────────────────────────────────────────
+
+describe('validateConfig — detailOnly', () => {
+  const allDetailOnlyMessage = (groupId: string) =>
+    `Group ${groupId}: every track is marked detailOnly, so the collapsed aggregate has nothing to draw. Un-mark at least one track.`;
+
+  const groupConfig = (
+    tracks: TrackConfig[],
+    component?: 'nightingale-linegraph-track'
+  ): ProtvistaViewerConfig => ({
+    sources: { features: 'https://example.org/features' },
+    rows: [{ id: 'G', ...(component ? { component } : {}), tracks }],
+  });
+
+  const detail = (id: string): TrackConfig => ({
+    id,
+    kind: 'features',
+    data: 'features',
+    detailOnly: true,
+  });
+
+  it.each([
+    ['a multi-track group', [detail('a'), detail('b')], undefined],
+    [
+      'a multi-track group with an explicit component',
+      [detail('a'), detail('b')],
+      'nightingale-linegraph-track' as const,
+    ],
+    ['a single-track group', [detail('a')], undefined],
+    [
+      'a single-track group with an explicit component',
+      [detail('a')],
+      'nightingale-linegraph-track' as const,
+    ],
+  ])('warns when every track of %s is detailOnly', (_, tracks, component) => {
+    const result = validateConfig(
+      groupConfig(tracks, component),
+      freshRegistry()
+    );
+    const issue = issueByCode(result.issues, 'all-tracks-detail-only');
+    expect(issue).toMatchObject({
+      path: 'G',
+      severity: 'warning',
+      message: allDetailOnlyMessage('G'),
+    });
+    // A warning: the config still loads.
+    expect(result.valid).toBe(true);
+  });
+
+  it('does not warn when at least one track feeds the aggregate', () => {
+    const result = validateConfig(
+      groupConfig([
+        { id: 'a', kind: 'features', data: 'features' },
+        detail('b'),
+      ]),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it('warns that detailOnly does nothing on a standalone track', () => {
+    const result = validateConfig(
+      {
+        sources: { features: 'https://example.org/features' },
+        rows: [detail('solo')],
+      },
+      freshRegistry()
+    );
+    const issue = issueByCode(result.issues, 'detail-only-standalone');
+    expect(issue).toMatchObject({
+      path: 'solo',
+      severity: 'warning',
+      message:
+        'Track solo: detailOnly has no effect on a standalone track (there is no group aggregate).',
+    });
+    expect(
+      issueByCode(result.issues, 'all-tracks-detail-only')
+    ).toBeUndefined();
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects detailOnly on a group', () => {
+    const result = validateConfig(
+      {
+        sources: { features: 'https://example.org/features' },
+        rows: [
+          {
+            id: 'G',
+            detailOnly: true,
+            tracks: [{ id: 'a', kind: 'features', data: 'features' }],
+          },
+        ],
+      } as unknown as ProtvistaViewerConfig,
+      freshRegistry()
+    );
+    expect(result.valid).toBe(false);
+    expect(issueByCode(result.issues, 'schema')).toBeDefined();
+  });
+
+  it('rejects detailOnly under defaults', () => {
+    const result = validateConfig(
+      {
+        ...minimalValid(),
+        defaults: { detailOnly: true },
+      } as unknown as ProtvistaViewerConfig,
+      freshRegistry()
+    );
+    expect(result.valid).toBe(false);
+    expect(issueByCode(result.issues, 'schema')).toBeDefined();
+  });
+});
