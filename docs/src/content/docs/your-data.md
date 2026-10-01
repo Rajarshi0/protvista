@@ -40,8 +40,9 @@ A machine-readable version is published as
 The [Adapter reference](/protvista/adapter-reference) lists every record shape,
 which kinds draw it, and which encodings can carry it.
 
-`type` isn't free text once it's drawn: ProtVista recognises 45 UniProt
-type names, each with its own default colour and shape, and anything else
+`type` isn't free text once it's drawn: ProtVista recognises 45 type names
+(UniProt feature types plus a few for peptides, epitopes and structure
+coverage), each with its own default colour and shape, and anything else
 renders as a black rectangle. See
 [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
 the full list, what an unrecognised type looks like, and the 22 `rendering.shape`
@@ -131,7 +132,14 @@ rows:
       - id: hotspots
         kind: features
         data: ./regions.bed
+        rendering:
+          color: '#2e86c1'
+          shape: roundRectangle
 ```
+
+BED has no type column, so every record gets `type: BED`. That isn't one of
+the [recognised types](/protvista/type-and-shape-vocabulary), so without the
+`rendering` block above every region draws as a black rectangle.
 
 ## Your data next to public data
 
@@ -180,7 +188,7 @@ rows:
           shape: diamond
 ```
 
-`shape` is one of 22 built-in glyphs, and this `rendering` block applies to
+`shape` is one of 22 shape names (19 of which the canvas track draws), and this `rendering` block applies to
 every feature in the `binding_sites` track — see
 [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
 the full set, and for how this replaces `BINDING`'s own default colour and
@@ -324,6 +332,7 @@ name it on the track. See [Escape hatches](/protvista/escape-hatches).
 
 - [Configuration vs data](/protvista/configuration-vs-data) — the boundary this page sits on.
 - [Adapter reference](/protvista/adapter-reference) — exact payload shapes.
+- [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) — what each `type` looks like, and every `shape`.
 - [Troubleshoot errors](/protvista/troubleshooting) — when a track won't load.
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._

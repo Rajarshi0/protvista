@@ -79,8 +79,9 @@ data: ./data/my-features.csv
 
 One thing that catches people out: paths in `data:` are resolved against **the page**, not against `config.yaml`. They start from the folder holding `index.html`. Keep your files under `data/` and the `./data/…` form always works.
 
-`type` isn't free text once it's drawn — ProtVista recognises 45 UniProt
-type names (each with its own default colour and shape) and renders anything
+`type` isn't free text once it's drawn — ProtVista recognises 45 type names
+(UniProt feature types plus a few for peptides, epitopes and structure
+coverage), each with its own default colour and shape, and renders anything
 else as a black rectangle. See
 [Feature type and shape vocabulary](https://ebi-webcomponents.github.io/protvista/type-and-shape-vocabulary)
 for the full list.
