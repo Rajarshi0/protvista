@@ -8,6 +8,7 @@
  *   pnpm screenshots --refresh-fixtures  re-record the pinned network payloads
  *   pnpm screenshots --record-missing    pin whatever a run found unpinned
  *   pnpm screenshots --no-build          reuse the existing site/ build
+ *   pnpm screenshots --force             write every shot, even within TOLERANCE
  *
  * See README.md for how the pieces fit together and how to add a shot.
  */
@@ -37,6 +38,17 @@ const CHECK = has('--check');
 const ASSERT_CLEAN = has('--assert-clean');
 const RECORD_MISSING = has('--record-missing');
 const ONLY = val('--only')?.split(',').filter(Boolean);
+/** Write each capture even when it is within `TOLERANCE` of the committed
+ *  file — for a change too small for the tolerance to see, like one feature
+ *  type's colour. Pair it with `--only` so unaffected shots keep their bytes. */
+const FORCE = has('--force');
+
+if (FORCE && CHECK) {
+  console.error(
+    '--force writes images and --check never does; pass one or the other'
+  );
+  process.exit(1);
+}
 
 /** Every URL the run reached for that no fixture had, across all shots. */
 const unpinnedAcrossRun = new Set();
@@ -335,7 +347,7 @@ for (const shot of selected) {
       } else {
         console.log('unchanged');
       }
-    } else if (same) {
+    } else if (same && !FORCE) {
       // Visually identical to what is committed. Leave the file alone rather
       // than rewriting it — otherwise the 3D shots, which never settle to the
       // same pixels twice, would dirty the diff on every run for no visible

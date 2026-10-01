@@ -27,6 +27,10 @@ on:
         description: 'Comma-separated shot ids (blank = all)'
         type: string
         default: ''
+      force:
+        description: 'Write every shot, even one within the drift tolerance'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'src/**'
@@ -121,11 +125,10 @@ jobs:
 
       - name: Capture
         run: |
-          if [ -n "${{ inputs.only }}" ]; then
-            pnpm screenshots --only="${{ inputs.only }}"
-          else
-            pnpm screenshots
-          fi
+          args=()
+          if [ -n "${{ inputs.only }}" ]; then args+=(--only="${{ inputs.only }}"); fi
+          if [ "${{ inputs.force }}" = "true" ]; then args+=(--force); fi
+          pnpm screenshots "${args[@]}"
 
       # Guards the relationship between the images and the prose beside them.
       - name: Verify the docs still agree with the manifest
