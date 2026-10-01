@@ -537,18 +537,21 @@ class ProtvistaUniprot extends LitElement {
    * `registerAdapter`. Set it before the element loads (it may be set before
    * the element is even defined, and is applied on upgrade), and the
    * config's `adapter:` names resolve to these functions, including
-   * overrides of built-ins. Setting it again with the same functions is a
-   * no-op; entries set after the data has loaded apply to the next load.
+   * overrides of built-ins. Each value replaces the last: a name may take a
+   * new function (an inline object re-created every React render is fine),
+   * and a name the new value drops is unregistered, falling back to the
+   * built-in it overrode. A name already registered some other way (e.g. via
+   * `registerAdapter`) throws `RegistryCollisionError` and leaves the
+   * element unchanged. Entries set after the data has loaded apply to the
+   * next load.
    */
   get adapters(): Record<string, AdapterFunction> | undefined {
     return this._adapters;
   }
 
   set adapters(value: Record<string, AdapterFunction> | undefined) {
+    this.registry.replaceAdapters(this._adapters, value);
     this._adapters = value;
-    for (const [name, fn] of Object.entries(value ?? {})) {
-      this.registry.registerAdapter(name, fn);
-    }
   }
 
   /**

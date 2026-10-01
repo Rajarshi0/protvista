@@ -390,15 +390,34 @@ describe('line-graph click', () => {
 });
 
 describe('adapters property', () => {
-  it('can be set again with the same functions (StrictMode) but not different ones', () => {
+  // `adapters={{ name: (raw) => … }}` in React hands the element a new
+  // function on every render.
+  it('takes new functions under the same names on every set', () => {
     const el = document.createElement('protvista-uniprot') as unknown as El;
-    const fn = () => [];
-    el.adapters = { 'uniprot-proteomics-json': fn };
+    el.adapters = {
+      'my-adapter': () => [],
+      'uniprot-proteomics-json': () => [],
+    };
+    const next = {
+      'my-adapter': () => [],
+      'uniprot-proteomics-json': () => [],
+    };
     expect(() => {
-      el.adapters = { 'uniprot-proteomics-json': fn };
+      el.adapters = next;
     }).not.toThrow();
+    expect(el.adapters).toBe(next);
+  });
+
+  it('leaves the element unchanged when an entry collides', () => {
+    const el = document.createElement('protvista-uniprot') as unknown as El & {
+      registerAdapter(name: string, fn: () => unknown): void;
+    };
+    el.registerAdapter('taken', () => []);
+    const first = { 'my-adapter': () => [] };
+    el.adapters = first;
     expect(() => {
-      el.adapters = { 'uniprot-proteomics-json': () => [] };
+      el.adapters = { 'my-adapter': () => [], taken: () => [] };
     }).toThrow();
+    expect(el.adapters).toBe(first);
   });
 });

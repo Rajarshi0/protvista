@@ -80,6 +80,17 @@ export interface Registry {
 
   // ── Adapters ──────────────────────────────────────────────
   registerAdapter(name: string, fn: AdapterFunction): void;
+  /**
+   * Swap the set of adapters one caller owns — `previous`, exactly as it
+   * last passed it — for `next`, all or nothing. A name from `previous`
+   * may take a new function; a name `next` drops is unregistered, falling
+   * back to the built-in it overrode. Any other name follows
+   * `registerAdapter`'s rules, and if one of them collides nothing changes.
+   */
+  replaceAdapters(
+    previous: Readonly<Record<string, AdapterFunction>> | undefined,
+    next: Readonly<Record<string, AdapterFunction>> | undefined
+  ): void;
   getAdapter(name: string): AdapterFunction | undefined;
   hasAdapter(name: string): boolean;
   listAdapters(): string[];
@@ -392,6 +403,9 @@ export function createRegistry(): Registry {
   // register over any of these once; the name is dropped from the set
   // on override so a second registration collides like any other.
   const builtinAdapterNames = new Set<string>();
+  // Every built-in's own function, kept so `replaceAdapters` can put one
+  // back when the caller that overrode it lets the name go.
+  const builtinAdapterFns = new Map<string, AdapterFunction>();
   let seedingBuiltinAdapters = false;
 
   // Seed built-in semantic kinds. Rendering presets are copied
@@ -464,6 +478,7 @@ export function createRegistry(): Registry {
       if (seedingBuiltinAdapters) {
         registerInto('adapter', adapters, name, fn);
         builtinAdapterNames.add(name);
+        builtinAdapterFns.set(name, fn);
         return;
       }
       // Same function again (including a built-in's own): nothing changes,
@@ -479,6 +494,49 @@ export function createRegistry(): Registry {
         return;
       }
       registerInto('adapter', adapters, name, fn);
+    },
+    replaceAdapters(previous, next) {
+      // The caller owns the names it registered that still hold its
+      // function.
+      const owned = new Set(
+        Object.entries(previous ?? {})
+          .filter(([name, fn]) => adapters.get(name) === fn)
+          .map(([name]) => name)
+      );
+      const entries = Object.entries(next ?? {});
+      const kept = new Set(entries.map(([name]) => name));
+      // Check every entry before touching the map, so a collision part-way
+      // through leaves the registry as it was.
+      for (const [name, fn] of entries) {
+        if (name.length === 0) {
+          throw new TypeError(
+            'Cannot register adapter: name must be a non-empty string.'
+          );
+        }
+        if (
+          adapters.has(name) &&
+          adapters.get(name) !== fn &&
+          !owned.has(name) &&
+          !builtinAdapterNames.has(name)
+        ) {
+          throw new RegistryCollisionError('adapter', name);
+        }
+      }
+      for (const name of owned) {
+        if (kept.has(name)) continue;
+        const builtin = builtinAdapterFns.get(name);
+        if (builtin) {
+          // Back to the built-in, overridable once more.
+          adapters.set(name, builtin);
+          builtinAdapterNames.add(name);
+        } else {
+          adapters.delete(name);
+        }
+      }
+      for (const [name, fn] of entries) {
+        if (owned.has(name)) adapters.set(name, fn);
+        else registry.registerAdapter(name, fn);
+      }
     },
     getAdapter(name) {
       return adapters.get(name);

@@ -152,3 +152,76 @@ describe('registerBuiltinAdapters — precedence', () => {
     ).not.toThrow();
   });
 });
+
+// The declarative `adapters` property: each value it is set to replaces the
+// last, the way a React prop re-created every render does.
+describe('replaceAdapters', () => {
+  it('lets the caller give its own names new functions', () => {
+    const r = createRegistry();
+    const first = {
+      'my-adapter': () => 'a',
+      'uniprot-features-json': () => 'b',
+    };
+    const second = {
+      'my-adapter': () => 'c',
+      'uniprot-features-json': () => 'd',
+    };
+    r.replaceAdapters(undefined, first);
+
+    expect(() => r.replaceAdapters(first, second)).not.toThrow();
+    expect(r.getAdapter('my-adapter')).toBe(second['my-adapter']);
+    expect(r.getAdapter('uniprot-features-json')).toBe(
+      second['uniprot-features-json']
+    );
+  });
+
+  it('unregisters dropped names, restoring the built-in they overrode', () => {
+    const r = createRegistry();
+    const first = {
+      'my-adapter': () => 'a',
+      'uniprot-features-json': () => 'b',
+    };
+    r.replaceAdapters(undefined, first);
+
+    r.replaceAdapters(first, undefined);
+
+    expect(r.hasAdapter('my-adapter')).toBe(false);
+    expect(r.getAdapter('uniprot-features-json')).toBe(
+      builtinFn('uniprot-features-json')
+    );
+    // Restored as a built-in: overridable again.
+    expect(() =>
+      r.registerAdapter('uniprot-features-json', () => 'mine')
+    ).not.toThrow();
+  });
+
+  it('collides with a name registered another way, changing nothing', () => {
+    const r = createRegistry();
+    const other: AdapterFunction = () => 'other';
+    r.registerAdapter('taken', other);
+    const first = { 'my-adapter': () => 'a' };
+    r.replaceAdapters(undefined, first);
+
+    expect(() =>
+      r.replaceAdapters(first, {
+        'my-adapter': () => 'c',
+        taken: () => 'mine',
+        'new-adapter': () => 'd',
+      })
+    ).toThrow(RegistryCollisionError);
+    expect(r.getAdapter('my-adapter')).toBe(first['my-adapter']);
+    expect(r.getAdapter('taken')).toBe(other);
+    expect(r.hasAdapter('new-adapter')).toBe(false);
+  });
+
+  it('does not claim a name the caller no longer holds', () => {
+    const r = createRegistry();
+    const fn: AdapterFunction = () => 'a';
+    // `previous` names a function the registry never held under that name.
+    r.registerAdapter('taken', () => 'other');
+
+    expect(() =>
+      r.replaceAdapters({ taken: fn }, { taken: () => 'b' })
+    ).toThrow(RegistryCollisionError);
+  });
+});
