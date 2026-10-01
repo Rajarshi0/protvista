@@ -116,6 +116,15 @@ export interface LoadConfigOptions {
    * them).
    */
   accession?: string;
+
+  /**
+   * Template variables the mounting code will supply at runtime (for
+   * `<protvista-uniprot>`, the host's `data-*` attributes). Only the
+   * *names* are used, so the `missing-variable` validator rule accepts a
+   * `{token}` the host provides; nothing is injected into the config —
+   * values are read at fetch time, so a later attribute change applies.
+   */
+  variables?: Record<string, string | undefined>;
 }
 
 /**
@@ -203,7 +212,9 @@ export async function loadConfigWithSource(
   // helpful.
   const withAccession = injectAccession(merged, opts.accession);
 
-  const result = validateConfig(withAccession, registry);
+  const result = validateConfig(withAccession, registry, {
+    runtimeVariables: Object.keys(opts.variables ?? {}),
+  });
   if (!result.valid) {
     throw new ConfigValidationError(result.issues);
   }

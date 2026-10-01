@@ -89,6 +89,8 @@ export interface NormalizedConfig {
   version: '1.0';
   accession?: string;
   sources: Record<string, string>;
+  /** Author-set baseline template variables. See `ProtvistaViewerConfig.variables`. */
+  variables?: Record<string, string>;
   defaults: NormalizedDefaults;
   /** Author-set: promote warnings to a mount-level failure. See `ProtvistaViewerConfig.strict`. */
   strict?: boolean;
@@ -284,6 +286,7 @@ export function normalizeConfig(
     version: config.version ?? '1.0',
     ...(config.accession !== undefined ? { accession: config.accession } : {}),
     sources,
+    ...(config.variables !== undefined ? { variables: config.variables } : {}),
     defaults,
     ...(config.strict !== undefined ? { strict: config.strict } : {}),
     ...(config.theme !== undefined ? { theme: config.theme } : {}),

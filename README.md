@@ -217,6 +217,31 @@ Mount with:
 
 The viewer renders a single collapsible group "Domains" (label title-cased from the id), containing one track "Domain", populated by the `features` URL (with `{accession}` substituted at fetch time) and filtered to items with `type === "DOMAIN"`. No `version`, no explicit `component:` / `adapter:`, no `label:` — minimal configs collapse to the minimum.
 
+### Variables
+
+Any `{token}` in a data URL is filled in at fetch time — not just `{accession}`. Values come from three places, and later ones override earlier ones:
+
+1. a top-level `variables:` block in the config — baseline defaults shared by every page that mounts it;
+2. `data-*` attributes on the element — per-page values;
+3. the `accession` attribute (or the config's `accession:`), which always supplies `{accession}`. A `data-accession` attribute has no effect on the element.
+
+```yaml
+variables:
+  species: human # default when the page sets no data-species
+sources:
+  features: https://api.example.org/{species}/features/{accession}
+```
+
+```html
+<protvista-uniprot
+  accession="P05067"
+  data-species="mouse"
+  config-src="./my-config.yaml"
+></protvista-uniprot>
+```
+
+This fetches `https://api.example.org/mouse/features/P05067`. Changing `data-species` on the live element reloads the data. Multi-word attributes are camelCased, as `element.dataset` reports them: `data-dataset-id` fills `{datasetId}`. Values are URL-encoded. A value of exactly `.` or `..`, or one containing malformed Unicode, is refused: its URL is not fetched, and a console warning names the token. A token that nothing defines is a `missing-variable` validation warning, and its URL is not fetched.
+
 ### Learning more
 
 - **Tutorial.** The guided [end-to-end tutorial](https://ebi-webcomponents.github.io/protvista/tutorial) — add the component, point it at an accession, add your own track from a CSV, `extends` the default viewer, and theme it. The best starting point for newcomers.

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added: template variables in data URLs
+
+Any `{token}` in a `sources` URL or a descriptor `url:` now resolves, not only
+`{accession}`. Values come from a new top-level `variables:` block (baseline
+defaults), then the element's `data-*` attributes (`data-species="mouse"` fills
+`{species}`; `data-dataset-id` fills `{datasetId}`), then the `accession`
+attribute, which also wins over `data-accession`. Changing a `data-*` attribute
+that a URL uses re-runs the data load once per animation frame. `variables:`
+merges by key across `extends`.
+
+A token that nothing defines is reported as a `missing-variable` validation
+warning (the config still loads). At fetch time that URL is skipped with a
+console warning rather than requested half-built.
+
+Substituted values are now URL-encoded, so a value can't add a path segment,
+query string or fragment. A value of exactly `.` or `..` (which would climb out
+of the URL's path) or one containing malformed Unicode is refused: that URL is
+skipped with a console warning, and other tracks load normally. `{accession}`
+keeps its existing `[A-Za-z0-9_-]{1,32}` gate. `data-accession` has no effect
+on the element, because `{accession}` always comes from the `accession`
+attribute or the config's `accession:`. Every occurrence of a token is replaced; previously
+only the first `{accession}` in a URL was.
+
+### Fixed: Retry during a full reload no longer leaves mixed data
+
+Clicking a track's Retry badge while a full reload was in flight (after an
+accession or `data-*` change) aborted that reload and refetched only the
+retried track, so every other track kept the previous accession's or
+variables' data. The retry now runs as a full load.
+
 ### Fixed: a collapsed group no longer draws its hidden tracks
 
 Hiding a track in customize mode (or authoring it `hidden: true`) removed it
