@@ -7,7 +7,7 @@
     "score": 0.95
   },
   {
-    "type": "BINDING",
+    "type": "CA_BIND",
     "start": 700,
     "end": 723,
     "description": "Predicted transmembrane-adjacent binding motif",

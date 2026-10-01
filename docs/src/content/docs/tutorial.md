@@ -87,7 +87,7 @@ feature-record columns `type,start,end,description,score`:
 ```csv
 type,start,end,description,score
 DOMAIN,18,289,Extracellular domain (custom re-annotation),0.95
-BINDING,132,140,Predicted heparin-binding site,0.87
+CA_BIND,132,140,Predicted heparin-binding site,0.87
 REGION,290,340,Acidic-rich linker region,0.6
 MUTAGEN,614,614,Lab-observed loss-of-function point mutation,0.75
 ```
@@ -129,7 +129,10 @@ _A standalone track loaded from a CSV file._
 
 
 [Load your own data](/protvista/your-data) covers the full feature record and the
-TSV, JSON, and BED formats.
+TSV, JSON, and BED formats. `type` drives the colour and shape you see above —
+[Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) lists
+every recognised value and what an unrecognised one like `HOTSPOT` would look
+like instead.
 
 ## Step 3: Layer it onto the full UniProt viewer
 
@@ -143,7 +146,7 @@ The custom data can be simpler here — the default viewer supplies the rest:
 ```csv
 type,start,end,description,score
 DOMAIN,18,289,Custom re-annotation of the extracellular domain,0.9
-BINDING,614,614,Lab-observed candidate binding residue,0.72
+CA_BIND,614,614,Lab-observed candidate binding residue,0.72
 ```
 
 ```yaml

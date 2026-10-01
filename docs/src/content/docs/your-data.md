@@ -40,6 +40,13 @@ A machine-readable version is published as
 The [Adapter reference](/protvista/adapter-reference) lists every record shape,
 which kinds draw it, and which encodings can carry it.
 
+`type` isn't free text once it's drawn: ProtVista recognises about 45 UniProt
+type names, each with its own default colour and shape, and anything else
+renders as a black rectangle. See
+[Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
+the full list, what an unrecognised type looks like, and the 22 `rendering.shape`
+values.
+
 ## Pick a format — the extension chooses the parser
 
 Point `data:` at a file and the **file extension says how it is encoded**,
@@ -172,6 +179,12 @@ rows:
           color: '#e74c3c'
           shape: diamond
 ```
+
+`shape` is one of 22 built-in glyphs, and this `rendering` block applies to
+every feature in the `binding_sites` track — see
+[Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
+the full set and why it overrides `BINDING`'s own (invalid) default colour
+here rather than only styling it.
 
 ## A line graph of your own values
 

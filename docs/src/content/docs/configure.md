@@ -97,7 +97,7 @@ Each track needs an `id` and a `kind`, and a `data` source. Common fields:
 | `filter` | Keep only records of one `type` (e.g. `DOMAIN`). A convenience shortcut. |
 | `label` | Human-readable track title. Supports rich inline text. |
 | `description` | Longer text shown alongside the track. |
-| `rendering` | Visual overrides — `color`, `shape`, `height`, `layout`, `colorScale`. |
+| `rendering` | Visual overrides — `color`, `shape`, `height`, `layout`, `colorScale`. Applies to every feature the track draws; see [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for the valid `shape` values and what a feature's `type` gets by default. |
 
 ### `kind`
 
