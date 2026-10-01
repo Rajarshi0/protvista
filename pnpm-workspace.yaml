@@ -22,3 +22,12 @@ allowBuilds:
 
   # Install-time telemetry ping. Nothing depends on it running.
   '@scarf/scarf': false
+
+# pnpm refuses packages published less than a day ago (minimumReleaseAge), a
+# guard against a compromised release reaching us before anyone notices. The
+# Nightingale packages are maintained by the same team as this one, and a
+# Nightingale fix often needs to ship here the day it is released, so every
+# version of every @nightingale-elements package is exempt. Everything else
+# still waits its day.
+minimumReleaseAgeExclude:
+  - '@nightingale-elements/*'
