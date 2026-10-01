@@ -87,7 +87,7 @@ feature-record columns `type,start,end,description,score`:
 ```csv
 type,start,end,description,score
 DOMAIN,18,289,Extracellular domain (custom re-annotation),0.95
-CA_BIND,132,140,Predicted heparin-binding site,0.87
+BINDING,132,140,Predicted heparin-binding site,0.87
 REGION,290,340,Acidic-rich linker region,0.6
 MUTAGEN,614,614,Lab-observed loss-of-function point mutation,0.75
 ```
@@ -146,7 +146,7 @@ The custom data can be simpler here — the default viewer supplies the rest:
 ```csv
 type,start,end,description,score
 DOMAIN,18,289,Custom re-annotation of the extracellular domain,0.9
-CA_BIND,614,614,Lab-observed candidate binding residue,0.72
+BINDING,614,614,Lab-observed candidate binding residue,0.72
 ```
 
 ```yaml

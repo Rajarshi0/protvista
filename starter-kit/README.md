@@ -57,7 +57,7 @@ Drop a CSV or TSV file into `data/`, then point `config.yaml` at it. The file ne
 
 | Column | Required | What it holds |
 | --- | --- | --- |
-| `type` | yes | The kind of feature, e.g. `DOMAIN`, `CA_BIND`, `REGION`, `MUTAGEN` |
+| `type` | yes | The kind of feature, e.g. `DOMAIN`, `BINDING`, `REGION`, `MUTAGEN` |
 | `start` | yes | First residue, counting from 1 |
 | `end` | yes | Last residue. Same as `start` for a single-residue feature. |
 | `description` | yes | Free text, shown in the tooltip |
@@ -68,7 +68,7 @@ So a minimal file looks like this:
 ```csv
 type,start,end,description,score
 DOMAIN,18,289,Extracellular domain (custom re-annotation),0.95
-CA_BIND,132,140,Predicted heparin-binding site,0.87
+BINDING,132,140,Predicted heparin-binding site,0.87
 ```
 
 and `config.yaml` points at it like this:
@@ -79,13 +79,11 @@ data: ./data/my-features.csv
 
 One thing that catches people out: paths in `data:` are resolved against **the page**, not against `config.yaml`. They start from the folder holding `index.html`. Keep your files under `data/` and the `./data/…` form always works.
 
-`type` isn't free text once it's drawn — ProtVista recognises about 45 UniProt
+`type` isn't free text once it's drawn — ProtVista recognises 45 UniProt
 type names (each with its own default colour and shape) and renders anything
 else as a black rectangle. See
 [Feature type and shape vocabulary](https://ebi-webcomponents.github.io/protvista/type-and-shape-vocabulary)
-for the full list, including a known upstream bug that made `BINDING`
-specifically render with an invalid colour — which is why these samples use
-`CA_BIND` instead.
+for the full list.
 
 The samples all use [`P05067`](https://www.uniprot.org/uniprotkb/P05067) — amyloid precursor protein, 770 residues — so the coordinates in them make sense. Change `accession:` to your own protein and your own coordinates together.
 
