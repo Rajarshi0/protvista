@@ -28,7 +28,7 @@ const alphaFoldLinkUrl = 'https://alphafold.ebi.ac.uk/search/text/';
 const foldseekUrl = `https://search.foldseek.com/search`;
 const uniprotKBUrl = 'https://www.uniprot.org/uniprotkb/';
 const pdbUrls = [
-  { name: 'PDBe', link: 'https://www.ebi.ac.uk/pdbe-srv/view/entry/' },
+  { name: 'PDBe', link: 'https://www.ebi.ac.uk/pdbe/entry/pdb/' },
   { name: 'RCSB-PDB', link: 'https://www.rcsb.org/structure/' },
   { name: 'PDBj', link: 'https://pdbj.org/mine/summary/' },
 ];
