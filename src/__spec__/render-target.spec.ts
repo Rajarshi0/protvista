@@ -444,12 +444,12 @@ describe('full render — shell + per-group DOM with frozen fixtures', () => {
     expect(attrFor(target, 'GROUP_LINEGRAPH')).toBe(true);
   });
 
-  it('decides the aggregate label from the track it draws, not the visible ones', () => {
-    // A graph group's aggregate payload is `groupData[0]` — `group.tracks` in
-    // config order, `hidden` ignored (see `load-data.ts`). Hiding that track
-    // must not change the label, because the aggregate still draws its
-    // series: asking the *visible* list instead would put "12 values" back on
-    // a bring-your-own graph the moment its track was switched off.
+  it('decides the aggregate label from the track it draws', () => {
+    // A graph group's aggregate draws its first *drawn* track
+    // (`drawnAggregateTracks`: not `detailOnly`, not hidden). With the
+    // bring-your-own series hidden, that is the UniProt counts track, so the
+    // label follows it and comes back — the hidden series is no longer drawn,
+    // so it no longer decides.
     const hidden = structuredClone(testConfig) as typeof testConfig;
     const group = hidden.rows.find((r) => r.id === 'GROUP_LINEGRAPH')!;
     // What marks a series as the author's own is now its `format`: a source
@@ -498,7 +498,7 @@ describe('full render — shell + per-group DOM with frozen fixtures', () => {
           `nightingale-linegraph-track[id="${CSS_PREFIX}-track-GROUP_LINEGRAPH"]`
         )
         ?.hasAttribute('show-label-name')
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('does not render expanded tracks for closed groups', () => {

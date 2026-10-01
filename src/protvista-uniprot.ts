@@ -66,7 +66,11 @@ import type {
   NormalizedTrack,
 } from './schema/normalize.js';
 import { renderingToAttrs } from './renderer/render-helpers.js';
-import { aggregateTracks, isAuthoredSource } from './schema/normalize.js';
+import {
+  aggregatePayload,
+  drawnAggregateTracks,
+  isAuthoredSource,
+} from './schema/normalize.js';
 import {
   type LayoutPatch,
   type DisplayRow,
@@ -196,8 +200,7 @@ const hasRenderableData = (value: unknown): boolean => {
   if (value == null) return false;
   if (Array.isArray(value)) return value.length > 0;
   // Variation / RNA-editing tracks carry a `{ sequence, variants }` bundle
-  // (see the adapters, and the `data.variants?.length` gate in
-  // `_loadDataInComponents`). That object always has keys, so a plain
+  // (see the adapters). That object always has keys, so a plain
   // key-count reads an empty `variants: []` as "has data" — a phantom that
   // draws nothing yet keeps its track/group from being treated as empty
   // (leaving, e.g., RNA editing on a protein with none showing an empty lane
@@ -692,6 +695,7 @@ class ProtvistaUniprot extends LitElement {
     this._baseline();
     if (!this.config || rows === this.config.rows) return;
     if (sameArrangement(this.config.rows, rows)) return;
+    this._rebuildAggregates(this.config.rows, rows);
     this.config = { ...this.config, rows };
     this.dispatchEvent(
       new CustomEvent('protvista-layout-change', {
@@ -700,6 +704,35 @@ class ProtvistaUniprot extends LitElement {
       })
     );
     this._persistLayout();
+  }
+
+  /**
+   * Rebuild the collapsed-view payload (`data[groupId]`) of every group whose
+   * drawn tracks (`drawnAggregateTracks`) a layout change alters — a track
+   * hidden or shown, or a reorder that changes which track a graph group
+   * draws. Built from the per-track payloads already loaded, so nothing is
+   * refetched; groups the change leaves alone keep their payload, so
+   * Nightingale isn't handed an equal copy to re-render.
+   */
+  private _rebuildAggregates(
+    before: NormalizedRow[],
+    after: NormalizedRow[]
+  ): void {
+    const drawn = (row: NormalizedRow) =>
+      drawnAggregateTracks(row.tracks)
+        .map((t) => t.id)
+        .join('\n');
+    const previous = new Map(before.map((row) => [row.id, drawn(row)]));
+    let next: Record<string, unknown> | undefined;
+    for (const row of after) {
+      if (row.standalone || previous.get(row.id) === drawn(row)) continue;
+      next ??= Object.assign(Object.create(null), this.data);
+      next[row.id] = aggregatePayload(
+        row,
+        (t) => this.data[trackKey(row.id, t.id)]
+      );
+    }
+    if (next) this.data = next;
   }
 
   // ── Layout persistence (localStorage + ?layout= URL) ────────
@@ -1187,21 +1220,17 @@ class ProtvistaUniprot extends LitElement {
     // omits the earlier batch's just-recovered sibling — and merging its
     // `data[groupId]` would clobber the aggregate, silently dropping a
     // track. Rebuilding from the merged per-track keys is order-independent
-    // and self-consistent (and a no-op for a full load). Mirrors the
-    // loader's per-component aggregate rule.
+    // and self-consistent (and a no-op for a full load). Uses the loader's
+    // aggregate rule (`aggregatePayload`) against the current layout.
     for (const group of this.config.rows) {
       const touched = group.tracks.some((t) =>
         reloadedKeys.has(`${group.id}-${t.id}`)
       );
       if (!touched) continue;
-      const trackValues = aggregateTracks(group.tracks).map(
+      merged[group.id] = aggregatePayload(
+        group,
         (t) => merged[`${group.id}-${t.id}`]
       );
-      merged[group.id] =
-        group.component === 'nightingale-linegraph-track' ||
-        group.component === 'nightingale-colored-sequence'
-          ? trackValues[0]
-          : trackValues.flat().filter((entry) => entry != null);
     }
     this.data = merged;
 
@@ -1322,17 +1351,16 @@ class ProtvistaUniprot extends LitElement {
       const currentGroup = this.config?.rows.find((c) => c.id === id);
       if (
         currentGroup &&
-        currentGroup.tracks &&
-        data &&
-        // Check there's data and special case for variants.
-        // TODO(#variation-hardcoded): the `data.variants` branch
-        // mirrors the pre-refactor variation-adapter contract where
-        // the adapter emits `{ sequence, variants }` instead of a
-        // plain array. Lifting the shape check into a track-level
-        // capability (e.g. a `bundle: true` flag surfaced by the
-        // schema) would remove this hardcoded special case and let
-        // arbitrary adapters emit bundled outputs.
-        (data.length > 0 || data.variants?.length)
+        // Reveal the group when it shows something: its collapsed view, or
+        // any visible track. Not the collapsed view alone — it leaves out
+        // hidden and `detailOnly` tracks, so a group whose only feeding
+        // track is hidden still shows its visible `detailOnly` track.
+        // `hasRenderableData` owns the shape rules (including the
+        // `{ sequence, variants }` bundle).
+        (hasRenderableData(data) ||
+          visibleTracks(currentGroup).some((t) =>
+            hasRenderableData(this.data[trackKey(currentGroup.id, t.id)])
+          ))
       ) {
         // Make group element visible
         const groupElt = this.findById<HTMLElement>(
@@ -2207,12 +2235,12 @@ class ProtvistaUniprot extends LitElement {
     if (!origins) {
       origins = new Map();
       for (const row of rows) {
-        // A graph aggregate draws only its first feeding track — the same
-        // rule the loader uses to build its data.
+        // A graph aggregate draws only its first drawn track — the same rule
+        // its payload is built with (`aggregatePayload`).
         const drawn =
           row.component === 'nightingale-linegraph-track' ||
           row.component === 'nightingale-colored-sequence'
-            ? aggregateTracks(row.tracks)[0]
+            ? drawnAggregateTracks(row.tracks)[0]
             : undefined;
         origins.set(row.id, {
           track: { rowId: row.id, trackId: null, kind: null },
@@ -2458,11 +2486,11 @@ class ProtvistaUniprot extends LitElement {
    *
    * A group is judged by its *visible* `tracks` — the same slice
    * `_renderGroupBlock` renders from — NOT by the group aggregate
-   * (`this.data[groupId]`). The aggregate is computed once from *every* track
-   * at load and is never recomputed when a track is hidden, so counting it
-   * would keep a group whose only data lives in a now-hidden track on screen as
-   * an empty lane. Judging by visible tracks means hiding the last track that
-   * actually draws also hides the group.
+   * (`this.data[groupId]`). The aggregate leaves out hidden tracks too
+   * (`_rebuildAggregates`), but it also leaves out `detailOnly` ones, so a
+   * group whose only data is a visible `detailOnly` track still renders.
+   * Judging by visible tracks means hiding the last track that actually draws
+   * also hides the group.
    *
    * Dropping these rows from the *normal-mode* list — rather than leaving them
    * in the keyed `repeat` rendering to `''` — is what keeps a dataless group
@@ -2597,17 +2625,11 @@ class ProtvistaUniprot extends LitElement {
                 group.id,
                 groupAttrs.scale,
                 groupAttrs.colorRange,
-                // Keyed off the track the aggregate actually draws, not the
-                // visible list. A graph group's aggregate payload is its
-                // first non-`detailOnly` track (`aggregateTracks`, see
-                // `load-data.ts`), taken in `group.tracks` order and
-                // ignoring `hidden` — so asking `tracks` (the *visible* ones)
-                // can disagree in both directions: hide the first track and
-                // the aggregate still draws its series while the label logic
-                // no longer sees it, or put a bring-your-own series second
-                // and the label is suppressed for a UniProt series that
-                // wanted it.
-                showsSeriesLabel(aggregateTracks(group.tracks).slice(0, 1))
+                // Keyed off the track the aggregate actually draws: a graph
+                // group's payload is its first drawn track
+                // (`drawnAggregateTracks` — not `detailOnly`, not hidden, in
+                // the current order), not merely the first visible one.
+                showsSeriesLabel(drawnAggregateTracks(group.tracks).slice(0, 1))
               )
             : ''}
         </div>

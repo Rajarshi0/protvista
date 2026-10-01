@@ -19,9 +19,11 @@
  *      if the track has one, and assign the result to
  *      `data[`${group}-${track}`]`.
  *   4. Assign a group-level aggregate at `data[group]`, built from the
- *      tracks that are not `detailOnly` (`aggregateTracks`) — which is
- *      their `.flat()` for most components, or the first one's data for
- *      linegraph / colored-sequence groups.
+ *      tracks that are neither `detailOnly` nor hidden
+ *      (`aggregatePayload`) — which is their `.flat()` for most
+ *      components, or the first one's data for linegraph /
+ *      colored-sequence groups. The element rebuilds it from the
+ *      per-track keys whenever the layout changes which tracks it draws.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
@@ -33,7 +35,7 @@
  */
 
 import {
-  aggregateTracks,
+  aggregatePayload,
   isAuthoredSource,
   type NormalizedConfig,
   type NormalizedTrack,
@@ -627,29 +629,13 @@ export async function loadProtvistaData(
       })
     );
 
-    // `groupData` follows `group.tracks` order, so look each feeding
-    // track's payload up by track rather than by position — a `detailOnly`
+    // `groupData` follows `group.tracks` order, so look each drawn track's
+    // payload up by track rather than by position — a `detailOnly` or hidden
     // track may sit anywhere in the group (and a user can reorder it).
     const dataByTrack = new Map(
       group.tracks.map((track, i) => [track, groupData[i]])
     );
-    const aggregateData = aggregateTracks(group.tracks).map((track) =>
-      dataByTrack.get(track)
-    );
-    data[groupId] =
-      group.component === 'nightingale-linegraph-track' ||
-      group.component === 'nightingale-colored-sequence'
-        ? // Graph groups render only their first feeding track, so a
-          // failed one legitimately leaves the aggregate `undefined`
-          // (the component reads that as "no data" and shows the error
-          // row). Keep it as-is.
-          aggregateData[0]
-        : // Flattened multi-track aggregate: drop the `undefined` slots a
-          // failed (or empty) track leaves behind. Without this the array
-          // is truthy-but-holey — the holes reach Nightingale's `.data`
-          // setter, and an all-failed group reads as "has data" instead of
-          // routing to the error row.
-          aggregateData.flat().filter((entry) => entry != null);
+    data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
   return { rawData, data, hasData, trackUrls };

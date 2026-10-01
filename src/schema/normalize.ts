@@ -296,16 +296,51 @@ export function normalizeConfig(
 // ─────────────────────────────────────────────────────────────
 
 /**
- * The tracks that feed a group's collapsed (aggregate) view: every track
- * not marked `detailOnly`, in order. The single source of truth for
- * component inference, the loader's aggregate payload, the renderer's
- * aggregate rebuild and series-label detection, so they cannot drift apart.
- * Empty when every track is `detailOnly`.
+ * The tracks that can feed a group's collapsed (aggregate) view: every track
+ * not marked `detailOnly`, in order. Fixed by the config, so it is what
+ * component inference and validation read. Empty when every track is
+ * `detailOnly`.
  */
 export function aggregateTracks<T extends { detailOnly?: boolean }>(
   tracks: readonly T[]
 ): T[] {
   return tracks.filter((t) => !t.detailOnly);
+}
+
+/**
+ * The tracks a group's collapsed view draws right now: its `aggregateTracks`
+ * that are not `hidden`, in the current order. A hidden track is absent from
+ * the canvas, collapsed or not. The single source of truth for the aggregate
+ * payload (loader, `setTrackData` reload, layout changes), the track a graph
+ * aggregate draws and names as its source, and series-label detection, so
+ * they cannot drift apart.
+ */
+export function drawnAggregateTracks<
+  T extends { detailOnly?: boolean; hidden?: boolean },
+>(tracks: readonly T[]): T[] {
+  return aggregateTracks(tracks).filter((t) => !t.hidden);
+}
+
+/**
+ * A group's collapsed-view payload, from each drawn track's own payload. A
+ * graph group (line graph, coloured sequence) draws only its first drawn
+ * track, so its payload is that track's, `undefined` included (the component
+ * reads that as "no data"). Any other group flattens its drawn tracks' items,
+ * dropping the `undefined` a failed or empty track leaves: holes would reach
+ * Nightingale's `.data` setter, and an all-failed group would read as having
+ * data.
+ */
+export function aggregatePayload<
+  T extends { detailOnly?: boolean; hidden?: boolean },
+>(
+  group: { component: ComponentName; tracks: readonly T[] },
+  payloadOf: (track: T) => unknown
+): unknown {
+  const payloads = drawnAggregateTracks(group.tracks).map(payloadOf);
+  return group.component === 'nightingale-linegraph-track' ||
+    group.component === 'nightingale-colored-sequence'
+    ? payloads[0]
+    : payloads.flat().filter((entry) => entry != null);
 }
 
 function normalizeGroup(

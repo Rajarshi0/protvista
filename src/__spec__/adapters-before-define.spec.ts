@@ -90,6 +90,10 @@ describe('adapters set before the element is defined', () => {
 
   it('warns when React 19 stringified them into an attribute', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The lost `viewerConfig` arrives as `null` (Lit can't parse
+    // "[object Object]" as JSON), so the config load fails too. Expected
+    // here; keep it out of the test output.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -128,5 +132,6 @@ describe('adapters set before the element is defined', () => {
     document.body.append(el);
     expect(warn.mock.calls.length).toBe(count);
     warn.mockRestore();
+    error.mockRestore();
   });
 });

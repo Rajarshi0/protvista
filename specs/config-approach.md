@@ -720,7 +720,9 @@ A group that pairs a summary track with a detail view — variant counts (a line
 A `detailOnly` track does not feed the group's collapsed view. It is left out in two places:
 
 - **Component inference.** `GroupConfig.component` is inferred from the non-`detailOnly` tracks only, so the group above resolves to `nightingale-linegraph-track` without an explicit `component:`. An explicit `component:` still wins.
-- **The collapsed view's data.** A linegraph or coloured-sequence group draws its first non-`detailOnly` track; any other group flattens the non-`detailOnly` tracks together. The choice follows the flag, not position, so reordering the tracks in a group (`moveTrack`, or a user dragging them) never makes the collapsed view draw the detail track's data.
+- **The collapsed view's data.** A linegraph or coloured-sequence group draws its first non-`detailOnly` track; any other group flattens the non-`detailOnly` tracks together. The choice follows the flag, not position, so reordering the tracks in a group (`setTrackOrder`, or a user moving them in customize mode) never makes the collapsed view draw the detail track's data.
+
+The collapsed view also leaves out `hidden` tracks, whether authored or set in customize mode: a hidden track is absent from the canvas, collapsed or not. So the collapsed view draws `drawnAggregateTracks(tracks)` — not `detailOnly`, not hidden, in the current order — and a graph group draws (and its `change` events name as their source) the first of those. The viewer rebuilds it from the per-track data whenever a layout change alters that list, without refetching anything.
 
 It does not change anything else about the track. A `detailOnly` track shows, hides, filters (`filterUI`), reorders and renders exactly as before when its group is expanded; when the group is collapsed no individual track renders anyway.
 

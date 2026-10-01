@@ -40,8 +40,11 @@ carry it far enough to be hard to find again.
 
 Movement is **two-level**: rows reorder among rows, and a track reorders
 within its own group. A track cannot leave its group, because a nested config
-has no way to record where it went. Hiding every track of a group removes the
-group (and its aggregate summary) from the canvas.
+has no way to record where it went. A hidden track is left out of its group's
+collapsed summary as well, and hiding every track of a group removes the group
+(and its summary) from the canvas. A line-graph or coloured-sequence group's
+summary draws its first visible track, so hiding or moving that track changes
+what the collapsed group shows.
 
 Rows that are hidden stay in place as dimmed **stubs** — the label and its
 controls with an empty track area — so hiding is never a one-way door. Tracks

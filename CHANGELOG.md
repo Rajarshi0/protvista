@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: a collapsed group no longer draws its hidden tracks
+
+Hiding a track in customize mode (or authoring it `hidden: true`) removed it
+from the expanded group but left its data in the group's collapsed summary.
+The summary is now built from the visible tracks only, and rebuilt from the
+already-loaded data whenever a track is hidden, shown or moved. A line-graph or
+coloured-sequence group draws its first visible track, and its `change` events
+name that track as their source.
+
 ### Added: `detail.track` on the `change` event
 
 Every `change` event from a track now says where it came from before any
