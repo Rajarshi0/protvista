@@ -27,6 +27,11 @@ import { injectStyleOnce, installTokenDefaults } from './styles/inject.js';
 const alphaFoldLinkUrl = 'https://alphafold.ebi.ac.uk/search/text/';
 const foldseekUrl = `https://search.foldseek.com/search`;
 const uniprotKBUrl = 'https://www.uniprot.org/uniprotkb/';
+const pdbUrls = [
+  { name: 'PDBe', link: 'https://www.ebi.ac.uk/pdbe-srv/view/entry/' },
+  { name: 'RCSB-PDB', link: 'https://www.rcsb.org/structure/' },
+  { name: 'PDBj', link: 'https://pdbj.org/mine/summary/' },
+];
 
 const sourceMethods = new Map([
   ['AlphaFold DB', 'Predicted'],
@@ -373,7 +378,9 @@ const sourceDownloadLink = (downloadUrl: string) =>
     class="cell-link"
   >
     Source
-    <span class="cell-link__icon">${svg`${unsafeHTML(inlineSvg(downloadIcon))}`}</span>
+    <span class="cell-link__icon"
+      >${svg`${unsafeHTML(inlineSvg(downloadIcon))}`}</span
+    >
   </a>`;
 
 const foldseekLink = (accession: string, sourceDB: string) => {
@@ -500,12 +507,23 @@ class ProtvistaUniprotStructure extends LitElement {
     const { source, id, sourceDBLink } = row;
 
     return html`
-      ${source === 'PDB'
-        ? html` <a href="https://www.ebi.ac.uk/pdbe/entry/pdb/${id}">PDBe</a> `
-        : nothing}
-      ${source === 'AlphaFold DB' && this.accession
-        ? html`<a href="${alphaFoldLinkUrl}${this.accession}">AlphaFold</a>`
-        : nothing}
+      ${
+        source === 'PDB'
+          ? html`
+              ${pdbUrls
+                .map(
+                  (pdbLink) =>
+                    html`<a href="${pdbLink.link}${id}">${pdbLink.name}</a>`
+                )
+                .reduce((prev, curr) => html`${prev} · ${curr}`)}
+            `
+          : nothing
+      }
+      ${
+        source === 'AlphaFold DB' && this.accession
+          ? html`<a href="${alphaFoldLinkUrl}${this.accession}">AlphaFold</a>`
+          : nothing
+      }
       ${sourceDBLink ? html`<a href="${sourceDBLink}">${source}</a>` : nothing}
     `;
   }
@@ -515,13 +533,15 @@ class ProtvistaUniprotStructure extends LitElement {
 
     return html`
       ${downloadUrl ? html`${sourceDownloadLink(downloadUrl)}` : nothing}
-      ${(source === 'PDB' || source === 'AlphaFold DB') && this.accession
-        ? html` ·
-          ${foldseekLink(
-            source === 'PDB' ? id : this.accession,
-            source === 'PDB' ? 'PDB' : 'AlphaFoldDB'
-          )}`
-        : nothing}
+      ${
+        (source === 'PDB' || source === 'AlphaFold DB') && this.accession
+          ? html` ·
+            ${foldseekLink(
+              source === 'PDB' ? id : this.accession,
+              source === 'PDB' ? 'PDB' : 'AlphaFoldDB'
+            )}`
+          : nothing
+      }
     `;
   }
 
@@ -687,82 +707,82 @@ class ProtvistaUniprotStructure extends LitElement {
   // Built once at class definition rather than per instance: addStyles()
   // runs in every constructor but the sheet is injected only once.
   private static readonly cssStyle = css`
-      .protvista-uniprot-structure {
-        line-height: normal;
-      }
+    .protvista-uniprot-structure {
+      line-height: normal;
+    }
 
-      .theme-selection {
-        padding-bottom: 1rem;
-      }
+    .theme-selection {
+      padding-bottom: 1rem;
+    }
 
-      .protvista-uniprot-structure__structure {
-        display: flex;
-      }
+    .protvista-uniprot-structure__structure {
+      display: flex;
+    }
 
-      .protvista-uniprot-structure__meta {
-        flex: 1;
-        padding: 1rem;
-      }
+    .protvista-uniprot-structure__meta {
+      flex: 1;
+      padding: 1rem;
+    }
 
-      .protvista-uniprot-structure__structure nightingale-structure {
-        z-index: 40000;
-        width: 100%;
-        flex: 4;
-      }
+    .protvista-uniprot-structure__structure nightingale-structure {
+      z-index: 40000;
+      width: 100%;
+      flex: 4;
+    }
 
-      .protvista-uniprot-structure__meta .small {
-        font-size: 0.75rem;
-      }
+    .protvista-uniprot-structure__meta .small {
+      font-size: 0.75rem;
+    }
 
-      .protvista-uniprot-structure__meta .no-bullet {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
+    .protvista-uniprot-structure__meta .no-bullet {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
 
-      .protvista-uniprot-structure__meta .no-bullet li {
-        padding: 0;
-        margin: 0.5rem 0;
-      }
+    .protvista-uniprot-structure__meta .no-bullet li {
+      padding: 0;
+      margin: 0.5rem 0;
+    }
 
-      .protvista-uniprot-structure__meta .af-legend::before {
-        content: '';
-        margin: 0;
-        display: inline-block;
-        width: 20px;
-        height: 16px;
-      }
+    .protvista-uniprot-structure__meta .af-legend::before {
+      content: '';
+      margin: 0;
+      display: inline-block;
+      width: 20px;
+      height: 16px;
+    }
 
-      /* Legend swatch colours: fixed data encodings mirroring the
+    /* Legend swatch colours: fixed data encodings mirroring the
          AlphaFold pLDDT / AlphaMissense pathogenicity ramps (not themable
          UI). Classed here rather than set via inline style= on the span. */
-      .protvista-uniprot-structure__meta .af-legend--very-high {
-        background-color: rgb(0, 83, 214);
-      }
-      .protvista-uniprot-structure__meta .af-legend--confident {
-        background-color: rgb(101, 203, 243);
-      }
-      .protvista-uniprot-structure__meta .af-legend--low {
-        background-color: rgb(255, 219, 19);
-      }
-      .protvista-uniprot-structure__meta .af-legend--very-low {
-        background-color: rgb(255, 125, 69);
-      }
-      .protvista-uniprot-structure__meta .af-legend--am-pathogenic {
-        background-color: rgb(154, 19, 26);
-      }
-      .protvista-uniprot-structure__meta .af-legend--am-uncertain {
-        background-color: rgb(168, 169, 173);
-      }
-      .protvista-uniprot-structure__meta .af-legend--am-benign {
-        background-color: rgb(61, 84, 147);
-      }
+    .protvista-uniprot-structure__meta .af-legend--very-high {
+      background-color: rgb(0, 83, 214);
+    }
+    .protvista-uniprot-structure__meta .af-legend--confident {
+      background-color: rgb(101, 203, 243);
+    }
+    .protvista-uniprot-structure__meta .af-legend--low {
+      background-color: rgb(255, 219, 19);
+    }
+    .protvista-uniprot-structure__meta .af-legend--very-low {
+      background-color: rgb(255, 125, 69);
+    }
+    .protvista-uniprot-structure__meta .af-legend--am-pathogenic {
+      background-color: rgb(154, 19, 26);
+    }
+    .protvista-uniprot-structure__meta .af-legend--am-uncertain {
+      background-color: rgb(168, 169, 173);
+    }
+    .protvista-uniprot-structure__meta .af-legend--am-benign {
+      background-color: rgb(61, 84, 147);
+    }
 
-      .am-disabled * {
-        cursor: not-allowed;
-        color: var(--protvista-color-disabled);
-      }
-    `;
+    .am-disabled * {
+      cursor: not-allowed;
+      color: var(--protvista-color-disabled);
+    }
+  `;
 
   /**
    * we need to use the light DOM.
@@ -781,88 +801,104 @@ class ProtvistaUniprotStructure extends LitElement {
     return html`
       <div class="protvista-uniprot-structure">
         <div class="protvista-uniprot-structure__structure">
-          ${this.metaInfo
-            ? html`
-                <div class="protvista-uniprot-structure__meta">
-                  <div class="theme-selection">
-                    Select color scale
-                    <div>
-                      <input
-                        type="radio"
-                        id="alphafold"
-                        name="colorScheme"
-                        value="alphafold"
-                        @click=${this.toggleColorTheme}
-                        checked
-                      />
-                      <label for="alphafold">Confidence</label>
-                    </div>
-                    <div
-                      class=${this.alphamissenseAvailable ? '' : 'am-disabled'}
-                    >
-                      <input
-                        type="radio"
-                        id="alphamissense"
-                        name="colorScheme"
-                        value="alphamissense"
-                        @click=${this.toggleColorTheme}
-                        ?disabled=${!this.alphamissenseAvailable}
-                      />
-                      <label
-                        for="alphamissense"
-                        title=${this.alphamissenseAvailable
-                          ? ''
-                          : 'Color by pathogenicity is disabled as there are no AlphaMissense predictions available for this model'}
+          ${
+            this.metaInfo
+              ? html`
+                  <div class="protvista-uniprot-structure__meta">
+                    <div class="theme-selection">
+                      Select color scale
+                      <div>
+                        <input
+                          type="radio"
+                          id="alphafold"
+                          name="colorScheme"
+                          value="alphafold"
+                          @click=${this.toggleColorTheme}
+                          checked
+                        />
+                        <label for="alphafold">Confidence</label>
+                      </div>
+                      <div
+                        class=${this.alphamissenseAvailable ? '' : 'am-disabled'}
                       >
-                        Pathogenicity
-                        ${this.alphamissenseAvailable ? '' : ' (unavailable)'}
-                      </label>
+                        <input
+                          type="radio"
+                          id="alphamissense"
+                          name="colorScheme"
+                          value="alphamissense"
+                          @click=${this.toggleColorTheme}
+                          ?disabled=${!this.alphamissenseAvailable}
+                        />
+                        <label
+                          for="alphamissense"
+                          title=${
+                            this.alphamissenseAvailable
+                              ? ''
+                              : 'Color by pathogenicity is disabled as there are no AlphaMissense predictions available for this model'
+                          }
+                        >
+                          Pathogenicity
+                          ${this.alphamissenseAvailable ? '' : ' (unavailable)'}
+                        </label>
+                      </div>
                     </div>
+                    ${this.metaInfo}
                   </div>
-                  ${this.metaInfo}
-                </div>
-              `
-            : nothing}
-          ${this.structureId
-            ? html`<nightingale-structure
-                structure-id=${this.structureId}
-                protein-accession=${this.accession}
-                color-theme=${this.colorTheme}
-              ></nightingale-structure>`
-            : nothing}
-          ${this.modelUrl
-            ? html`<nightingale-structure
-                model-url=${this.modelUrl}
-              ></nightingale-structure>`
-            : nothing}
+                `
+              : nothing
+          }
+          ${
+            this.structureId
+              ? html`<nightingale-structure
+                  structure-id=${this.structureId}
+                  protein-accession=${this.accession}
+                  color-theme=${this.colorTheme}
+                ></nightingale-structure>`
+              : nothing
+          }
+          ${
+            this.modelUrl
+              ? html`<nightingale-structure
+                  model-url=${this.modelUrl}
+                ></nightingale-structure>`
+              : nothing
+          }
         </div>
 
-        ${this.noTable
-          ? nothing
-          : html`<div class="protvista-uniprot-structure__table">
-              ${this.data && this.data.length
-                ? html`
-                    <protvista-uniprot-datatable
-                      .data=${this.data}
-                      .columns=${this.columns}
-                      .selectedId=${this.selectedId}
-                      row-id-key="id"
-                      @row-click=${this.onDatatableRowClick}
-                    ></protvista-uniprot-datatable>
-                  `
-                : nothing}
-              ${this.loading
-                ? html`<div class="protvista-loader">
-                    ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
-                  </div>`
-                : nothing}
-              ${(!this.data || this.data.length === 0) && !this.loading
-                ? html`<div class="protvista-no-results">
-                    No structure information available
-                    ${this.accession ? `for ${this.accession}` : ''}
-                  </div>`
-                : nothing}
-            </div>`}
+        ${
+          this.noTable
+            ? nothing
+            : html`<div class="protvista-uniprot-structure__table">
+                ${
+                  this.data && this.data.length
+                    ? html`
+                        <protvista-uniprot-datatable
+                          .data=${this.data}
+                          .columns=${this.columns}
+                          .selectedId=${this.selectedId}
+                          row-id-key="id"
+                          @row-click=${this.onDatatableRowClick}
+                        ></protvista-uniprot-datatable>
+                      `
+                    : nothing
+                }
+                ${
+                  this.loading
+                    ? html`<div class="protvista-loader">
+                        ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
+                      </div>`
+                    : nothing
+                }
+                ${
+                  (!this.data || this.data.length === 0) && !this.loading
+                    ? html`<div class="protvista-no-results">
+                        No structure information available
+                        ${this.accession ? `for ${this.accession}` : ''}
+                      </div>`
+                    : nothing
+                }
+              </div>`
+        }
       </div>
     `;
   }
