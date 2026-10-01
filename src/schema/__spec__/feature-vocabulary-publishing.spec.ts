@@ -62,6 +62,9 @@ describe('feature type and shape vocabulary — generated page', () => {
     expect(unlisted).toEqual([]);
   });
 
+  // nightingale-track before 5.11.1 shipped BINDING as `#catFace`, so BINDING
+  // rows took whatever colour the previous feature used. Fixed upstream in
+  // https://github.com/ebi-webcomponents/nightingale/commit/ef8f74d7dc95bcf252e0ed3a05ff697de3d3ed70
   it('every default colour is paintable', () => {
     const broken = Object.entries(vocab.types)
       .filter(([, t]) => !isPaintableColor(t.color))
@@ -71,4 +74,25 @@ describe('feature type and shape vocabulary — generated page', () => {
       'Nightingale ships an invalid default colour — bump @nightingale-elements/* to the release that fixes it'
     ).toEqual([]);
   });
+});
+
+describe('isPaintableColor', () => {
+  it.each([
+    '#009999',
+    '#abc',
+    '#00000080',
+    'black',
+    'RebeccaPurple',
+    'rgb(0, 0, 0)',
+    'hsla(120, 50%, 50%, 0.5)',
+  ])('accepts %s', (value) => {
+    expect(isPaintableColor(value)).toBe(true);
+  });
+
+  it.each(['#catFace', 'catFace', 'balck', '#12345', 'rgb(0, 0, 0'])(
+    'rejects %s',
+    (value) => {
+      expect(isPaintableColor(value)).toBe(false);
+    }
+  );
 });

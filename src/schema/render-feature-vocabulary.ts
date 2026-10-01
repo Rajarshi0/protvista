@@ -12,6 +12,7 @@ import {
   isPaintableColor,
   type NightingaleVocabulary,
   type ShapeCategory,
+  type ShapeDrawings,
 } from './feature-vocabulary.js';
 
 export const FEATURE_VOCABULARY_MD_PATH =
@@ -32,6 +33,21 @@ function swatch(color: string): string {
   );
 }
 
+/**
+ * One shape as an inline SVG, drawn twice its canvas size in the text colour
+ * so it reads in both light and dark mode. The canvas paints features at
+ * 0.9 opacity; so does this.
+ */
+function drawing(drawings: ShapeDrawings, shape: string): string {
+  const { width, height } = drawings;
+  return (
+    `<svg width="${2 * width}" height="${2 * height}" viewBox="0 0 ${width} ${height}" ` +
+    `role="img" aria-label="${shape}" fill="currentColor" stroke="currentColor" ` +
+    `fill-opacity="0.9" stroke-opacity="0.9" style="vertical-align:middle">` +
+    `${drawings.shapes[shape]}</svg>`
+  );
+}
+
 const CATEGORY_TEXT: Record<ShapeCategory, string> = {
   range: 'Stretches to cover the feature',
   symbol:
@@ -41,12 +57,12 @@ const CATEGORY_TEXT: Record<ShapeCategory, string> = {
 
 function typeTable(vocab: NightingaleVocabulary): string {
   const header =
-    '| Type | Label | Default shape | Default colour | Meaning |\n|---|---|---|---|---|';
+    '| Type | UniProt name | Label | Default shape | Default colour | Meaning |\n|---|---|---|---|---|---|';
   const rows = Object.entries(vocab.types).map(([code, t]) => {
     const colour = isPaintableColor(t.color)
       ? `${swatch(t.color)} \`${t.color}\``
       : `\`${t.color}\` — not a valid colour, see [below](#broken-defaults)`;
-    return `| \`${code}\` | ${cell(t.label)} | \`${t.shape}\` | ${colour} | ${cell(
+    return `| \`${code}\` | ${cell(t.name)} | ${cell(t.label)} | \`${t.shape}\` | ${colour} | ${cell(
       t.tooltip || '—'
     )} |`;
   });
@@ -54,12 +70,13 @@ function typeTable(vocab: NightingaleVocabulary): string {
 }
 
 function shapeTable(vocab: NightingaleVocabulary): string {
-  const header = '| Shape | Drawn as | Default for |\n|---|---|---|';
+  const header =
+    '| Looks like | Shape | Drawn as | Default for |\n|---|---|---|---|';
   const rows = FEATURE_SHAPES.map((shape) => {
     const users = Object.entries(vocab.types)
       .filter(([, t]) => t.shape === shape)
       .map(([code]) => `\`${code}\``);
-    return `| \`${shape}\` | ${CATEGORY_TEXT[vocab.shapeCategories[shape]]} | ${
+    return `| ${drawing(vocab.shapeDrawings, shape)} | \`${shape}\` | ${CATEGORY_TEXT[vocab.shapeCategories[shape]]} | ${
       users.join(', ') || '—'
     } |`;
   });
@@ -118,17 +135,27 @@ export function renderFeatureVocabularyMarkdown(
   lines.push('The first of these that applies wins:');
   lines.push('');
   lines.push(
-    "1. The track's `rendering.color` and `rendering.shape`. These apply to **every** " +
-      'feature in the track, whatever its type.'
+    '1. A colour or shape carried on the feature record itself. Some built-in kinds ' +
+      'set one (InterPro domains get a colour per entry; PTMeXchange peptides are ' +
+      'triangles); records loaded from your own CSV, TSV, JSON or BED files cannot.'
   );
   lines.push(
-    `2. The default for the feature's \`type\`, from [the table below](#recognised-types).`
+    "2. The track's `rendering.color` and `rendering.shape`, set on the track or " +
+      'inherited from its group or from `defaults:`. These apply to **every** feature ' +
+      'in the track, whatever its type.'
   );
-  lines.push(`3. \`${fallbackColor}\` and \`${fallbackShape}\`.`);
+  lines.push(
+    `3. The default for the feature's \`type\`, from [the table below](#recognised-types).`
+  );
+  lines.push(`4. \`${fallbackColor}\` and \`${fallbackShape}\`.`);
+  lines.push('');
+  lines.push(
+    'Colour and shape are resolved separately, so a track can set one and keep the other.'
+  );
   lines.push('');
   lines.push(
     '`type` is matched without regard to case, against either the type code ' +
-      '(`ACT_SITE`) or the longer UniProt name (`active site`).'
+      '(`ACT_SITE`) or the UniProt name (`active site`) listed in the table.'
   );
   lines.push('');
 
@@ -139,6 +166,12 @@ export function renderFeatureVocabularyMarkdown(
       'The viewer shows no error or warning; Nightingale only logs the type name to ' +
       'the browser console. Every unrecognised type looks the same, so a track that ' +
       'mixes two of them cannot tell them apart.'
+  );
+  lines.push('');
+  lines.push(
+    'BED files have no type column, so every record read from a `.bed` file has ' +
+      `\`type: BED\` and is drawn as a ${fallbackColor} ${fallbackShape} unless its ` +
+      'track sets `rendering`.'
   );
   lines.push('');
   lines.push('### Worked example: a custom type');
@@ -192,10 +225,13 @@ export function renderFeatureVocabularyMarkdown(
   lines.push('');
   lines.push(
     `\`rendering.shape\` takes one of these ${FEATURE_SHAPES.length} names. The spellings ` +
-      `(\`discontinuos\`) are Nightingale's. ${undrawn.length} of them ` +
+      `(\`discontinuos\`) are Nightingale's. Each is drawn below by the canvas track's own ` +
+      'drawing code: shapes that stretch across several residues, glyphs on one. ' +
+      `${undrawn.length} of them ` +
       `(${undrawn.map((s) => `\`${s}\``).join(', ')}) are declared but not drawn by the ` +
       'canvas track, and show a question mark instead. So does any other name: the config ' +
-      'accepts any string for `shape`, and a misspelt one is not reported.'
+      'accepts any string for `shape`, and a misspelt one only shows up as a one-time ' +
+      'warning naming it in the browser console.'
   );
   lines.push('');
   lines.push(shapeTable(vocab));

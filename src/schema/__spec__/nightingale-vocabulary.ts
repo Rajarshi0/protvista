@@ -17,7 +17,10 @@ import { readFileSync } from 'node:fs';
 import {
   FEATURE_SHAPES,
   type NightingaleVocabulary,
+  type ShapeCategory,
+  type ShapeDrawings,
 } from '../feature-vocabulary.js';
+import { CanvasSvgRecorder } from './canvas-svg-recorder.js';
 
 const fromHere = createRequire(import.meta.url);
 const canvasPkgPath = fromHere.resolve(
@@ -40,6 +43,115 @@ function importShipped(packageDir: string, file: string) {
   return import(join(packageDir, file));
 }
 
+/**
+ * Read a numeric constant the canvas track keeps module-private
+ * (`const SYMBOL_SIZE = 10;`, `const SYMBOL_RADIUS = 0.5 * SYMBOL_SIZE;`).
+ */
+function canvasConstant(source: string, name: string): number {
+  const m = new RegExp(`^const ${name} = (.+);$`, 'm').exec(source);
+  if (!m) {
+    throw new Error(
+      `nightingale-track-canvas no longer declares \`const ${name}\` — update canvasConstant()`
+    );
+  }
+  // Only literals, references to other constants, and `*` occur today; any
+  // other form is a change worth a look, so it throws rather than guesses.
+  const factors = m[1].split('*').map((f) => f.trim());
+  return factors.reduce((product, factor) => {
+    if (/^\d+(?:\.\d+)?$/.test(factor)) return product * Number(factor);
+    if (/^[A-Z_]+$/.test(factor))
+      return product * canvasConstant(source, factor);
+    throw new Error(`Unexpected value for ${name}: ${m[1]}`);
+  }, 1);
+}
+
+/** The drawing area each shape is drawn on, in canvas pixels. */
+const DRAWING = {
+  /** Residues a range shape spans. */
+  residues: 6,
+  baseWidth: 8,
+  featureHeight: 12,
+  margin: 2,
+} as const;
+
+/** The parts of the canvas track's `src/utils/draw-shapes.ts` used here. */
+interface DrawShapes {
+  shapeCategory(shape: string): ShapeCategory;
+  drawRange(
+    ctx: CanvasRenderingContext2D,
+    shape: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    optXPadding: number,
+    fragmentLength: number
+  ): boolean;
+  drawSymbol(
+    ctx: CanvasRenderingContext2D,
+    shape: string,
+    cx: number,
+    cy: number,
+    r: number
+  ): boolean;
+  drawUnknown(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    r: number
+  ): void;
+}
+
+/**
+ * Draw every shape with the canvas track's own drawers, following the
+ * per-feature branch in `NightingaleTrackCanvas.drawCanvasContent()`: a
+ * range shape stretches across the feature, anything else is a symbol
+ * centred on a single residue, and a shape with no drawer is a question mark.
+ */
+function drawShapes(
+  { drawRange, drawSymbol, drawUnknown }: DrawShapes,
+  canvasSource: string
+): ShapeDrawings {
+  const symbolRadius = canvasConstant(canvasSource, 'SYMBOL_RADIUS');
+  const lineWidth = canvasConstant(canvasSource, 'LINE_WIDTH');
+  const { residues, baseWidth, featureHeight: height, margin } = DRAWING;
+  const rangeWidth = residues * baseWidth;
+  const optXPadding = Math.min(1.5, 0.25 * baseWidth);
+  const x = margin;
+  const y = margin;
+
+  const shapes = Object.fromEntries(
+    FEATURE_SHAPES.map((shape) => {
+      const ctx = new CanvasSvgRecorder();
+      const canvas = ctx as unknown as CanvasRenderingContext2D;
+      ctx.lineWidth = lineWidth;
+      const drawn = drawRange(
+        canvas,
+        shape,
+        x,
+        y,
+        rangeWidth,
+        height,
+        optXPadding,
+        residues
+      );
+      if (!drawn) {
+        const cx = x + 0.5 * rangeWidth;
+        const cy = y + 0.5 * height;
+        if (!drawSymbol(canvas, shape, cx, cy, symbolRadius)) {
+          drawUnknown(canvas, cx, cy, symbolRadius);
+        }
+      }
+      return [shape, ctx.toSvg()];
+    })
+  );
+  return {
+    width: rangeWidth + 2 * margin,
+    height: height + 2 * margin,
+    shapes,
+  };
+}
+
 export async function loadNightingaleVocabulary(): Promise<NightingaleVocabulary> {
   const { version } = JSON.parse(readFileSync(trackPkgPath, 'utf8'));
   const { config } = await importShipped(trackDir, 'src/config.ts');
@@ -47,9 +159,13 @@ export async function loadNightingaleVocabulary(): Promise<NightingaleVocabulary
     trackDir,
     'src/ConfigHelper.ts'
   );
-  const { shapeCategory } = await importShipped(
+  const drawShapesModule: DrawShapes = await importShipped(
     canvasDir,
     'src/utils/draw-shapes.ts'
+  );
+  const canvasSource = readFileSync(
+    join(canvasDir, 'src/nightingale-track-canvas.ts'),
+    'utf8'
   );
 
   // `getColorByType` logs any type it does not recognise; the probe is
@@ -70,8 +186,9 @@ export async function loadNightingaleVocabulary(): Promise<NightingaleVocabulary
     version,
     types: config,
     shapeCategories: Object.fromEntries(
-      FEATURE_SHAPES.map((s) => [s, shapeCategory(s)])
+      FEATURE_SHAPES.map((s) => [s, drawShapesModule.shapeCategory(s)])
     ),
+    shapeDrawings: drawShapes(drawShapesModule, canvasSource),
     fallback,
   };
 }
