@@ -32,10 +32,8 @@ Suppose your file has columns we don't parse out of the box. Register a function
 that returns feature records, then name it on the track's `data`:
 
 ```js
-const viewer = document.createElement('protvista-uniprot');
-
-// Register BEFORE mounting.
-viewer.registerAdapter('my-csv', (csvText) =>
+// Defined once, at module scope (see "Rules to know").
+const parseMyCsv = (csvText) =>
   csvText
     .trim()
     .split('\n')
@@ -43,8 +41,12 @@ viewer.registerAdapter('my-csv', (csvText) =>
     .map((line) => {
       const [start, end, type] = line.split(',');
       return { type, start: Number(start), end: Number(end) };
-    }),
-);
+    });
+
+const viewer = document.createElement('protvista-uniprot');
+
+// Register BEFORE mounting.
+viewer.registerAdapter('my-csv', parseMyCsv);
 
 viewer.viewerConfig = {
   accession: 'P05067',
@@ -68,28 +70,64 @@ document.body.append(viewer); // mounts now, with the adapter available
 The config validator and the loader consult the same registry, so a track that
 names `adapter: my-csv` both validates and runs only because you registered it.
 
+### Or set `adapters`
+
+The `adapters` property is the declarative form of `registerAdapter`: a map of
+name to function, registered as soon as it is set.
+
+```js
+viewer.adapters = { 'my-csv': parseMyCsv };
+```
+
+Unlike the method, it can be set before the element is even defined — from a
+framework ref, or a Lit `.adapters=${…}` binding on a page that loads
+`protvista-uniprot` lazily. The value is applied when the element upgrades,
+before it starts loading, so there is no need to render with `suspend` and clear
+it afterwards. Entries set after the data has loaded apply to the next load.
+
 ## A custom kind and a custom theme
 
 ```js
 // A reusable shorthand: `kind: my-features`
-viewer.registerSemanticKind('my-features', {
+const myFeatures = {
   component: 'nightingale-track-canvas',
   adapter: 'my-csv',
-});
+};
 
 // A colour scale for a score/heatmap track (at least two stops)
-viewer.registerTheme('my-ramp', [
+const myRamp = [
   { value: 0, color: '#3457b9', label: 'Low' },
   { value: 1, color: '#ca1615', label: 'High' },
-]);
+];
+
+viewer.registerSemanticKind('my-features', myFeatures);
+viewer.registerTheme('my-ramp', myRamp);
+```
+
+Only adapters have a property you can set before the element is defined. If you
+can't call these methods before the element mounts (for example, it is already
+in the page, or a framework renders it), render it with `suspend`, register,
+then clear `suspend` to start loading:
+
+```js
+// <protvista-uniprot suspend accession="P05067"></protvista-uniprot>
+const viewer = document.querySelector('protvista-uniprot');
+viewer.registerSemanticKind('my-features', myFeatures);
+viewer.registerTheme('my-ramp', myRamp);
+viewer.suspend = false; // loads now
 ```
 
 ## Rules to know
 
-- **Register before mounting.** After the element connects, the config is already
-  being resolved.
-- **Names must be unique.** Registering a name twice throws a
-  `RegistryCollisionError`. Built-in **kinds** and **themes** can't be overridden;
+- **Register before mounting**, or while the element is `suspend`ed. Once it
+  starts loading, the config is already being resolved.
+- **Names must be unique.** Registering a different value under a taken name
+  throws a `RegistryCollisionError`. Registering the *same* value again is a
+  no-op — the same function, object or array, compared by reference, not an
+  equal copy. Define your adapters, kinds and themes once at module scope, as
+  above, and setup that runs twice (React StrictMode) is safe; an inline arrow
+  function or object literal is a new value every time it runs, so the second
+  run throws. Built-in **kinds** and **themes** can't be overridden;
   built-in **adapters** may be overridden once, so you can swap a provider
   transform such as `uniprot-features-json` for one that reads a different
   feed. Reading your *own* file needs no adapter at all — see

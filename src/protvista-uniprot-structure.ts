@@ -23,6 +23,7 @@ import loaderIcon from './icons/spinner.svg';
 import { inlineSvg } from './icons/inline.js';
 import loaderStyles from './styles/loader-styles.js';
 import { injectStyleOnce, installTokenDefaults } from './styles/inject.js';
+import { warnLostProperties } from './lost-properties.js';
 
 const alphaFoldLinkUrl = 'https://alphafold.ebi.ac.uk/search/text/';
 const foldseekUrl = `https://search.foldseek.com/search`;
@@ -437,7 +438,7 @@ class ProtvistaUniprotStructure extends LitElement {
       sequence: { type: String },
       data: { type: Object },
       loading: { type: Boolean },
-      colorTheme: { type: String },
+      colorTheme: { type: String, attribute: 'color-theme' },
       alphamissenseAvailable: { type: Boolean },
       isoforms: { type: Object, attribute: false },
       selectedId: { type: String, attribute: 'selected-id' },
@@ -527,6 +528,7 @@ class ProtvistaUniprotStructure extends LitElement {
 
   async connectedCallback() {
     super.connectedCallback();
+    warnLostProperties(this, { data: 'data' });
     if (!this.accession && !this.checksum) return;
     // We are showing PDBe models returned by UniProt's API as there is inconsistency between UniProt's recognised ones and 3d-beacons.
     const pdbUrl =
@@ -865,6 +867,12 @@ class ProtvistaUniprotStructure extends LitElement {
             </div>`}
       </div>
     `;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'protvista-uniprot-structure': ProtvistaUniprotStructure;
   }
 }
 

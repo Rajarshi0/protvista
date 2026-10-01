@@ -277,13 +277,36 @@ describe('Registry — collision detection', () => {
     ).toThrow(RegistryCollisionError);
   });
 
-  it('throws when registering the same custom adapter name twice', () => {
+  it('throws when registering a different adapter under a taken name', () => {
     const r = createRegistry();
-    const fn: AdapterFunction = (x) => x;
-    r.registerAdapter('my-adapter', fn);
-    expect(() => r.registerAdapter('my-adapter', fn)).toThrow(
+    r.registerAdapter('my-adapter', (x) => x);
+    expect(() => r.registerAdapter('my-adapter', (x) => x)).toThrow(
       RegistryCollisionError
     );
+  });
+
+  // A host that runs its setup twice against one element (React
+  // StrictMode's double-invoked ref callbacks) registers nothing new.
+  it('treats re-registering the identical value as a no-op in every bucket', () => {
+    const r = createRegistry();
+    const fn: AdapterFunction = (x) => x;
+    const kind = { component: 'nightingale-track-canvas', adapter: 'my-adapter' } as const;
+    const stops = [
+      { value: 0, color: '#000' },
+      { value: 1, color: '#fff' },
+    ];
+    const ctor = class extends HTMLElement {};
+
+    r.registerAdapter('my-adapter', fn);
+    r.registerSemanticKind('my-kind', kind);
+    r.registerTheme('my-theme', stops);
+    r.registerComponent('my-track', ctor);
+
+    expect(() => r.registerAdapter('my-adapter', fn)).not.toThrow();
+    expect(() => r.registerSemanticKind('my-kind', kind)).not.toThrow();
+    expect(() => r.registerTheme('my-theme', stops)).not.toThrow();
+    expect(() => r.registerComponent('my-track', ctor)).not.toThrow();
+    expect(r.getAdapter('my-adapter')).toBe(fn);
   });
 
   it('agrees the article with the bucket noun', () => {

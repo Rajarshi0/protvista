@@ -94,9 +94,19 @@ describe('registerBuiltinComponents — seeding', () => {
     expect(calls).toEqual(RENDERABLE_COMPONENTS.map(([n, c]) => [n, c]));
   });
 
-  it('is not idempotent — a second seed collides (no override path)', () => {
+  it('a second seed of the same constructors is a no-op', () => {
     const r = createRegistry();
     registerBuiltinComponents(r);
-    expect(() => registerBuiltinComponents(r)).toThrow(RegistryCollisionError);
+    expect(() => registerBuiltinComponents(r)).not.toThrow();
+    expect(r.listComponents()).toHaveLength(RENDERABLE_COMPONENTS.length);
+  });
+
+  it('has no override path — a different constructor under a built-in name collides', () => {
+    const r = createRegistry();
+    registerBuiltinComponents(r);
+    const [name] = RENDERABLE_COMPONENTS[0];
+    expect(() =>
+      r.registerComponent(name, class extends HTMLElement {})
+    ).toThrow(RegistryCollisionError);
   });
 });

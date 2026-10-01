@@ -9,35 +9,47 @@ type ProteomicsPtm = {
 };
 
 type ProteomicsFeature = {
+  type?: string;
   unique?: boolean;
   ptms?: ProteomicsPtm[];
   residuesToHighlight?: unknown;
   [key: string]: unknown;
 };
 
-type ProteomicsData = { features: ProteomicsFeature[]; length?: number };
+type ProteomicsData = {
+  features: ProteomicsFeature[];
+  taxid?: number;
+  length?: number;
+};
 
-const proteomicsTrackProperties = (feature: ProteomicsFeature) => ({
-  category: 'PROTEOMICS',
-  type: feature.unique ? 'unique' : 'non_unique',
-});
-
+/**
+ * `uniprot-proteomics-json`: one peptide feature per API feature.
+ *
+ * `type` is rewritten to `'unique' | 'non_unique'` so the `filter:` sugar can
+ * split the two tracks, which would lose the API's own type
+ * (`PROTEOMICS` vs `PROTEOMICS_PTM`). That value is kept as `sourceType`, and
+ * the response-level `taxid` is copied onto each feature, so a consumer's
+ * tooltip can still build the PTM / PeptideAtlas sections from
+ * `detail.feature`. The raw response is never mutated: the same body also
+ * feeds `uniprot-proteomics-ptm-json` in the default config.
+ */
 export const proteomicsAdapter: AdapterFunction = (raw) => {
   const data = raw as ProteomicsData;
-  let adaptedData: ProteomicsFeature[] = [];
+  if (!data || data.length === 0) return [];
 
-  if (data && data.length !== 0) {
-    adaptedData = data.features.map((feature) => {
-      feature.residuesToHighlight = feature.ptms?.map((ptm) => ({
+  return renameProperties(
+    data.features.map((feature) => ({
+      ...feature,
+      residuesToHighlight: feature.ptms?.map((ptm) => ({
         name: ptm.name,
         position: ptm.position,
         sources: ptm.sources,
         dbReferences: ptm.dbReferences,
-      }));
-      return Object.assign(feature, proteomicsTrackProperties(feature));
-    });
-
-    adaptedData = renameProperties(adaptedData);
-  }
-  return adaptedData;
+      })),
+      sourceType: feature.type,
+      taxid: data.taxid,
+      category: 'PROTEOMICS',
+      type: feature.unique ? 'unique' : 'non_unique',
+    }))
+  );
 };

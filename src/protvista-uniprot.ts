@@ -36,6 +36,14 @@ import {
   type TooltipController,
 } from './tooltips/popover.js';
 import { renderLabel } from './tooltips/resolve.js';
+import { escapeHtml } from './utils/security.js';
+import { getFeatureSource, type FeatureSource } from './feature-source.js';
+import { warnLostProperties } from './lost-properties.js';
+import type {
+  ProtvistaChangeEvent,
+  ProtvistaChangeEventDetail,
+  ProtvistaTrackOrigin,
+} from './events.js';
 
 import filterConfig, { colorConfig } from './filter-config.js';
 
@@ -146,16 +154,6 @@ const measureOnce = (name: string, start: string, end: string) => {
       // rather than throwing; comparing the marks directly still works.
     }
   }
-};
-
-type NightingaleEvent = Event & {
-  detail?: {
-    displaystart?: number;
-    displayend?: number;
-    eventType?: 'click' | 'mouseover' | 'mouseout' | 'reset';
-    feature?: any;
-    coords?: [number, number];
-  };
 };
 
 /** How a track's data fetch failed. See `_trackErrors`. */
@@ -302,22 +300,29 @@ class ProtvistaUniprot extends LitElement {
    * (localStorage + the `?layout=` URL are both left untouched), so an
    * embedder that manages layout itself is unaffected.
    */
-  private noPersistLayout?: boolean;
-  private nostructure: boolean;
+  noPersistLayout?: boolean;
+  /** Hide the 3D structure group (`nostructure` attribute). */
+  nostructure: boolean;
   /**
    * Opt out of the built-in click tooltip. Consumers rendering a React overlay typically set this.
    * @see specs/config-approach.md "React host integration" (and docs/react-integration.md) for the
    * `change`-event listener pattern React hosts pair with this attribute.
    */
-  private notooltip?: boolean;
+  notooltip?: boolean;
   private hasData: boolean;
   private loading: boolean;
   private data: { [key: string]: any };
   private rawData: { [key: string]: any };
   private displayCoordinates: { start?: number; end?: number } = {};
-  private suspend?: boolean;
-  private accession?: string;
-  private sequence?: string;
+  /**
+   * Hold off loading (`suspend` attribute). Configure the element — register
+   * adapters, set `viewerConfig` — then clear it to load.
+   */
+  suspend?: boolean;
+  /** The UniProt accession to show (`accession` attribute). */
+  accession?: string;
+  /** The protein sequence, fetched from `accession` when not given. */
+  sequence?: string;
   /**
    * Fully-resolved config consumed by the renderer and
    * `loadProtvistaData()`. Populated in `_init()` by running the
@@ -334,13 +339,13 @@ class ProtvistaUniprot extends LitElement {
    * string). When `undefined`, the element falls back to
    * `configSrc` and then to the bundled `default-config.yaml`.
    */
-  private viewerConfig?: ProtvistaViewerConfig | string;
+  viewerConfig?: ProtvistaViewerConfig | string;
   /**
    * URL / file path to a YAML or JSON config. Fetched and handed to
    * `loadConfig` at mount time. Lower precedence than
    * `viewerConfig`.
    */
-  private configSrc?: string;
+  configSrc?: string;
   /**
    * Data injected via `setTrackData()` for tracks whose first data
    * descriptor is `from: custom`. Keyed by `${groupId}-${trackId}`;
@@ -476,9 +481,37 @@ class ProtvistaUniprot extends LitElement {
    */
   private readonly registry: Registry = createRegistry();
 
+  /** Backing value of the public `adapters` property. */
+  private _adapters?: Record<string, AdapterFunction>;
+
+  /**
+   * Track origins by the id suffix the renderer gives each track element
+   * (`${rowId}-${trackId}` for a track, `rowId` for a group aggregate), built
+   * once per `config.rows` array. A graph aggregate also carries the source of
+   * the one track it draws. See `_onChangeCapture`.
+   */
+  private _trackOrigins = new WeakMap<
+    NormalizedRow[],
+    Map<string, { track: ProtvistaTrackOrigin; source?: FeatureSource }>
+  >();
+
   constructor() {
     super();
     registerBuiltinComponents(this.registry);
+    // `adapters` may have been set while this element was still an
+    // undefined tag (before the module loaded). That value sits in an own
+    // property shadowing the accessor; move it through the setter so the
+    // adapters are registered before `connectedCallback` starts loading.
+    if (Object.prototype.hasOwnProperty.call(this, 'adapters')) {
+      const pending = (this as { adapters?: Record<string, AdapterFunction> })
+        .adapters;
+      delete (this as { adapters?: unknown }).adapters;
+      this.adapters = pending;
+    }
+    // Capture phase on the host runs before every bubble-phase listener —
+    // the built-in popover and any consumer listener, even one added before
+    // this element upgraded — so they all see the enriched `detail`.
+    this.addEventListener('change', this._onChangeCapture, { capture: true });
     this.openGroups = [];
     this._customizeMode = false;
     this.noPersistLayout = false;
@@ -496,7 +529,29 @@ class ProtvistaUniprot extends LitElement {
   // config loads (e.g. right after creating the element) so custom
   // names are known when `loadConfig` validates and normalizes.
 
-  /** Register a custom adapter so config can reference it by name. */
+  /**
+   * Adapters to register, by name — the declarative form of
+   * `registerAdapter`. Set it before the element loads (it may be set before
+   * the element is even defined, and is applied on upgrade), and the
+   * config's `adapter:` names resolve to these functions, including
+   * overrides of built-ins. Setting it again with the same functions is a
+   * no-op; entries set after the data has loaded apply to the next load.
+   */
+  get adapters(): Record<string, AdapterFunction> | undefined {
+    return this._adapters;
+  }
+
+  set adapters(value: Record<string, AdapterFunction> | undefined) {
+    this._adapters = value;
+    for (const [name, fn] of Object.entries(value ?? {})) {
+      this.registry.registerAdapter(name, fn);
+    }
+  }
+
+  /**
+   * Register a custom adapter so config can reference it by name.
+   * Registering the same function under the same name again is a no-op.
+   */
   registerAdapter(name: string, fn: AdapterFunction): void {
     this.registry.registerAdapter(name, fn);
   }
@@ -2081,21 +2136,172 @@ class ProtvistaUniprot extends LitElement {
     }
   }
 
+  /**
+   * Host-level `change` handler, registered in capture phase in the
+   * constructor so it runs before any other listener. It:
+   *
+   *   - records zoom/pan (`display-start` / `display-end`);
+   *   - copies `nightingale-linegraph-track`'s lowercase `eventtype` to
+   *     `eventType`, so there is one spelling for every track;
+   *   - fills in a line-graph click, which Nightingale sends without a
+   *     feature (see `_fillLinegraphClick`);
+   *   - sets `detail.track` — which row/track the event came from, with the
+   *     normalised kind, plus the clicked feature's own source track for a
+   *     collapsed group's aggregate. A graph aggregate's points are built
+   *     by Nightingale (or `_fillLinegraphClick`) and carry no source tag,
+   *     so its source is the one track it draws.
+   */
+  private _onChangeCapture = (e: Event): void => {
+    const detail = (e as ProtvistaChangeEvent).detail as
+      | ProtvistaChangeEventDetail
+      | null
+      | undefined;
+    if (!detail || typeof detail !== 'object') return;
+
+    if (detail['display-start']) {
+      this.displayCoordinates.start = detail['display-start'];
+    }
+    if (detail['display-end']) {
+      this.displayCoordinates.end = detail['display-end'];
+    }
+    if (detail.eventType === undefined && detail.eventtype !== undefined) {
+      detail.eventType = detail.eventtype;
+    }
+
+    const origin = this._originOf(e);
+    if (!origin) return;
+    if (
+      detail.eventType === 'click' &&
+      detail.feature == null &&
+      origin.element.localName === 'nightingale-linegraph-track'
+    ) {
+      this._fillLinegraphClick(detail, origin.key);
+    }
+    const source = getFeatureSource(detail.feature) ?? origin.source;
+    detail.track = {
+      ...origin.track,
+      ...(source
+        ? { sourceTrackId: source.trackId, sourceKind: source.kind }
+        : {}),
+    };
+  };
+
+  /**
+   * The track element an event came from, found by walking its path for
+   * the first id the renderer gave a track (`${CSS_PREFIX}-track-<key>`),
+   * with the origin that key maps to.
+   */
+  private _originOf(
+    e: Event
+  ):
+    | {
+        element: Element;
+        key: string;
+        track: ProtvistaTrackOrigin;
+        source?: FeatureSource;
+      }
+    | undefined {
+    const rows = this.config?.rows;
+    if (!rows) return undefined;
+    let origins = this._trackOrigins.get(rows);
+    if (!origins) {
+      origins = new Map();
+      for (const row of rows) {
+        // A graph aggregate draws only its first feeding track — the same
+        // rule the loader uses to build its data.
+        const drawn =
+          row.component === 'nightingale-linegraph-track' ||
+          row.component === 'nightingale-colored-sequence'
+            ? aggregateTracks(row.tracks)[0]
+            : undefined;
+        origins.set(row.id, {
+          track: { rowId: row.id, trackId: null, kind: null },
+          ...(drawn
+            ? { source: { trackId: drawn.id, kind: drawn.kind ?? null } }
+            : {}),
+        });
+      }
+      // Track keys after row keys: a standalone row renders only its track,
+      // keyed `${row.id}-${track.id}`.
+      for (const row of rows) {
+        for (const track of row.tracks) {
+          origins.set(trackKey(row.id, track.id), {
+            track: {
+              rowId: row.id,
+              trackId: track.id,
+              kind: track.kind ?? null,
+            },
+          });
+        }
+      }
+      this._trackOrigins.set(rows, origins);
+    }
+    const prefix = `${CSS_PREFIX}-track-`;
+    for (const node of e.composedPath()) {
+      if (node === this) break;
+      if (!(node instanceof Element) || !node.id.startsWith(prefix)) continue;
+      const key = node.id.slice(prefix.length);
+      const origin = origins.get(key);
+      if (origin) return { element: node, key, ...origin };
+    }
+    return undefined;
+  }
+
+  /**
+   * `nightingale-linegraph-track` sends a click with no `feature` and no
+   * `coords`, so neither a consumer nor the built-in popover has anything
+   * to show. Rebuild what its mouseover sends — each series' point at the
+   * clicked position, keyed by series name — from the data this element
+   * gave the track, add a `tooltipContent` listing them, and take `coords`
+   * from the pointer event. The position comes from `highlight`
+   * (`"i:i"`), which the track sets because we render it with
+   * `highlight-on-click`.
+   */
+  private _fillLinegraphClick(
+    detail: ProtvistaChangeEventDetail,
+    key: string
+  ): void {
+    const position = Number(detail.highlight?.split(':')[0]);
+    const series = this.data[key];
+    if (!Number.isFinite(position) || !Array.isArray(series)) return;
+
+    const feature: Record<string, unknown> = {};
+    const rows: string[] = [];
+    for (const { name, values } of series as Array<{
+      name?: string;
+      values?: Array<{ position: number; value: number }>;
+    }>) {
+      if (name === undefined) continue;
+      const point = values?.find((v) => v.position === position);
+      feature[name] = point;
+      if (point) {
+        rows.push(
+          `<h5>${escapeHtml(name)}</h5><p>${escapeHtml(point.value)}</p>`
+        );
+      }
+    }
+    if (rows.length === 0) return;
+    detail.feature = {
+      ...feature,
+      tooltipContent: `<h5>Position</h5><p>${position}</p>${rows.join('')}`,
+    };
+    const pointer = detail.parentEvent as MouseEvent | undefined;
+    if (detail.coords == null && pointer && 'pageX' in pointer) {
+      detail.coords = [pointer.pageX, pointer.pageY];
+    }
+  }
+
   connectedCallback() {
     super.connectedCallback();
     markOnce('protvista:script-start');
     this.registerStructuralComponents();
+    warnLostProperties(this, {
+      adapters: 'adapters',
+      viewerconfig: 'viewerConfig',
+      data: 'data',
+    });
 
     if (!this.suspend) this._init();
-
-    this.addEventListener('change', (e: NightingaleEvent) => {
-      if (e.detail?.displaystart) {
-        this.displayCoordinates.start = e.detail.displaystart;
-      }
-      if (e.detail?.displayend) {
-        this.displayCoordinates.end = e.detail.displayend;
-      }
-    });
 
     // Click-triggered tooltip display. The controller listens for the
     // same `change` event on this host, filters to
@@ -3579,6 +3785,12 @@ class ProtvistaUniprot extends LitElement {
         );
         break;
     }
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'protvista-uniprot': ProtvistaUniprot;
   }
 }
 

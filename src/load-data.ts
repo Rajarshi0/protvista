@@ -44,6 +44,7 @@ import { SHAPES } from './schema/shapes.js';
 import { resolveTooltip } from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
 import type { TooltipContext, TooltipSpec } from './tooltips/types.js';
+import { withFeatureSource, type FeatureSource } from './feature-source.js';
 
 /**
  * Minimal shape the loader needs from an adapter: a function of the raw
@@ -235,6 +236,10 @@ async function adaptAuthoredRecords(
  * copy. Pure — the input `transformedData` is never mutated; callers
  * must use the return value to see the attached tooltips.
  *
+ * Every object item comes back as a copy tagged with its `source` track
+ * (`withFeatureSource`), whether or not it gained a tooltip, so an item in a
+ * collapsed group's flattened aggregate still says which track it came from.
+ *
  * Consulted after the adapter has produced its output. Existing
  * `item.tooltipContent` wins first; otherwise picks a spec in this
  * precedence order:
@@ -268,15 +273,21 @@ async function adaptAuthoredRecords(
 function applyTooltipResolver(
   transformedData: unknown,
   spec: TooltipSpec | undefined,
-  ctx: TooltipContext
+  ctx: TooltipContext,
+  source: FeatureSource
 ): unknown {
   const annotate = (item: unknown): unknown => {
     if (!item || typeof item !== 'object') return item;
     const existingTooltip = (item as { tooltipContent?: unknown })
       .tooltipContent;
-    if (existingTooltip != null && existingTooltip !== '') return item;
+    if (existingTooltip != null && existingTooltip !== '') {
+      return withFeatureSource(item, source);
+    }
     const html = resolveTooltip(item, spec, ctx);
-    return html ? { ...item, tooltipContent: html } : item;
+    return withFeatureSource(
+      html ? { ...item, tooltipContent: html } : item,
+      source
+    );
   };
   if (Array.isArray(transformedData)) {
     return transformedData.map(annotate);
@@ -480,11 +491,12 @@ export async function loadProtvistaData(
     if (filteredData == null) return undefined;
     const spec: TooltipSpec | undefined =
       dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-    const annotated = applyTooltipResolver(filteredData, spec, {
-      accession,
-      trackId,
-      kind: kind ?? '',
-    });
+    const annotated = applyTooltipResolver(
+      filteredData,
+      spec,
+      { accession, trackId, kind: kind ?? '' },
+      { trackId, kind: kind ?? null }
+    );
     assignTrackData(trackKey, annotated, track);
     return annotated;
   };
@@ -596,11 +608,12 @@ export async function loadProtvistaData(
           //    is written.
           const spec: TooltipSpec | undefined =
             dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-          const annotated = applyTooltipResolver(filteredData, spec, {
-            accession,
-            trackId,
-            kind: kind ?? '',
-          });
+          const annotated = applyTooltipResolver(
+            filteredData,
+            spec,
+            { accession, trackId, kind: kind ?? '' },
+            { trackId, kind: kind ?? null }
+          );
           // 4. Assign track data (+ a pristine baseline for filter tracks)
           assignTrackData(trackKey, annotated, track);
           return annotated;

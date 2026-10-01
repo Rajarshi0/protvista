@@ -33,6 +33,11 @@
  *     that is not a built-in twice still throws, so a consumer
  *     colliding with their own adapter is caught as before. To add a
  *     built-in adapter, see `BUILTIN_ADAPTERS` in `./adapters`.
+ *   - Registering the *same* value under a name again is a no-op in
+ *     every bucket, not a collision. A host that runs its setup twice
+ *     against one element (React StrictMode's double-invoked ref
+ *     callbacks) is not registering anything new, so it must not throw;
+ *     a *different* value under a taken name still does.
  *   - The built-in semantic kinds reference adapter names that are
  *     themselves registered built-ins — both the generic file-format
  *     adapters and the UniProt/EBI domain adapters live in
@@ -252,8 +257,9 @@ const BUILTIN_THEMES: ReadonlyArray<readonly [string, readonly ColorStop[]]> = [
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Thrown when the same name is registered twice in the same bucket
- * (semantic kinds, adapters, themes, or components). The spec's escape-hatch
+ * Thrown when a name is registered twice in the same bucket (semantic
+ * kinds, adapters, themes, or components) with a different value.
+ * Re-registering the identical value is a no-op. The spec's escape-hatch
  * docstrings require "unique … must not collide with built-ins"; a
  * silent override would make behaviour order-dependent.
  */
@@ -413,6 +419,10 @@ export function createRegistry(): Registry {
     );
   }
 
+  // Themes are stored as copies, so a repeat registration is recognised
+  // by the stops array the caller passed rather than the stored value.
+  const themeSources = new Map<string, ColorStop[]>();
+
   // ── register* helpers with collision detection ─────────────
   function registerInto<T>(
     bucket: string,
@@ -426,6 +436,8 @@ export function createRegistry(): Registry {
       );
     }
     if (map.has(name)) {
+      // Re-registering the same value is a no-op, not a collision.
+      if (map.get(name) === value) return;
       throw new RegistryCollisionError(bucket, name);
     }
     map.set(name, value);
@@ -454,6 +466,9 @@ export function createRegistry(): Registry {
         builtinAdapterNames.add(name);
         return;
       }
+      // Same function again (including a built-in's own): nothing changes,
+      // and a built-in stays overridable.
+      if (adapters.get(name) === fn) return;
       if (builtinAdapterNames.has(name)) {
         // Consumer override of a built-in: allowed, and allowed once.
         // Forgetting the built-in status here means a second
@@ -482,12 +497,14 @@ export function createRegistry(): Registry {
           `Cannot register theme '${name}': stops must be an array of at least 2 ColorStop entries.`
         );
       }
+      if (themeSources.get(name) === stops) return;
       registerInto(
         'theme',
         themes,
         name,
         stops.map((s) => ({ ...s }))
       );
+      themeSources.set(name, stops);
     },
     getTheme(name) {
       return themes.get(name);

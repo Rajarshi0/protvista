@@ -67,4 +67,8 @@ tracks:
 
 For every track in the default config, no `dataTooltip` is set. Each semantic `kind` carries a sensible tooltip default — authors who just want the canonical UniProt look get it for free. Only set `dataTooltip` when you want a track-specific override, or when you're authoring a track that doesn't match an existing kind's default.
 
+## Line graphs
+
+A line graph has no per-feature datapoint to template, so `dataTooltip` does not apply to it. Clicking a line graph opens a fixed tooltip instead: the clicked position, then each series' value there.
+
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._

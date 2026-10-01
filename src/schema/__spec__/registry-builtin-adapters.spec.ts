@@ -116,6 +116,25 @@ describe('registerBuiltinAdapters — precedence', () => {
     );
   });
 
+  it('accepts the same override twice (StrictMode) but not a different one', () => {
+    const r = createRegistry();
+    const mine = () => 'mine';
+    r.registerAdapter('uniprot-features-json', mine);
+
+    expect(() => r.registerAdapter('uniprot-features-json', mine)).not.toThrow();
+    expect(r.getAdapter('uniprot-features-json')).toBe(mine);
+    expect(() => r.registerAdapter('uniprot-features-json', () => 'other')).toThrow(
+      RegistryCollisionError
+    );
+  });
+
+  it('keeps a built-in overridable when its own function is re-registered', () => {
+    const r = createRegistry();
+    r.registerAdapter('uniprot-features-json', builtinFn('uniprot-features-json'));
+
+    expect(() => r.registerAdapter('uniprot-features-json', () => 'mine')).not.toThrow();
+  });
+
   it('keeps overrides from leaking between registries', () => {
     const r1 = createRegistry();
     const r2 = createRegistry();
