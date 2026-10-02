@@ -23,9 +23,16 @@ export interface DiagnosticsView {
   showConfig(diagnostics: readonly Renderable[]): boolean;
   /**
    * Append runtime issues (from a `protvista-error` event) and refresh the
-   * summary count. Falls back to a generic message when none are given.
+   * summary count. With no issues, lists the event's own `message` — a
+   * viewer-scoped warning or a track failure carries no `issues` — at the
+   * event's `severity`, falling back to a generic line when neither is given.
    */
-  appendRuntime(issues: readonly Renderable[] | undefined, phase?: string): void;
+  appendRuntime(
+    issues: readonly Renderable[] | undefined,
+    phase?: string,
+    message?: string,
+    severity?: 'error' | 'warning'
+  ): void;
 }
 
 export function createDiagnosticsView(
@@ -71,20 +78,33 @@ export function createDiagnosticsView(
       return errors === 0;
     },
 
-    appendRuntime(issues, phase) {
-      const rows =
+    appendRuntime(issues, phase, message, severity) {
+      const rows: readonly Renderable[] =
         issues && issues.length > 0
           ? issues
-          : [{ message: 'A track failed to load its data.', code: 'runtime' }];
+          : [
+              {
+                message: message ?? 'A track failed to load its data.',
+                code: 'runtime',
+                severity,
+              },
+            ];
       for (const issue of rows) {
         list.append(
           item(
             phase ? `[${phase}] ${issue.message}` : issue.message,
-            issue.code ?? 'runtime'
+            issue.code ?? 'runtime',
+            issue.severity
           )
         );
       }
-      setSummary(list.childElementCount);
+      // Count from the list, not from this call: it also holds the config
+      // diagnostics and earlier runtime rows, and a warning among them must
+      // not read as a problem.
+      const errors = [...list.children].filter(
+        (li) => (li as HTMLElement).dataset.severity !== 'warning'
+      ).length;
+      setSummary(list.childElementCount, errors);
     },
   };
 }

@@ -162,6 +162,17 @@ export type TrackProcessingFailure = {
   message: string;
   /** The thrown value itself, for the developer channel. Absent for `info`. */
   cause?: unknown;
+  /**
+   * Whether running the track again could change the outcome. Only a
+   * *provider* adapter's own throw qualifies: a provider adapter is not a
+   * pure transform — it can make requests of its own (the AlphaFold
+   * confidence adapter fetches a second file), so its failure may be as
+   * transient as a 5xx. A decoder rejecting the author's file, a malformed
+   * `setTrackData()` payload, and an unregistered adapter name are the same
+   * code over the same input every time. Set here because only the loader
+   * knows which step threw.
+   */
+  retryable?: boolean;
 };
 
 /**
@@ -567,6 +578,9 @@ export async function loadProtvistaData(
         if (!first) return;
         const url = first.url;
         const adapter = first.adapter;
+        // Set when the throw came from a provider adapter's own body — the
+        // one failure here a Retry could change (`retryable` below).
+        let providerAdapterThrew = false;
 
         // Isolate the per-track pipeline: an adapter (or filter/tooltip
         // step) that throws on an unexpected payload — e.g. the empty
@@ -626,7 +640,15 @@ export async function loadProtvistaData(
               { source: substituteAccession(String(url ?? ''), accession) }
             );
           } else if (adapter) {
-            transformedData = await resolveAdapterFn(adapter)(...trackData);
+            // Resolved outside the guard: an unregistered name is a config
+            // mistake, not something a Retry could fix.
+            const adapterFn = resolveAdapterFn(adapter);
+            try {
+              transformedData = await adapterFn(...trackData);
+            } catch (err) {
+              providerAdapterThrew = true;
+              throw err;
+            }
           }
 
           // 2. Filter raw data if filter is specified
@@ -666,6 +688,7 @@ export async function loadProtvistaData(
             severity: 'error',
             message: err instanceof Error ? err.message : String(err),
             cause: err,
+            ...(providerAdapterThrew ? { retryable: true } : {}),
           };
           return undefined;
         }

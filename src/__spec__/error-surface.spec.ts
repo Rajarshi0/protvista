@@ -34,7 +34,9 @@ const ISSUES = `.${CSS_PREFIX}-error-issues`;
 
 type ErrorEvent = CustomEvent<{
   phase: string;
-  /** The same one-liner the console and the visible surface carry. */
+  /** How bad it is — the routing table's severity. */
+  severity: 'error' | 'warning';
+  /** The text the visible surface carries, without the console's tag. */
   message: string;
   /** The URL or path the failure came from, when it had one. */
   source?: string;
@@ -101,6 +103,19 @@ const fileTrack = (id: string, url: string): NormalizedTrack => ({
   component: 'nightingale-track-canvas',
   rendering: {},
   data: [{ from: 'file', url, format: 'csv', shape: 'feature' }],
+});
+
+/** A track over any one data source — for the descriptor forms above don't cover. */
+const sourceTrack = (
+  id: string,
+  source: NormalizedTrack['data'][number]
+): NormalizedTrack => ({
+  id,
+  label: id,
+  kind: 'features',
+  component: 'nightingale-track-canvas',
+  rendering: {},
+  data: [source],
 });
 
 const customTrack = (id: string): NormalizedTrack => ({
@@ -1542,12 +1557,14 @@ describe('strict mode', () => {
             json: async () => ({ sequence: { sequence: 'MSEQENCE' } }),
           } as unknown as Response;
         }
-        // The one track: 5xx until the service recovers.
+        // The one track: 5xx until the service recovers. Its data is an
+        // authored `.json` URL, so the healthy body is the bare array the
+        // `features-json` decoder reads — a wrapped object would now fail it.
         return trackHealthy
           ? ({
               ok: true,
               status: 200,
-              json: async () => ({ features: [{ type: 'X', begin: '1', end: '2' }] }),
+              json: async () => [{ type: 'X', start: 1, end: 2 }],
             } as unknown as Response)
           : ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response);
       })
@@ -1595,7 +1612,7 @@ describe('strict mode', () => {
           ? ({
               ok: true,
               status: 200,
-              json: async () => ({ features: [{ type: 'X', begin: '1', end: '2' }] }),
+              json: async () => [{ type: 'X', start: 1, end: 2 }],
             } as unknown as Response)
           : ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response)
       )
@@ -1948,7 +1965,7 @@ describe('a component rejecting its payload', () => {
 // ── what the event itself carries ─────────────────────────────────
 
 describe('the protvista-error payload', () => {
-  it('carries the message on every phase, matching the visible surface', async () => {
+  it('carries the message the track badge shows', async () => {
     // One listener covers every flavour — so every flavour has to say what
     // happened, not just which bucket it fell into. The badge, the panel, the
     // console line and this field all come from one string.
@@ -1990,8 +2007,34 @@ describe('the protvista-error payload', () => {
     });
 
     const seq = events.find((e) => e.detail.phase === 'sequence')!;
+    // Exactly the panel's text — not the developer line, which says
+    // "loadEntry returned no usable sequence" and is no use to a reader.
+    await vi.waitFor(() => {
+      if (!el.querySelector(PANEL)) throw new Error('panel not ready');
+    });
+    expect(seq.detail.message).toBe(
+      el.querySelector(`.${CSS_PREFIX}-error-panel__summary`)!.textContent
+    );
     expect(seq.detail.message).toContain('P05067X');
-    expect(typeof seq.detail.message).toBe('string');
+    expect(seq.detail.message).not.toContain('[protvista');
+    expect(seq.detail.severity).toBe('error');
+  });
+
+  it('carries the config panel\'s summary for a rejected config', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const events: ErrorEvent[] = [];
+    const el = mountEl({ viewerConfig: INVALID_CONFIG, accession: 'P05067' });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await vi.waitFor(() => {
+      if (!events.some((e) => e.detail.phase === 'config')) {
+        throw new Error('no config event yet');
+      }
+    });
+
+    const cfg = events.find((e) => e.detail.phase === 'config')!;
+    expect(cfg.detail.message).toMatch(/^Config validation failed \(\d+ issue/);
+    expect(cfg.detail.severity).toBe('error');
   });
 
   it('omits source when the failure had no URL or path to name', async () => {
@@ -2109,6 +2152,57 @@ describe('routing matrix — track-scoped failures', () => {
       },
     },
     {
+      name: 'HTTP 4xx from an absolute URL to the author\'s own file',
+      // The troubleshooting page suggests an absolute URL as the fix for a
+      // relative-path mix-up; a typo in it must not go silent.
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'url',
+              url: 'https://example.org/hits.csv',
+              format: 'csv',
+              shape: 'feature',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [['/hits.csv', { ok: false, status: 404 }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch:
+          /https:\/\/example\.org\/hits\.csv could not be found \(HTTP 404\) — check the URL\./,
+      },
+    },
+    {
+      name: 'HTTP 4xx from the { url } object form of an authored file',
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'url',
+              url: './hits.csv',
+              format: 'csv',
+              shape: 'feature',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [['/hits.csv', { ok: false, status: 404 }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /\.\/hits\.csv could not be found \(HTTP 404\) — check the URL\./,
+      },
+    },
+    {
       name: 'unparseable body',
       config: (strict) =>
         normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
@@ -2134,6 +2228,86 @@ describe('routing matrix — track-scoped failures', () => {
         panel: [false, true],
         consoleLevel: 'warn',
         consoleMatch: /row 2, column "start": expected a number, got "abc"/,
+      },
+    },
+    {
+      name: 'JSON file whose top level is not an array',
+      // `{ "features": [...] }` — the commonest wrong container. It used to
+      // warn and render an empty track, with no badge to say why.
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'file',
+              url: './hits.json',
+              format: 'json',
+              shape: 'feature',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [
+        ['/hits.json', { ok: true, status: 200, body: { features: [] } }],
+      ],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: false,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch:
+          /\.\/hits\.json \(parsed as JSON\): expected an array of feature records; got object\./,
+      },
+    },
+    {
+      name: 'provider adapter whose own request failed',
+      // The AlphaFold confidence adapter fetches a second file the loader
+      // never sees. Its outage is as transient as a 5xx, and there is no file
+      // for the reader to fix — so it gets a Retry and says where the data
+      // came from.
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'url',
+              url: [
+                'https://alphafold.example/api/prediction/P05067',
+                'https://example.org/proteins/P05067',
+              ],
+              adapter: 'alphafold-prediction-json',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [
+        [
+          '/api/prediction/',
+          {
+            ok: true,
+            status: 200,
+            body: [
+              {
+                sequence: 'MSEQENCE',
+                cifUrl:
+                  'https://alphafold.example/files/AF-P05067-F1-model_v4.cif',
+              },
+            ],
+          },
+        ],
+        [
+          '/proteins/P05067',
+          { ok: true, status: 200, body: { sequence: { sequence: 'MSEQENCE' } } },
+        ],
+        ['-confidence_v4.json', { ok: false, status: 503 }],
+      ],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch:
+          /Couldn't process the data from https:\/\/alphafold\.example\/api\/prediction\/P05067: AlphaFold confidence data unavailable \(HTTP 503\)/,
       },
     },
     {
@@ -2337,6 +2511,11 @@ describe('routing matrix — viewer-scoped failures', () => {
         String(c[0]).includes('Ignoring theme.accentColor')
       )
     ).toBe(true);
+    // No `issues` to carry a severity, so the event carries its own — or a
+    // listener could not tell this from a config that failed to load.
+    expect(cfg.detail.issues).toEqual([]);
+    expect(cfg.detail.severity).toBe('warning');
+    expect(cfg.detail.message).toMatch(/^Ignoring theme\.accentColor/);
   });
 
   it('routes a setTrackData misuse to the event, and to the panel under strict', async () => {
@@ -2535,5 +2714,203 @@ describe('blocked track in the bundled default config', () => {
       },
       { timeout: 3000 }
     );
+  });
+});
+
+// ── classification and render-state edge cases ───────────────────
+
+describe('a track that fetches several URLs', () => {
+  const twoUrlTrack = (adapter = 'uniprot-features-json') =>
+    sourceTrack('t', {
+      from: 'url',
+      url: ['https://example.org/a.json', 'https://example.org/b.json'],
+      adapter,
+    });
+
+  it('badges a 5xx on one URL even when another answered a provider 404', async () => {
+    // Only the first failed URL used to be classified, so a provider 404 on
+    // `a` hid a 503 on `b` completely — no badge, no event, no console line.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stubFetch([
+      ['/a.json', { ok: false, status: 404 }],
+      ['/b.json', { ok: false, status: 503 }],
+    ]);
+    const el = buildLoaded(normConfig([twoUrlTrack()]));
+
+    await el._loadData();
+
+    const err = el._trackErrors.get('g-t')!;
+    expect(err.status).toBe(503);
+    expect(err.url).toBe('https://example.org/b.json');
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('logs one console line per provider URL that had nothing', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stubFetch([
+      ['/a.json', { ok: false, status: 404 }],
+      ['/b.json', { ok: false, status: 404 }],
+    ]);
+    const el = buildLoaded(normConfig([twoUrlTrack()]));
+
+    await el._loadData();
+
+    expect(el._trackErrors.size).toBe(0);
+    expect(info.mock.calls.map(([line]) => String(line))).toEqual([
+      '[protvista-uniprot] track g/t: no data (HTTP 404) at https://example.org/a.json.',
+      '[protvista-uniprot] track g/t: no data (HTTP 404) at https://example.org/b.json.',
+    ]);
+  });
+
+  it('does not print the adapter choking on the empty body under an HTTP line', async () => {
+    // The Proteins API is down, so the AlphaFold adapter is handed `[]` for
+    // the protein and throws reading `.sequence` off it. The 503 is the
+    // explanation; that TypeError under it reads as a viewer bug.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([
+      [
+        '/a.json',
+        { ok: true, status: 200, body: [{ sequence: 'MSEQENCE', cifUrl: 'x.cif' }] },
+      ],
+      ['/b.json', { ok: false, status: 503 }],
+    ]);
+    const el = buildLoaded(
+      normConfig([twoUrlTrack('alphafold-prediction-json')])
+    );
+
+    await el._loadData();
+
+    expect(el._trackErrors.get('g-t')!.kind).toBe('http');
+    const line = warn.mock.calls.find(([m]) => String(m).includes('HTTP 503'))!;
+    expect(line).toEqual(['HTTP 503 — https://example.org/b.json']);
+  });
+});
+
+describe('the strict aggregated panel summary', () => {
+  it('ends in one full stop when the failure text already has one', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: false, status: 404 }]]);
+    const el = buildLoaded(
+      normConfig([fileTrack('t', './hits.csv')], { strict: true })
+    );
+
+    await el._loadData();
+
+    expect(el._mountError?.summary).toBe(
+      "Track 'g/t' failed to load — ./hits.csv could not be found (HTTP 404) — check the path is relative to the page."
+    );
+  });
+});
+
+describe('render failures over time', () => {
+  const exploding = () => ({
+    set data(_v: unknown) {
+      throw new TypeError('undefined is not iterable');
+    },
+  });
+  const accepting = () => ({ data: undefined as unknown });
+
+  it('clears a stale aggregate failure once the rebuilt payload draws', () => {
+    // Hiding the track that broke a collapsed group rebuilds the aggregate
+    // without it. The new payload draws — so the row must stop saying it
+    // cannot, especially as a `render` failure offers no Retry to lift it.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')]), {
+      hasData: true,
+      data: { g: [{ type: 'DOMAIN' }], 'g-t': [{ type: 'DOMAIN' }] },
+    });
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el._assignComponentData(exploding(), [{ bad: true }], 'g');
+    // The same payload again — re-pushed on an expand — is not news.
+    el._assignComponentData(exploding(), [{ bad: true }], 'g');
+    expect(el._trackErrors.get('g')?.kind).toBe('render');
+    expect(events).toHaveLength(1);
+    expect(renderTarget(el).querySelector(BADGE)).not.toBeNull();
+
+    el._assignComponentData(accepting(), [{ type: 'DOMAIN' }], 'g');
+
+    expect(el._trackErrors.has('g')).toBe(false);
+    expect(renderTarget(el).querySelector(BADGE)).toBeNull();
+  });
+
+  it('keeps a fetch failure, and its Retry, when the leftover payload will not draw', async () => {
+    // The fetch failure is the explanation. Overwriting it with the render
+    // message swapped a Retry that could fix the track for one that cannot.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    stubFetch([['/x.json', { ok: false, status: 503 }]]);
+    const el = buildLoaded(
+      normConfig([urlTrack('t', 'https://example.org/x.json')]),
+      { openGroups: ['g'] }
+    );
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+    await el._loadData();
+    expect(events).toHaveLength(1);
+
+    el._assignComponentData(exploding(), [], 'g-t');
+
+    expect(el._trackErrors.get('g-t')?.kind).toBe('http');
+    expect(events).toHaveLength(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(
+      renderTarget(el).querySelector(`.${CSS_PREFIX}-error-retry`)
+    ).not.toBeNull();
+  });
+});
+
+describe('dismissing the alert panel', () => {
+  it('brings the viewer back with its rows drawn, not blank', async () => {
+    // The panel replaces the viewer, so dismissing it mounts every row afresh
+    // — `display: none` and empty until data is pushed into them. None of the
+    // properties the push is gated on change on a dismiss, so it never ran.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        const body = url.includes('/proteins/api/proteins/')
+          ? { sequence: { sequence: 'MSEQENCE' } }
+          : [{ type: 'DOMAIN', start: 1, end: 5 }];
+        return { ok: true, status: 200, json: async () => body } as unknown as Response;
+      })
+    );
+    const el = mountEl({
+      viewerConfig: {
+        strict: true,
+        rows: [
+          { id: 'g', tracks: [{ id: 'y', kind: 'features', data: 'https://example.org/x.json' }] },
+        ],
+      },
+      accession: 'P05067',
+    });
+    const group = () =>
+      el.querySelector<HTMLElement>(`#${CSS_PREFIX}-group_g`);
+    await vi.waitFor(() => {
+      if (group()?.style.display !== 'flex') throw new Error('not drawn yet');
+    });
+
+    // A failure on a working viewer that `strict` promotes to the panel.
+    el.setTrackData('g', 'nope', [{ type: 'DOMAIN' }]);
+    await el.updateComplete;
+    expect(el.querySelector(PANEL)).not.toBeNull();
+    expect(group()).toBeNull();
+
+    el.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')!.click();
+
+    await vi.waitFor(() => {
+      if (group()?.style.display !== 'flex') throw new Error('row still hidden');
+    });
+    // The collapsed group's element got its payload back, too.
+    const aggregate = el.querySelector<HTMLElement & { data?: unknown }>(
+      `#${CSS_PREFIX}-track-g`
+    );
+    expect(aggregate?.data).toBeDefined();
+    expect(aggregate?.data).toBe(el.data.g);
   });
 });

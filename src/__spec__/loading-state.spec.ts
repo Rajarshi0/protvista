@@ -26,7 +26,11 @@ const PANEL = `.${CSS_PREFIX}-error-panel`;
 const LIVE = `.${CSS_PREFIX}-live-region`;
 const LOADING_TEXT = 'Loading protein data…';
 
-/** A raw, valid config with one http-URL feature track. */
+/**
+ * A raw, valid config with one http-URL feature track. The URL is the
+ * author's own `.json` file, so its body is the bare record array the
+ * `features-json` decoder reads.
+ */
 const VALID_CONFIG = {
   rows: [
     {
@@ -126,7 +130,7 @@ describe('initial loading state', () => {
         const url = String(input);
         const body = url.includes('/proteins/api/proteins/')
           ? { sequence: { sequence: 'MSEQENCE' } }
-          : { features: [{ type: 'DOMAIN', begin: '1', end: '5' }] };
+          : [{ type: 'DOMAIN', start: 1, end: 5 }];
         return {
           ok: true,
           status: 200,
@@ -136,6 +140,53 @@ describe('initial loading state', () => {
     );
     const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067' });
 
+    await vi.waitFor(() => {
+      if (!el.querySelector('nightingale-manager')) {
+        throw new Error('viewer not ready');
+      }
+    });
+    expect(el.querySelector(LOADER)).toBeNull();
+  });
+
+  it('keeps the spinner up when the tracks land before the sequence', async () => {
+    // The reverse order. Inline tracks, or an endpoint that fails fast, settle
+    // in a few microtasks while the sequence is still on the wire. Clearing
+    // the spinner on the tracks alone fell through to the readiness gate,
+    // which renders nothing until the sequence arrives — the blank region the
+    // spinner exists to replace.
+    let releaseSequence!: () => void;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        if (String(input).includes('/proteins/api/proteins/')) {
+          await new Promise<void>((resolve) => (releaseSequence = resolve));
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ sequence: { sequence: 'MSEQENCE' } }),
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ type: 'DOMAIN', start: 1, end: 5 }],
+        } as unknown as Response;
+      })
+    );
+    const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067' });
+    const data = () => (el as unknown as { data: Record<string, unknown> }).data;
+
+    // The track batch has finished: its payload is in.
+    await vi.waitFor(() => {
+      if (!data()['g-y']) throw new Error('tracks not loaded yet');
+    });
+    await settle(el);
+
+    expect(el.sequence).toBeUndefined();
+    expect(el.querySelector(LOADER)).not.toBeNull();
+    expect(el.querySelector(LIVE)!.textContent).toContain(LOADING_TEXT);
+
+    releaseSequence();
     await vi.waitFor(() => {
       if (!el.querySelector('nightingale-manager')) {
         throw new Error('viewer not ready');
@@ -252,6 +303,46 @@ describe('initial loading announcement', () => {
     expect(announce.mock.calls.length).toBe(before);
   });
 
+  it('waits for a suspended element to mount its region before announcing', async () => {
+    // `updated()` runs while suspended even though `render()` draws nothing.
+    // Latching the announcement then put the text into the region in the same
+    // render that created it — the "arrives with its text already in it" case
+    // screen readers stay silent on — and the latch blocked a second go.
+    stubHungFetch();
+    const proto = customElements.get('protvista-uniprot')!.prototype as {
+      _announce(message: string): void;
+    };
+    const original = proto._announce;
+    const regionAtAnnounce: Array<string | null> = [];
+    vi.spyOn(proto, '_announce').mockImplementation(function (
+      this: HTMLElement,
+      message: string
+    ) {
+      if (message === LOADING_TEXT) {
+        regionAtAnnounce.push(
+          this.querySelector(LIVE)?.textContent?.trim() ?? null
+        );
+      }
+      original.call(this, message);
+    });
+
+    const el = mountEl({
+      viewerConfig: VALID_CONFIG,
+      accession: 'P05067',
+      suspend: true,
+    } as Partial<El>);
+    await settle(el);
+    expect(regionAtAnnounce).toEqual([]);
+
+    (el as unknown as { suspend: boolean }).suspend = false;
+    await settle(el);
+
+    // Announced exactly once, into a region that was already in the tree and
+    // still empty — so the text lands as a change to it.
+    expect(regionAtAnnounce).toEqual(['']);
+    expect(el.querySelector(LIVE)!.textContent).toContain(LOADING_TEXT);
+  });
+
   it('clears the announcement when the load settles, leaving the region free', async () => {
     // The region is shared with the layout announcements ("Domains moved to
     // position 2 of 12"). A stale "Loading…" left in it would be the text the
@@ -262,7 +353,7 @@ describe('initial loading announcement', () => {
         const url = String(input);
         const body = url.includes('/proteins/api/proteins/')
           ? { sequence: { sequence: 'MSEQENCE' } }
-          : { features: [{ type: 'DOMAIN', begin: '1', end: '5' }] };
+          : [{ type: 'DOMAIN', start: 1, end: 5 }];
         return {
           ok: true,
           status: 200,

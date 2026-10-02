@@ -15,17 +15,20 @@ single listener covers all of them. Switch on `detail.phase`:
 const viewer = document.querySelector('protvista-uniprot');
 
 viewer.addEventListener('protvista-error', (event) => {
-  const { phase, message, source, issues, context } = event.detail;
+  const { phase, severity, message, source, context } = event.detail;
 
-  // `message` is the same one-liner the badge or panel shows, so the simplest
-  // useful listener is one line and needs no `switch` at all.
+  // `message` is the text the badge or panel shows, so the simplest useful
+  // listener is one line and needs no `switch` at all.
   console.warn(`[protvista] ${phase}: ${message}`, source ?? '');
 
-  if (phase === 'config') {
-    const errors = issues.filter((i) => i.severity !== 'warning');
-    if (errors.length) console.error('Config problem:', errors);
+  if (phase === 'config' && severity === 'error') {
+    console.error('The config was rejected:', event.detail.issues);
   } else if (phase === 'track-fetch') {
-    console.warn(`Track ${context.groupId}/${context.trackId} failed`);
+    // `trackId` is absent when a collapsed group's combined view failed.
+    const where = context.trackId
+      ? `${context.groupId}/${context.trackId}`
+      : context.groupId;
+    console.warn(`Track ${where} failed`);
   }
 });
 ```
@@ -35,7 +38,8 @@ viewer.addEventListener('protvista-error', (event) => {
 | Field | What it holds |
 | --- | --- |
 | `phase` | Which part of the pipeline failed — see the table below. |
-| `message` | One line, the same text the `⚠` badge or the alert panel shows. For a malformed file or a track that could not draw its data, this is what the decoder or the component threw, naming your file and the offending row. |
+| `severity` | `'error'` or `'warning'` — see [Where a failure shows up](#where-a-failure-shows-up). A warning names something that loaded, but not as written: a config warning, a `theme:` colour that could not be resolved, a component with no renderer. |
+| `message` | One line: the text the `⚠` badge or the alert panel shows, without the `[protvista]` tag the console line starts with. For a malformed file or a track that could not draw its data, this is what the decoder or the component threw, naming your file and the offending row. |
 | `source` | The URL or path the failure came from, when it had one. Absent for an inline, `custom` or `setTrackData()` source. |
 | `issues` | For `config`, the `ValidationIssue[]`; `[]` otherwise. |
 | `context` | Identifiers for the failure — see [The `context` object](#the-context-object). |
@@ -44,9 +48,9 @@ viewer.addEventListener('protvista-error', (event) => {
 
 | `phase` | Fires when | Useful `context` |
 | --- | --- | --- |
-| `config` | The config fails to parse or validate, or it loads with warnings. `detail.issues` lists what's wrong, and a warning's issue has `severity: 'warning'`. | — |
+| `config` | The config fails to parse or validate, or it loads with warnings. `detail.severity` says which. `detail.issues` lists what's wrong when the validator raised it, and a warning's issue has `severity: 'warning'`; a warning raised after validation (an unresolvable `theme:` colour, a component with no renderer) has empty `issues`. | — |
 | `sequence` | No usable sequence was found for the accession. | `accession`, plus (on a fetch failure) `errorKind` / `status` / `url` |
-| `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, a `from: file` path that 404'd, or a payload the track could not draw. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
+| `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, a 4xx on a path or URL to your own data, or a payload the track could not draw. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
 
 ### Where a failure shows up
@@ -91,11 +95,14 @@ Reading it:
 
 A **Retry** control appears on whichever surface carried the failure, and only
 when retrying could plausibly change the answer: a network error or a 5xx may
-be transient, and a `from: file` path that 404s is something *you* can fix —
-correct the path or drop the file into place, then Retry reloads that one track
-instead of the whole page. A malformed file, an adapter that threw and a payload
-the track could not draw all get no Retry: they would fail the same way again
-with no action available in between.
+be transient, and a path or URL to your own data that 404s is something *you*
+can fix — correct it or drop the file into place, then Retry reloads that one
+track instead of the whole page. A built-in provider adapter that throws gets a
+Retry too: some make requests of their own (the AlphaFold confidence track
+fetches a second file), so their failures can be as temporary as a 5xx. A
+malformed file, a malformed `setTrackData()` payload, an unregistered adapter
+name and a payload the track could not draw all get no Retry: they would fail
+the same way again with no action available in between.
 
 ### The `context` object
 
@@ -104,13 +111,14 @@ Every field is optional; the reporter fills in what's relevant to the phase.
 `errorKind` is one of:
 
 - `network` — unreachable (offline, blocked, DNS, CORS, or timeout);
-- `http` — the server answered with a 5xx, or a `from: file` path answered 4xx
-  (`status` is set). A 4xx from a provider endpoint is treated as "missing, not
-  broken", so it does not fire a `track-fetch` event;
+- `http` — the server answered with a 5xx, or a path or URL to your own data
+  answered 4xx (`status` is set). A 4xx from a provider endpoint is treated as
+  "missing, not broken", so it does not fire a `track-fetch` event;
 - `parse` — a successful response whose body couldn't be parsed;
 - `adapter` — the body arrived, but the decoder, the shape validator or the
-  named adapter threw on it. The badge and the event carry the thrown message
-  verbatim, which names your file and the offending row;
+  named adapter threw on it. For your own file, the badge and the event carry
+  the thrown message verbatim, which names your file and the offending row; for
+  a provider adapter, they name the URL the data came from;
 - `render` — the payload was built, and the track itself rejected it on
   handover (a line graph handed feature records, say). `trackId` is absent when
   the rejected payload was a collapsed group's combined view rather than one
@@ -136,10 +144,13 @@ browser may be looking in the wrong place. Serve the page from the same
 directory as the data, or use an absolute URL. See the path note in
 [Load your own data](/protvista/your-data#a-path-gotcha-to-know).
 
-The viewer says so on screen: a `from: file` path that 404s shows a `⚠` badge
+The viewer says so on screen. A relative path that 404s shows a `⚠` badge
 reading "`./hotspots.csv` could not be found (HTTP 404) — check the path is
-relative to the page." A track that stays empty with no badge really did load
-and really is empty.
+relative to the page." An absolute URL, or the `{ url: … }` form, that 404s
+reads "… could not be found (HTTP 404) — check the URL." A JSON file whose
+top level is not an array — `{ "features": [...] }` rather than `[...]` — shows
+a badge too. So a track that stays empty with no badge really did load and
+really is empty.
 
 ### A track is empty but its data looks right
 

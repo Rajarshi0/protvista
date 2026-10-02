@@ -317,9 +317,23 @@ describe('failure sites report rather than route', () => {
       ),
     ];
     expect(raises).toHaveLength(3);
-    // Each one is reached only behind a routed decision, never a `strict` read.
-    for (const guard of ['channels.panel', 'panelWanted']) {
-      expect(sources['src/protvista-uniprot.ts']).toContain(guard);
+    // Each one is reached only behind a routed decision, never a `strict` read:
+    // the block enclosing the call — the nearest line above it that is
+    // indented less — must be an `if` on the router's answer. Checking that
+    // the guard strings occur *somewhere* in the file passed with any one of
+    // the three left unguarded.
+    const lines = sources['src/protvista-uniprot.ts'].split('\n');
+    const indent = (line: string) => line.length - line.trimStart().length;
+    const guards = lines.flatMap((line, i) => {
+      if (!line.includes('this._setMountError(')) return [];
+      const depth = indent(line);
+      let j = i - 1;
+      while (j >= 0 && (lines[j].trim() === '' || indent(lines[j]) >= depth)) j--;
+      return [lines[j].trim()];
+    });
+    expect(guards).toHaveLength(3);
+    for (const guard of guards) {
+      expect(guard).toMatch(/^(?:\} else )?if \((?:channels\.panel|panelWanted)\b/);
     }
   });
 

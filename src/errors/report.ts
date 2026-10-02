@@ -17,10 +17,11 @@
  * Four phases emit today:
  *   - `config`          — config validation / parse failure (mount panel),
  *                         or a config that loaded with warnings (event only;
- *                         each issue carries `severity: 'warning'`)
+ *                         `detail.severity` is `'warning'`, and each issue,
+ *                         when there are any, carries `severity: 'warning'`)
  *   - `sequence`        — no usable sequence for the accession (mount panel)
  *   - `track-fetch`     — a track's data failed: its URL was unreachable
- *                         or answered 5xx, a `from: file` path 404'd, its
+ *                         or answered 5xx, an authored path or URL 4xx'd, its
  *                         body was unparseable, or its decoder / adapter
  *                         threw on the records (badge + event)
  *   - `set-track-data`  — misuse of the `setTrackData()` escape hatch
@@ -62,7 +63,8 @@ export interface ErrorContext {
    *   - `http`    — a 4xx/5xx response (`status` is set);
    *   - `parse`   — a 2xx body that failed to parse;
    *   - `adapter` — the body arrived, but the decoder / shape validator /
-   *                 named adapter threw on it (a malformed file);
+   *                 named adapter threw on it (a malformed file, or a
+   *                 provider adapter's own request failing);
    *   - `render`  — the payload was built, and the Nightingale element
    *                 rejected it when handed over. `trackId` is absent when
    *                 the rejected payload was a group's collapsed aggregate
