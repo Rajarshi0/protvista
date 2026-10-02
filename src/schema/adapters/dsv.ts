@@ -147,7 +147,12 @@ function isBlankRow(cells: readonly string[]): boolean {
  * adapter reference (`docs/adapter-reference.md`) can be pinned to the
  * parser's actual requirement by a drift test.
  */
-export const REQUIRED_COLUMNS = ['type', 'start', 'end', 'description'] as const;
+export const REQUIRED_COLUMNS = [
+  'type',
+  'start',
+  'end',
+  'description',
+] as const;
 
 /**
  * A plain decimal number literal (optional sign, integer/fraction, optional
@@ -205,10 +210,14 @@ function wholeNumber(
  * that parses as text but is semantically malformed is invisible to the
  * fetch-level error surface. Surfacing adapter throws as track errors is a
  * follow-up.)
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
  */
 export function rowsToFeatureRecords(
   rows: string[][],
-  opts: { formatLabel: string }
+  opts: { formatLabel: string; rowNumbers?: number[] }
 ): FeatureRecord[] {
   const { formatLabel } = opts;
 
@@ -301,6 +310,7 @@ export function rowsToFeatureRecords(
     }
 
     records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
   return records;
@@ -339,10 +349,14 @@ export const POINT_COLUMNS = ['position', 'value'] as const;
  * Errors name the offending row by 1-based line number (header = line 1)
  * and the column, e.g.
  * `linegraph-csv: row 3, column "value": expected a number, got "abc"`.
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
  */
 export function rowsToPointRecords(
   rows: string[][],
-  opts: { formatLabel: string }
+  opts: { formatLabel: string; rowNumbers?: number[] }
 ): PointRecord[] {
   const { formatLabel } = opts;
 
@@ -405,6 +419,7 @@ export function rowsToPointRecords(
     };
     wholeNumber(cells, index, 'position', record.position, line, formatLabel);
     records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
   return records;
@@ -453,10 +468,14 @@ export const VARIATION_OPTIONAL_COLUMNS = [
  * Errors name the offending row by 1-based line number (header = line 1) and
  * the column, e.g.
  * `variation-csv: row 3, column "position": expected a number, got "abc"`.
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
  */
 export function rowsToVariationRecords(
   rows: string[][],
-  opts: { formatLabel: string }
+  opts: { formatLabel: string; rowNumbers?: number[] }
 ): VariationRecord[] {
   const { formatLabel } = opts;
 
@@ -530,6 +549,7 @@ export function rowsToVariationRecords(
       }
     }
     records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
   return records;
