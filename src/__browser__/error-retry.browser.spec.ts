@@ -21,6 +21,15 @@ const PANEL = `.${CSS_PREFIX}-error-panel`;
 const RETRY = `.${CSS_PREFIX}-error-retry`;
 const BADGE = `.${CSS_PREFIX}-error-badge`;
 
+/**
+ * A raw config whose single top-level `rows:` entry declares no `tracks:` —
+ * the *standalone* shape the normalizer wraps in a synthetic one-track row,
+ * and the default in the starter kits.
+ */
+const STANDALONE_CONFIG = {
+  rows: [{ id: 'solo', kind: 'features', data: 'https://example.org/x.json' }],
+};
+
 /** A raw, valid config with one http-URL feature track. */
 const VALID_CONFIG = {
   rows: [
@@ -165,6 +174,60 @@ describe('per-track error badge — accessibility & retry', () => {
     await userEvent.click(retry);
 
     // After recovery the badge is gone.
+    await vi.waitFor(() => {
+      if (el.querySelector(BADGE)) throw new Error('badge still present');
+    });
+    expect(trackCalls).toBe(2);
+  });
+});
+
+describe('standalone row error badge — accessibility & retry', () => {
+  it('a broken standalone row keeps an accessible badge instead of vanishing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let trackCalls = 0;
+    stubFetch((url) => {
+      if (url.includes('/proteins/api/proteins/')) {
+        return { ok: true, status: 200, body: { sequence: { sequence: 'MSEQENCE' } } };
+      }
+      if (url.includes('/x.json')) {
+        trackCalls += 1;
+        return trackCalls === 1
+          ? { ok: false, status: 500 }
+          : { ok: true, status: 200, body: { features: [{ type: 'DOMAIN', begin: '1', end: '5' }] } };
+      }
+      return { ok: true, status: 200 };
+    });
+
+    const el = mount<El>('protvista-uniprot', {
+      viewerConfig: STANDALONE_CONFIG,
+      accession: 'P05067',
+    });
+
+    const badge = await vi.waitFor(() => {
+      const b = el.querySelector<HTMLElement>(BADGE);
+      if (!b) throw new Error('badge not ready');
+      return b;
+    });
+
+    // The row survived the failure, with the same badge semantics a grouped
+    // track gets — and no "All tracks are hidden" notice standing in for it.
+    expect(badge.getAttribute('role')).toBe('img');
+    expect(badge.getAttribute('tabindex')).toBe('0');
+    expect(el.querySelector(`.${CSS_PREFIX}-all-hidden`)).toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    expect(el.querySelector(`#${CSS.escape(descId)}`)).not.toBeNull();
+
+    const row = el.querySelector<HTMLElement>(
+      `.${CSS_PREFIX}-group--standalone`
+    )!;
+    expect(row).not.toBeNull();
+    await expectNoA11yViolations(row);
+
+    // The badge is reachable by keyboard, and its Retry recovers the row.
+    badge.focus();
+    expect(document.activeElement).toBe(badge);
+
+    await userEvent.click(el.querySelector<HTMLButtonElement>(RETRY)!);
     await vi.waitFor(() => {
       if (el.querySelector(BADGE)) throw new Error('badge still present');
     });

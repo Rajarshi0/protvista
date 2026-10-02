@@ -2418,8 +2418,16 @@ class ProtvistaUniprot extends LitElement {
     total = 1
   ) {
     const track = group.tracks[0];
-    const trackData = track && this.data[`${group.id}-${track.id}`];
-    if (!track || !hasRenderableData(trackData)) {
+    if (!track) return '';
+    const key = `${group.id}-${track.id}`;
+    const trackHasData = hasRenderableData(this.data[key]);
+    const trackHasError = this._trackErrors.has(key);
+    // Neither data nor a broken error: nothing to draw (the 4xx "missing"
+    // path). With an error, the row still renders — label, `⚠` badge, and
+    // Retry when the failure is recoverable — and only the content cell is
+    // dropped. This mirrors `_renderExpandedTrack`, so a failed track looks
+    // the same whether it sits in a group or on its own.
+    if (!trackHasData && !trackHasError) {
       return '';
     }
     const attrs = renderingToAttrs(track.rendering);
@@ -2436,28 +2444,34 @@ class ProtvistaUniprot extends LitElement {
         >
           <span class="${CSS_PREFIX}-label-text"
             >${(track.filterUI === 'nightingale-filter' &&
-              this.getFilterComponent(`${group.id}-${track.id}`)) ||
+              this.getFilterComponent(key)) ||
             unsafeHTML(renderLabel(track.label, this.accession))}</span
-          >${this._renderRowControls(group, index, total)}
-        </div>
-        <div
-          class="${CSS_PREFIX}-track-content ${track.component ===
-          'nightingale-colored-sequence'
-            ? `${CSS_PREFIX}-track-content__coloured-sequence`
-            : ''}"
-          data-id="${CSS_PREFIX}-track_${track.id}"
-        >
-          ${this.getTrack(
-            track.component,
-            'non-overlapping',
-            attrs.color,
-            attrs.shape,
-            `${group.id}-${track.id}`,
-            attrs.scale,
-            attrs.colorRange,
-            showsSeriesLabel([track])
+          >${this._renderTrackBadge(key)}${this._renderRowControls(
+            group,
+            index,
+            total
           )}
         </div>
+        ${trackHasData
+          ? html`<div
+              class="${CSS_PREFIX}-track-content ${track.component ===
+              'nightingale-colored-sequence'
+                ? `${CSS_PREFIX}-track-content__coloured-sequence`
+                : ''}"
+              data-id="${CSS_PREFIX}-track_${track.id}"
+            >
+              ${this.getTrack(
+                track.component,
+                'non-overlapping',
+                attrs.color,
+                attrs.shape,
+                key,
+                attrs.scale,
+                attrs.colorRange,
+                showsSeriesLabel([track])
+              )}
+            </div>`
+          : ''}
       </div>
     `;
   }
@@ -2484,8 +2498,9 @@ class ProtvistaUniprot extends LitElement {
   }
 
   /**
-   * Whether a row draws anything on the canvas: a standalone track with data,
-   * or a group with a renderable *visible* track (or a visible fetch error).
+   * Whether a row draws anything on the canvas: a standalone track with data
+   * (or a visible fetch error), or a group with a renderable *visible* track
+   * (or a visible fetch error).
    *
    * A group is judged by its *visible* `tracks` — the same slice
    * `_renderGroupBlock` renders from — NOT by the group aggregate
@@ -2510,7 +2525,15 @@ class ProtvistaUniprot extends LitElement {
   ): boolean {
     if (row.standalone) {
       const track = row.tracks[0];
-      return !!track && hasRenderableData(this.data[trackKey(row.id, track.id)]);
+      if (!track) return false;
+      const key = trackKey(row.id, track.id);
+      // `|| _trackErrors.has(key)` is what keeps a *broken* standalone row on
+      // the canvas, exactly as the grouped branch below does. Without it the
+      // row vanished and `_renderAllHiddenNotice` claimed the user had hidden
+      // everything — a false statement with a Reset-layout button that fixes
+      // nothing. Standalone is the default shape for the starter kits, so this
+      // was the most-reachable failure surface in the component.
+      return hasRenderableData(this.data[key]) || this._trackErrors.has(key);
     }
     if (this._visibleGroupErrors.has(row.id)) return true;
     return tracks.some((t) => {
@@ -2651,6 +2674,11 @@ class ProtvistaUniprot extends LitElement {
    * Shown when the user has hidden everything. Without it the viewer would
    * look broken — an empty frame with no hint that the tracks are one click
    * from coming back.
+   *
+   * Only a genuinely-hidden canvas reaches here: a row whose data *failed*
+   * stays in `_rowsToRender` carrying its `⚠` badge (see
+   * `_rowRendersContent`), so this notice never stands in for a load failure
+   * it cannot fix.
    */
   private _renderAllHiddenNotice() {
     return html`

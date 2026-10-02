@@ -111,6 +111,34 @@ function normConfig(
   };
 }
 
+/**
+ * A single *standalone* row — the shape the normalizer produces for a
+ * top-level `rows:` entry with no `tracks:`, and the default in the starter
+ * kits. Its one track is wrapped in a synthetic row flagged `standalone`, and
+ * the row id matches the track id as the normalizer sets it.
+ */
+function standaloneConfig(
+  track: NormalizedTrack,
+  opts: { strict?: boolean } = {}
+): NormalizedConfig {
+  return {
+    version: '1.0',
+    sources: {},
+    defaults: { rendering: {} },
+    ...(opts.strict !== undefined ? { strict: opts.strict } : {}),
+    rows: [
+      {
+        id: track.id,
+        label: track.label,
+        component: track.component,
+        rendering: {},
+        standalone: true,
+        tracks: [track],
+      },
+    ],
+  };
+}
+
 /** Detached element with the state `_loadData()` needs, ready to render. */
 function buildLoaded(
   config: NormalizedConfig,
@@ -654,6 +682,103 @@ describe('per-track error badge', () => {
     expect(descId).not.toMatch(/\s/); // no whitespace → valid HTML id / token
     // The referenced description element actually exists under that id.
     expect(target.querySelector(`[id="${descId}"]`)).not.toBeNull();
+  });
+});
+
+// ── standalone rows ───────────────────────────────────────────────
+
+describe('standalone row error badge', () => {
+  const ALL_HIDDEN = `.${CSS_PREFIX}-all-hidden`;
+
+  it('keeps a broken standalone row on the canvas with a badge and Retry', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(
+      standaloneConfig(urlTrack('solo', 'https://example.org/bad.json'))
+    );
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    // The row is still here, carrying the same badge a grouped track gets…
+    expect(target.querySelector(`#${CSS_PREFIX}-group_solo`)).not.toBeNull();
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    expect(badge.getAttribute('role')).toBe('img');
+    const descId = badge.getAttribute('aria-describedby')!;
+    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toMatch(
+      /HTTP 500/
+    );
+    // …a 5xx is transient, so Retry is offered here too…
+    expect(
+      target.querySelector(`.${CSS_PREFIX}-error-retry`)
+    ).not.toBeNull();
+    // …and the event fires naming the standalone track.
+    const tf = events.find((e) => e.detail.phase === 'track-fetch');
+    expect(tf!.detail.context.trackId).toBe('solo');
+  });
+
+  it('does not claim "All tracks are hidden" for a failed standalone row', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+
+    const el = buildLoaded(
+      standaloneConfig(urlTrack('solo', 'https://example.org/bad.json'))
+    );
+    await el._loadData();
+    const target = renderTarget(el);
+
+    // The notice (and its Reset layout button, which would fix nothing) is
+    // for a canvas the *user* emptied — not for a load failure.
+    expect(target.querySelector(ALL_HIDDEN)).toBeNull();
+  });
+
+  it('still shows the hidden notice when the row is genuinely hidden', async () => {
+    const config = standaloneConfig(customTrack('solo'));
+    config.rows[0].hidden = true;
+    config.rows[0].tracks[0].hidden = true;
+    const el = buildLoaded(config, {
+      customTrackData: { 'solo-solo': [{ type: 'DOMAIN', start: 1, end: 10 }] },
+      hasData: true,
+    });
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(target.querySelector(ALL_HIDDEN)).not.toBeNull();
+  });
+
+  it('drops a 4xx standalone row silently (missing, not broken)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 404 }]]);
+
+    const el = buildLoaded(
+      standaloneConfig(urlTrack('solo', 'https://example.org/bad.json'))
+    );
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(target.querySelector(BADGE)).toBeNull();
+    expect(target.querySelector('.protvista-no-results')).not.toBeNull();
+  });
+
+  it('renders no content cell under the badge (no empty canvas to mislead)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+
+    const el = buildLoaded(
+      standaloneConfig(urlTrack('solo', 'https://example.org/bad.json'))
+    );
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const row = target.querySelector(`#${CSS_PREFIX}-group_solo`)!;
+    expect(
+      row.querySelector(`[data-id="${CSS_PREFIX}-track_solo"]`)
+    ).toBeNull();
   });
 });
 
