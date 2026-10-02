@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed: Nightingale 5.11, and `BINDING` features get their own colour
+
+All `@nightingale-elements/*` dependencies now require `^5.11` (`^5.11.1`
+for the track and variation canvases). nightingale-track 5.11.1 fixes the
+default colour of the `BINDING` type, which was the invalid string
+`#catFace`
+([upstream fix](https://github.com/ebi-webcomponents/nightingale/commit/ef8f74d7dc95bcf252e0ed3a05ff697de3d3ed70)).
+Binding sites without a `rendering.color` used to be drawn in whatever
+colour the previous feature used (often the lavender of a neighbouring
+`DOMAIN`); they are now `#009999`.
+
+### Added: feature type and shape vocabulary page
+
+The docs site gains
+[Feature type and shape vocabulary](https://ebi-webcomponents.github.io/protvista/type-and-shape-vocabulary),
+generated from Nightingale: every recognised feature `type` with its default
+colour and shape, what an unrecognised type looks like (a black rectangle)
+and how to style one, and each of the 22 `rendering.shape` values as the
+canvas track draws it.
+
 ### Fixed: a collapsed group no longer draws its hidden tracks
 
 Hiding a track in customize mode (or authoring it `hidden: true`) removed it

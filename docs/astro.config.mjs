@@ -179,6 +179,10 @@ export default defineConfig({
           items: [
             { label: 'Built-in track kinds', link: '/track-kinds' },
             { label: 'Adapter reference', link: '/adapter-reference' },
+            {
+              label: 'Type and shape vocabulary',
+              link: '/type-and-shape-vocabulary',
+            },
           ],
         },
         {

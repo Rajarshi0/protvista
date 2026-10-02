@@ -66,6 +66,15 @@ browser may be looking in the wrong place. Serve the page from the same
 directory as the data, or use an absolute URL. See the path note in
 [Load your own data](/protvista/your-data#a-path-gotcha-to-know).
 
+### Features are all black, or show a ?
+
+A feature whose `type` ProtVista doesn't recognise — `HOTSPOT`, or `BED` for
+every record in a `.bed` file — draws as a black rectangle, with nothing but a
+console log to say why. A `shape` the canvas track can't draw, misspelt or not,
+draws as a question mark. Set `rendering.color` and `rendering.shape` on the
+track; [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary)
+lists the recognised types and draws every valid shape.
+
 ### The config is rejected
 
 A `config`-phase error carries `detail.issues` describing each problem. Validate

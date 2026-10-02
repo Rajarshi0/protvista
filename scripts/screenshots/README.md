@@ -10,6 +10,7 @@ pnpm screenshots --only=home-hero     # one or more, comma-separated
 pnpm screenshots --check              # report drift, write nothing (CI)
 pnpm screenshots --assert-clean       # capture twice, fail if not identical
 pnpm screenshots --no-build           # reuse the existing site/ build
+pnpm screenshots --force              # write every shot, even within tolerance
 pnpm screenshots --refresh-fixtures   # re-record the pinned payloads (rare)
 pnpm screenshots --record-missing     # pin whatever this run found unpinned
 ```
@@ -150,6 +151,9 @@ would otherwise be reported only after the image had been written.
   knowing: a change confined to a small part of one image — a track's colour, a
   renamed label — now passes silently. What still fails is what a reader would
   notice: a row appearing or vanishing, a reflow, a viewer that did not render.
+  When you know a change like that landed (a Nightingale default colour, say),
+  `--force` writes the fresh capture regardless; scope it with `--only` so
+  shots the change did not touch keep their committed bytes.
 
 ## Things that will bite you
 

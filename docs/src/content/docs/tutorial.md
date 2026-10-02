@@ -129,7 +129,10 @@ _A standalone track loaded from a CSV file._
 
 
 [Load your own data](/protvista/your-data) covers the full feature record and the
-TSV, JSON, and BED formats.
+TSV, JSON, and BED formats. `type` drives the colour and shape you see above —
+[Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) lists
+every recognised value and what an unrecognised one like `HOTSPOT` would look
+like instead.
 
 ## Step 3: Layer it onto the full UniProt viewer
 
