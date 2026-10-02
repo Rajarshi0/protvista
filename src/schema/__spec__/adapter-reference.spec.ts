@@ -23,6 +23,7 @@ import {
   type KindAdapterDoc,
 } from '../adapters/adapter-reference.js';
 import { BUILTIN_ADAPTERS } from '../adapters/index.js';
+import { FEATURE_RENDER_FIELDS } from '../adapters/feature-fields.js';
 import {
   POINT_COLUMNS,
   VARIATION_COLUMNS,
@@ -197,6 +198,18 @@ describe('the reference documents the vocabulary authors actually write', () => 
       ).toEqual([]);
     }
   });
+});
+
+describe('adapter reference — render fields drift (#283)', () => {
+  // The decoders' render-field list lives in feature-fields.ts; the shape
+  // declaration and the published field table restate it. Pin both copies.
+  it.each(FEATURE_RENDER_FIELDS)(
+    '`%s` is an optional feature field and a documented record field',
+    (name) => {
+      expect(SHAPES.feature.optionalFields).toContain(name);
+      expect(FEATURE_RECORD_FIELDS.map((f) => f.name)).toContain(name);
+    }
+  );
 });
 
 describe('adapter reference — fixture drift (examples/csv)', () => {

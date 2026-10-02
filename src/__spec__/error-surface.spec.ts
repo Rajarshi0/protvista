@@ -3277,6 +3277,35 @@ describe('track-data coordinate warning', () => {
       expect(trackData()).toHaveLength(2);
     });
 
+    it('reports again for only the track a targeted retry reruns', async () => {
+      stubRoutes({ csv: WITH_TOOLTIP });
+      const { el, events, trackData } = mountCollecting({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'g',
+              tracks: [
+                { id: 'x', kind: 'features', data: './hits.csv' },
+                { id: 'y', kind: 'features', data: './hits.csv' },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(2));
+      expect(trackData().map((e) => e.detail.context.trackId).sort()).toEqual([
+        'x',
+        'y',
+      ]);
+      await el._loadData();
+      events.length = 0;
+
+      await el._loadData(new Set(['g-y']));
+      expect(trackData()).toHaveLength(1);
+      expect(trackData()[0].detail.context.trackId).toBe('y');
+    });
+
     it('routes a bad opacity as a track-fetch failure with a badge instead', async () => {
       stubRoutes({
         csv: 'type,start,end,description,opacity\nDOMAIN,1,10,a,1.5\n',

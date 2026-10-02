@@ -497,3 +497,44 @@ describe('resolveTooltip — auto-fallback keeps render fields out (#283)', () =
     expect(headings).toEqual(['Type', 'Start', 'End', 'Gene']);
   });
 });
+
+describe('resolveTooltip — Tag-shaped data values render as nothing (#283)', () => {
+  // A JSON feature file keeps object-valued columns, so a value can arrive
+  // shaped like a Markdoc Tag. It must never be rendered as markup.
+  const tagLike = (name: string, attributes: Record<string, unknown> = {}) => ({
+    $$mdtype: 'Tag',
+    name,
+    attributes,
+    children: [],
+  });
+
+  it('drops a Tag-shaped value in the auto-fallback', () => {
+    const out = resolveTooltip(
+      {
+        type: 'DOMAIN',
+        start: 1,
+        end: 9,
+        consequenceType: tagLike('img', { src: 'x', onerror: 'alert(1)' }),
+      },
+      undefined,
+      { ...ctx, kind: '' }
+    );
+    expect(out).toContain('<h5>Type</h5>');
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('onerror');
+  });
+
+  it.each([
+    ['an element with an event handler', tagLike('img', { src: 'x', onerror: 'alert(1)' })],
+    ['a name smuggling attributes', tagLike('img src=x onerror=alert(2) x')],
+  ])('drops %s referenced from a markdown spec', (_label, note) => {
+    const out = resolveTooltip(
+      { note },
+      { kind: 'markdown', template: 'Note: {% $note %}' },
+      ctx
+    );
+    expect(out).toBe('<p>Note: </p>');
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('onerror');
+  });
+});

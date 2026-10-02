@@ -17,6 +17,7 @@ import {
   type KindAdapterDoc,
   type FieldDoc,
 } from './adapter-reference.js';
+import { FEATURE_VIEWER_FIELDS } from './feature-fields.js';
 import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../file-formats.js';
 import { SHAPES, SHAPE_NAMES } from '../shapes.js';
 import { createRegistry } from '../registry.js';
@@ -144,7 +145,7 @@ function shapeSection(shape: ShapeName): string {
     parts.push(
       'Any other column of a CSV/TSV file, or key of a JSON record, is kept ' +
         'on the record as written, so a `dataTooltip` can show it. ' +
-        '`tooltipContent`, `locations`, `residuesToHighlight` and names ' +
+        `${FEATURE_VIEWER_FIELDS.map((f) => `\`${f}\``).join(', ')} and names ` +
         'JavaScript reserves (`__proto__`, `toString`, …) are dropped with a ' +
         '`track-data` warning. BED records carry only the fields above that ' +
         'BED can express — never the render fields.'
@@ -320,7 +321,10 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
     $id: FEATURE_RECORD_SCHEMA_ID,
     title: 'ProtVista feature record',
     description:
-      'The feature record your own CSV, TSV, JSON or BED file decodes to, and the feature tracks consume. CSV/TSV/JSON records keep every extra column or key (for dataTooltip) except tooltipContent, locations, residuesToHighlight and Object.prototype names; BED records carry only the canonical fields. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
+      'The feature record your own CSV, TSV, JSON or BED file decodes to, and the feature tracks consume. ' +
+      'CSV/TSV/JSON records keep every extra column or key (for dataTooltip) except ' +
+      `${FEATURE_VIEWER_FIELDS.join(', ')} and Object.prototype names; ` +
+      'BED records carry only the canonical fields. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
     type: 'object',
     required: FEATURE_RECORD_FIELDS.filter((f) => f.required).map((f) => f.name),
     additionalProperties: true,

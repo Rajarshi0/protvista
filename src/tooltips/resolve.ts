@@ -65,6 +65,8 @@ function resolvePath(item: unknown, path: string): unknown {
  * synthesises the tag markup for Tag nodes so nested children are
  * rendered through this same walker.
  */
+const SAFE_MARKUP_NAME = /^[a-z][a-z0-9-]*$/i;
+
 function renderNode(node: RenderableTreeNode): string {
   if (typeof node === 'string' || typeof node === 'number') {
     return Markdoc.renderers.html(node);
@@ -72,12 +74,23 @@ function renderNode(node: RenderableTreeNode): string {
   if (Array.isArray(node)) {
     return node.map(renderNode).join('');
   }
-  if (node == null || typeof node !== 'object' || !Tag.isTag(node)) return '';
+  // `instanceof`, not `Tag.isTag`: the latter only checks `$$mdtype`, so a
+  // Tag-shaped plain object arriving as a variable value (a JSON feature
+  // file keeps object-valued columns) would otherwise be rendered as markup.
+  // Every node `Markdoc.transform` and the custom tags below build is a real
+  // `Tag` instance.
+  if (!(node instanceof Tag)) return '';
   const { name, attributes, children = [] } = node;
   if (!name) return children.map(renderNode).join('');
+  // Defence in depth: the name and attribute keys are written unescaped, so
+  // refuse anything that is not a plain element / attribute name, and any
+  // event-handler attribute.
+  if (!SAFE_MARKUP_NAME.test(name)) return '';
   let output = `<${name}`;
   for (const [k, v] of Object.entries(attributes ?? {})) {
+    if (!SAFE_MARKUP_NAME.test(k)) continue;
     const attr = k.toLowerCase();
+    if (attr.startsWith('on')) continue;
     // Scheme-sanitize URL-bearing attributes (`href`/`src`) on any element,
     // not just anchors. Labels never emit `src` (the image node is
     // neutralized in labelMarkdocConfig), but this keeps the shared walker

@@ -15,6 +15,8 @@ inline now render the same way.
   setting. `opacity` must be a number from 0 to 1.
 - Any other column (`pmid`, `gene`, `url`, …) is kept as written, so a
   `dataTooltip` can show it as `{% $pmid %}` or `path: pmid`.
+  A JSON value that is an object or array is kept on the record, but a
+  tooltip never renders it as markup, whatever its shape.
 - A new Markdoc tag, `{% link href=$url %}text{% /link %}` (or
   `{% link href=$url /%}`), turns a URL field into a tooltip link. Only
   `http(s):`, `mailto:` and root-relative URLs become links; anything else

@@ -460,7 +460,7 @@ describe('file and inline feature records are interchangeable (#283)', () => {
     expect(payload[0].tooltipContent).toBe(
       `<p>PMID 12345: <a href="${PMID_URL}/12345/">PubMed</a></p>`
     );
-    for (const form of others) expect(form.data['G-t']).toEqual(payload);
+    for (const form of others) expect(form.data['G-t']).toStrictEqual(payload);
     for (const form of forms) {
       expect(form.trackWarnings).toEqual({});
       expect(form.trackFailures).toEqual({});
@@ -471,6 +471,13 @@ describe('file and inline feature records are interchangeable (#283)', () => {
     const body = 'type,start,end,description,pmid\nDOMAIN,1,9,x,\n';
     const { data } = await loadTrack({ from: 'inline', inlineData: body, format: 'csv' });
     expect((data['G-t'] as Array<Record<string, unknown>>)[0].pmid).toBe('');
+    const yaml = await loadTrack({
+      from: 'inline',
+      inlineData: [{ type: 'DOMAIN', start: 1, end: 9, description: 'x' }],
+    });
+    expect((yaml.data['G-t'] as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
+      'pmid'
+    );
   });
 });
 
@@ -494,7 +501,94 @@ describe('decoder warnings are returned, not logged (#283)', () => {
     );
   };
 
+  const loadTracks = (
+    tracks: Array<Record<string, unknown>>,
+    files: Record<string, unknown>
+  ) => {
+    const r = registry();
+    return loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        { accession: 'P05067', rows: [{ id: 'G', tracks: tracks as never }] },
+        { registry: r }
+      ),
+      async (url) => files[url] ?? null,
+      (name) => r.getAdapter(name),
+      {}
+    );
+  };
+
   afterEach(() => vi.restoreAllMocks());
+
+  it('two tracks reading one file get a warning each, under their own keys', async () => {
+    const { trackWarnings } = await loadTracks(
+      [
+        { id: 'a', kind: 'features', data: './hits.csv' },
+        { id: 'b', kind: 'features', data: './hits.csv' },
+      ],
+      {
+        './hits.csv':
+          'type,start,end,description,tooltipContent\nDOMAIN,1,9,x,y\n',
+      }
+    );
+    expect(Object.keys(trackWarnings).sort()).toEqual(['G-a', 'G-b']);
+    for (const key of ['G-a', 'G-b']) {
+      expect(trackWarnings[key].map((w) => w.code)).toEqual([
+        'data-field-ignored',
+      ]);
+    }
+  });
+
+  it('counts every row, including those `filter:` then removes', async () => {
+    const { data, trackWarnings } = await loadTracks(
+      [{ id: 't', kind: 'features', filter: 'DOMAIN', data: './hits.csv' }],
+      {
+        './hits.csv': [
+          'type,start,end,description,color',
+          'DOMAIN,1,9,a,bleu',
+          'DOMAIN,10,20,b,',
+          'SITE,4,4,c,bleu',
+        ].join('\n'),
+      }
+    );
+    expect(trackWarnings['G-t'].map((w) => w.code)).toEqual([
+      'unpaintable-color',
+    ]);
+    expect(trackWarnings['G-t'][0].message).toContain('2 row(s)');
+    expect(data['G-t']).toHaveLength(2);
+  });
+
+  it('a Tag-shaped value in a JSON file renders as nothing in the tooltip', async () => {
+    // A JSON file keeps object-valued fields; one shaped like a Markdoc Tag
+    // must not become markup when a template references it.
+    const body = JSON.stringify([
+      {
+        type: 'DOMAIN',
+        start: 1,
+        end: 9,
+        note: {
+          $$mdtype: 'Tag',
+          name: 'img',
+          attributes: { src: 'x', onerror: 'alert(1)' },
+          children: [],
+        },
+      },
+    ]);
+    const { data } = await loadTracks(
+      [
+        {
+          id: 't',
+          kind: 'features',
+          dataTooltip: { kind: 'markdown', template: 'Note: {% $note %}' },
+          data: './hits.json',
+        },
+      ],
+      { './hits.json': JSON.parse(body) }
+    );
+    const [record] = data['G-t'] as Array<{ tooltipContent: string }>;
+    expect(record.tooltipContent).toBe('<p>Note: </p>');
+    expect(record.tooltipContent).not.toContain('onerror');
+  });
 
   it('a CSV file with a `tooltipContent` column returns one warning', async () => {
     const warn = vi.spyOn(console, 'warn');
