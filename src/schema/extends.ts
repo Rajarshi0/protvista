@@ -4,6 +4,7 @@
  * Merge semantics:
  *
  *   - `sources`    — merged by key (child wins)
+ *   - `variables`  — merged by key (child wins)
  *   - `defaults`   — merged field-wise (child wins); `rendering`
  *                    nested sub-object also merged field-wise
  *   - `rows`       — top-level entries (groups AND standalone tracks,
@@ -109,6 +110,7 @@ import type {
 import { isGroupConfig } from './discriminate.js';
 import { ConfigValidationError } from './errors.js';
 import { parseConfigText } from './parse.js';
+import { isPlainObject } from './shape.js';
 
 // ─────────────────────────────────────────────────────────────
 // Public surface
@@ -384,7 +386,13 @@ function merge(
 
   // `sources` is a dictionary; merge by key.
   if (base.sources !== undefined || child.sources !== undefined) {
-    out.sources = { ...base.sources, ...child.sources };
+    out.sources = mergeByKey(base.sources, child.sources);
+  }
+
+  // `variables` is a dictionary too: a child can override one baseline
+  // value (say `species`) without restating the base's others.
+  if (base.variables !== undefined || child.variables !== undefined) {
+    out.variables = mergeByKey(base.variables, child.variables);
   }
 
   // `defaults` is a nested object; merge its fields (and any
@@ -397,7 +405,7 @@ function merge(
   // wins per key) so a child can tweak one colour without dropping the
   // base's others — matching the `defaults`/`sources` merge semantics.
   if (base.theme !== undefined || child.theme !== undefined) {
-    out.theme = { ...base.theme, ...child.theme };
+    out.theme = mergeByKey(base.theme, child.theme);
   }
 
   // `rows` is an ordered list keyed by `id` (one namespace across
@@ -408,6 +416,24 @@ function merge(
   out.rows = mergeEntriesById(base.rows ?? [], child.rows ?? []);
 
   return out;
+}
+
+/**
+ * Merge two dictionaries by key, child winning. Validation only runs on
+ * the merged result, so a side that isn't a plain object is passed
+ * through unmerged (child first) for the schema to reject: spreading it
+ * would coerce `'mouse'` into `{0: 'm', …}` and a malformed block that
+ * fails without `extends` would pass with it.
+ */
+function mergeByKey<T extends object>(
+  base: T | undefined,
+  child: T | undefined
+): T | undefined {
+  const mergeable = (v: unknown) => v === undefined || isPlainObject(v);
+  if (!mergeable(base) || !mergeable(child)) {
+    return child !== undefined ? child : base;
+  }
+  return { ...base, ...child } as T;
 }
 
 function mergeDefaults(

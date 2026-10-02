@@ -262,3 +262,46 @@ describe('loadConfigWithSource — warnings', () => {
     expect(loaded.issues).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Runtime variables
+// ─────────────────────────────────────────────────────────────
+
+describe('loadConfigWithSource — runtime variables', () => {
+  const templated = {
+    accession: 'P05067',
+    sources: { features: 'https://e.org/{species}/{build}/{accession}' },
+    rows: [
+      {
+        id: 'X',
+        tracks: [{ id: 'y', kind: 'features', data: 'features' }],
+      },
+    ],
+  };
+
+  it('warns about tokens defined nowhere, and still loads', async () => {
+    const loaded = await loadConfigWithSource(templated);
+    expect(loaded.issues.map((i) => i.code)).toEqual([
+      'missing-variable',
+      'missing-variable',
+    ]);
+    expect(loaded.config.rows).toHaveLength(1);
+  });
+
+  it('does not warn about tokens the caller supplies at runtime', async () => {
+    const loaded = await loadConfigWithSource(templated, {
+      variables: { species: 'mouse', build: 'v1' },
+    });
+    expect(loaded.issues).toEqual([]);
+  });
+
+  it('does not inject runtime variable values into the config', async () => {
+    // Only the *names* matter at validation time — values are read at
+    // fetch time, so a later data-* change takes effect.
+    const loaded = await loadConfigWithSource(templated, {
+      variables: { species: 'mouse', build: 'v1' },
+    });
+    expect(loaded.config.variables).toBeUndefined();
+    expect(loaded.authored.variables).toBeUndefined();
+  });
+});

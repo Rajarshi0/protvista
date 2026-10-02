@@ -69,6 +69,15 @@ export type ValidationIssueCode =
   | 'unsupported-version'
   | 'missing-accession'
   /**
+   * A data URL (a `sources` value or a descriptor `url:`) uses a
+   * `{token}` that top-level `variables:` doesn't define and that isn't
+   * `{accession}`. A `severity: 'warning'`: the value may still arrive at
+   * runtime as a `data-*` attribute on the host, which a standalone
+   * validation can't see. The element passes the `data-*` names it
+   * knows about, so a mount that supplies the value isn't warned.
+   */
+  | 'missing-variable'
+  /**
    * A top-level `rows:` entry is neither a group nor a standalone track:
    * it carries neither `tracks:` nor `data:`, or it carries both. The
    * `oneOf` in the schema can only report this as a contradictory
