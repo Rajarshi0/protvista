@@ -24,6 +24,8 @@ export interface DiagnosticsView {
   /**
    * Append runtime issues (from a `protvista-error` event) and refresh the
    * summary count. Falls back to a generic message when none are given.
+   * Warnings are marked as in `showConfig`, and the summary counts errors
+   * across the whole list, not just the issues appended here.
    */
   appendRuntime(issues: readonly Renderable[] | undefined, phase?: string): void;
 }
@@ -80,11 +82,18 @@ export function createDiagnosticsView(
         list.append(
           item(
             phase ? `[${phase}] ${issue.message}` : issue.message,
-            issue.code ?? 'runtime'
+            issue.code ?? 'runtime',
+            issue.severity
           )
         );
       }
-      setSummary(list.childElementCount);
+      // This call adds to rows already in the list, so count errors over
+      // all of them. Unmarked rows are styled as errors, so only rows marked
+      // as warnings are not errors.
+      const errors = [...list.children].filter(
+        (li) => (li as HTMLElement).dataset.severity !== 'warning'
+      ).length;
+      setSummary(list.childElementCount, errors);
     },
   };
 }

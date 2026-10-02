@@ -75,4 +75,47 @@ describe('createDiagnosticsView', () => {
     expect(list.children[0].textContent).toBe('A track failed to load its data.');
     expect((list.children[0] as HTMLElement).dataset.code).toBe('runtime');
   });
+
+  it('appendRuntime: marks a warning issue and keeps the summary valid', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([]);
+    view.appendRuntime(
+      [{ message: 'm', code: 'coordinate-out-of-range', severity: 'warning' }],
+      'track-data'
+    );
+    expect(list.children).toHaveLength(1);
+    expect(list.children[0].textContent).toBe('[track-data] m');
+    expect((list.children[0] as HTMLElement).dataset.severity).toBe('warning');
+    expect(summary.textContent).toBe('1 warning — config is valid.');
+  });
+
+  it('appendRuntime: counts a config warning and a runtime warning together as warnings', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([{ message: 'w', code: 'x', severity: 'warning' }]);
+    view.appendRuntime(
+      [{ message: 'm', code: 'coordinate-out-of-range', severity: 'warning' }],
+      'track-data'
+    );
+    expect(summary.textContent).toBe('2 warnings — config is valid.');
+  });
+
+  it('appendRuntime: counts errors across the whole list, not just this call', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([]);
+    view.appendRuntime([{ message: 'boom', code: 'runtime' }], 'track-fetch');
+    view.appendRuntime(
+      [{ message: 'm', code: 'coordinate-out-of-range', severity: 'warning' }],
+      'track-data'
+    );
+    expect(summary.textContent).toBe('2 problems found:');
+    expect((list.children[0] as HTMLElement).dataset.severity).toBeUndefined();
+    expect((list.children[1] as HTMLElement).dataset.severity).toBe('warning');
+  });
+
+  it('appendRuntime: an error after config warnings makes the summary a problem count', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([{ message: 'w', code: 'x', severity: 'warning' }]);
+    view.appendRuntime([{ message: 'boom', code: 'runtime' }], 'track-fetch');
+    expect(summary.textContent).toBe('2 problems found:');
+  });
 });

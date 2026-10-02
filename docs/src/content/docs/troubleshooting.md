@@ -26,6 +26,8 @@ viewer.addEventListener('protvista-error', (event) => {
       `Track ${context.groupId}/${context.trackId} failed`,
       context.status ? `(HTTP ${context.status})` : `(${context.errorKind})`,
     );
+  } else if (phase === 'track-data') {
+    console.warn(issues[0].message);
   }
 });
 ```
@@ -38,6 +40,7 @@ viewer.addEventListener('protvista-error', (event) => {
 | `sequence` | No usable sequence was found for the accession. | `accession`, plus (on a fetch failure) `errorKind` / `status` / `url` |
 | `track-fetch` | A track's URL failed in a way that breaks it — a network error, a 5xx response, or an unparseable body. A 4xx is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
+| `track-data` | A bring-your-own-data track has rows whose coordinates fall outside the entry's sequence — a start below 1, or a position past the last residue. The track still renders; `detail.issues` holds one issue with `code: 'coordinate-out-of-range'` and `severity: 'warning'`. | `groupId`, `trackId`, `url` (file and URL tracks) |
 
 ### The `context` object
 
@@ -65,6 +68,29 @@ is resolved relative to the **hosting page**, not the config file — so the
 browser may be looking in the wrong place. Serve the page from the same
 directory as the data, or use an absolute URL. See the path note in
 [Load your own data](/protvista/your-data#a-path-gotcha-to-know).
+
+### Common coordinate mistakes
+
+ProtVista expects 1-based, inclusive positions on the entry's canonical
+sequence. Three mistakes account for most wrong-looking tracks:
+
+- **0-based coordinates** (BED habits, Python ranges). A `start` of 0 is the
+  giveaway, and every feature is shifted by one. ProtVista reports this as a
+  `track-data` warning but never shifts your data for you. BED files are the
+  exception: they are 0-based by definition and converted automatically.
+- **Isoform numbering.** Positions from another isoform can run past the
+  canonical sequence's last residue. This is also reported as a `track-data`
+  warning, naming the first row that falls outside.
+- **Inverted intervals** (`end` before `start`) and fractional coordinates
+  (`18.5`). The file is rejected when it loads, and the track renders empty.
+  The console warning's attached error names the row, for example
+  `./x.csv (parsed as CSV): row 3: end (4) is before start (5).`
+
+A `track-data` warning reads like this:
+
+```
+./hits.csv (parsed as CSV): 12 of 340 rows fall outside P05067 (770 residues); first: row 7, end 812. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.
+```
 
 ### Features are all black, or show a ?
 
