@@ -145,7 +145,7 @@ describe('per-track error badge — accessibility & retry', () => {
         trackCalls += 1;
         return trackCalls === 1
           ? { ok: false, status: 500 }
-          : { ok: true, status: 200, body: { features: [{ type: 'DOMAIN', begin: '1', end: '5' }] } };
+          : { ok: true, status: 200, body: [{ type: 'DOMAIN', start: 1, end: 5 }] };
       }
       return { ok: true, status: 200 };
     });
@@ -193,7 +193,7 @@ describe('standalone row error badge — accessibility & retry', () => {
         trackCalls += 1;
         return trackCalls === 1
           ? { ok: false, status: 500 }
-          : { ok: true, status: 200, body: { features: [{ type: 'DOMAIN', begin: '1', end: '5' }] } };
+          : { ok: true, status: 200, body: [{ type: 'DOMAIN', start: 1, end: 5 }] };
       }
       return { ok: true, status: 200 };
     });
