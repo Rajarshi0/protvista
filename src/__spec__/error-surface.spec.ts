@@ -53,6 +53,7 @@ type El = HTMLElement & {
   _groupErrors: Set<string>;
   _init(): Promise<void>;
   _loadData(only?: Set<string>): Promise<void>;
+  setConfig(config: unknown): Promise<void>;
   setTrackData(groupId: string, trackId: string, data: unknown): void;
   render(): unknown;
   requestUpdate(): void;
@@ -1433,20 +1434,34 @@ describe('track-data coordinate warning', () => {
 
   /**
    * The entry (sequence) route returns a 770-residue protein unless
-   * `entry` overrides it; `hits.csv` returns `csv`; everything else is an
+   * `entry` overrides it; a URL naming a key of `files` returns that
+   * file's text; otherwise `hits.csv` returns `csv`; everything else is an
    * empty 200.
    */
-  function stubRoutes(opts: { csv?: string; entry?: () => Promise<Res> } = {}) {
+  function stubRoutes(
+    opts: {
+      csv?: string;
+      entry?: (url: string) => Promise<Res>;
+      files?: Record<string, () => Promise<string>>;
+    } = {}
+  ) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: unknown) => {
         const url = String(input);
         if (url.includes('/proteins/api/proteins/')) {
-          if (opts.entry) return (await opts.entry()) as unknown as Response;
+          if (opts.entry) return (await opts.entry(url)) as unknown as Response;
+          return entryOf(770) as unknown as Response;
+        }
+        const file = Object.keys(opts.files ?? {}).find((name) =>
+          url.includes(name)
+        );
+        if (file) {
+          const text = await opts.files![file]();
           return {
             ok: true,
             status: 200,
-            json: async () => ({ sequence: { sequence: 'A'.repeat(770) } }),
+            text: async () => text,
           } as unknown as Response;
         }
         if (url.includes('hits.csv')) {
@@ -1465,6 +1480,23 @@ describe('track-data coordinate warning', () => {
       })
     );
   }
+
+  /** An entry response carrying a `length`-residue sequence. */
+  const entryOf = (length: number): Res => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ sequence: { sequence: 'A'.repeat(length) } }),
+  });
+
+  /** A promise held open until `release()` is called. */
+  function gate() {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => (release = resolve));
+    return { wait, release };
+  }
+
+  /** Let every pending fetch and promise callback run. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve));
 
   function mountCollecting(props: Partial<El>) {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -1503,16 +1535,11 @@ describe('track-data coordinate warning', () => {
   });
 
   it('checks when the data arrives before the sequence', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
+    const sequence = gate();
     stubRoutes({
       entry: async () => {
-        await gate;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ sequence: { sequence: 'A'.repeat(770) } }),
-        };
+        await sequence.wait;
+        return entryOf(770);
       },
     });
     const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
@@ -1521,7 +1548,7 @@ describe('track-data coordinate warning', () => {
     expect(el.sequence).toBeUndefined();
     expect(trackData()).toHaveLength(0);
 
-    release();
+    sequence.release();
     await vi.waitFor(() => expect(trackData()).toHaveLength(1));
   });
 
@@ -1607,6 +1634,200 @@ describe('track-data coordinate warning', () => {
       expect(el.sequence).toBeDefined();
     });
     expect(trackData()).toHaveLength(0);
+  });
+
+  it('omits url from the context for inline data', async () => {
+    stubRoutes();
+    const { trackData } = mountCollecting({
+      viewerConfig: {
+        rows: [
+          {
+            id: 'g',
+            tracks: [
+              {
+                id: 'y',
+                kind: 'features',
+                data: { inlineData: [{ type: 'DOMAIN', start: 0, end: 5 }] },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    const [ev] = trackData();
+    expect(ev.detail.issues[0].message).toMatch(
+      /^inline data \(parsed as JSON\): 1 of 1 rows fall outside P05067/
+    );
+    expect(ev.detail.context).not.toHaveProperty('url');
+  });
+
+  it('does not check data a setConfig() replaced before the sequence arrived', async () => {
+    const sequence = gate();
+    const newCsv = gate();
+    stubRoutes({
+      entry: async () => {
+        await sequence.wait;
+        return entryOf(770);
+      },
+      files: {
+        'old.csv': async () => HITS_CSV,
+        'new.csv': async () => {
+          await newCsv.wait;
+          return 'type,start,end,description\nDOMAIN,1,10,a\n';
+        },
+      },
+    });
+    const configFor = (data: string) => ({
+      rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data }] }],
+    });
+    const { el, trackData } = mountCollecting({
+      viewerConfig: configFor('./old.csv'),
+    });
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+
+    // The new config is in place and its data is still loading when the
+    // sequence lands: old.csv's rows must not be checked against it.
+    await el.setConfig(configFor('./new.csv'));
+    sequence.release();
+    await vi.waitFor(() => expect(el.sequence).toBeDefined());
+    expect(trackData()).toHaveLength(0);
+
+    newCsv.release();
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+    await settle();
+    expect(trackData()).toHaveLength(0);
+  });
+
+  it('fires once when a mount Retry reloads data still waiting for the sequence', async () => {
+    let entryCalls = 0;
+    let csvCalls = 0;
+    const sequence = gate();
+    const csv = gate();
+    stubRoutes({
+      entry: async () => {
+        if (entryCalls++ === 0) {
+          return { ok: false, status: 503, json: async () => ({}) };
+        }
+        await sequence.wait;
+        return entryOf(770);
+      },
+      files: {
+        'hits.csv': async () => {
+          if (csvCalls++ > 0) await csv.wait;
+          return HITS_CSV;
+        },
+      },
+    });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+    const retry = await vi.waitFor(() => {
+      const btn = el.querySelector<HTMLButtonElement>(
+        `${PANEL} .${CSS_PREFIX}-error-retry`
+      );
+      if (!btn) throw new Error('retry not ready');
+      return btn;
+    });
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+
+    // The retry's sequence lands before its re-fetched data.
+    retry.click();
+    sequence.release();
+    await vi.waitFor(() => expect(el.sequence).toBeDefined());
+    expect(trackData()).toHaveLength(0);
+
+    csv.release();
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    await settle();
+    expect(trackData()).toHaveLength(1);
+  });
+
+  it('does not check rows a reload dropped before the sequence arrived', async () => {
+    let csvCalls = 0;
+    const sequence = gate();
+    stubRoutes({
+      entry: async () => {
+        await sequence.wait;
+        return entryOf(770);
+      },
+      files: {
+        // The reload's data fails layer 1, so the track has no rows.
+        'hits.csv': async () =>
+          csvCalls++ === 0
+            ? HITS_CSV
+            : 'type,start,end,description\nDOMAIN,5,4,a\n',
+      },
+    });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+
+    await el._loadData();
+    sequence.release();
+    await vi.waitFor(() => expect(el.sequence).toBeDefined());
+    await settle();
+    expect(trackData()).toHaveLength(0);
+  });
+
+  it('checks a new accession against its own sequence, not the previous one', async () => {
+    const next = gate();
+    stubRoutes({
+      entry: async (url) => {
+        if (url.includes('P12345')) {
+          await next.wait;
+          return entryOf(1200);
+        }
+        return entryOf(770);
+      },
+    });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+
+    // P12345's data commits while P05067's sequence is still stored.
+    const load = vi.spyOn(el, '_loadData');
+    el.accession = 'P12345';
+    await vi.waitFor(() => expect(load).toHaveBeenCalled());
+    await load.mock.results[0].value;
+    expect(trackData()).toHaveLength(1);
+
+    next.release();
+    await vi.waitFor(() => expect(trackData()).toHaveLength(2));
+    expect(trackData()[1].detail.issues[0].message).toContain(
+      '1 of 3 rows fall outside P12345 (1200 residues); first: row 4, start 0.'
+    );
+  });
+
+  it("ignores a superseded accession's sequence that arrives late", async () => {
+    let csvCalls = 0;
+    const first = gate();
+    const csv = gate();
+    stubRoutes({
+      entry: async (url) => {
+        if (url.includes('P12345')) return entryOf(100);
+        await first.wait;
+        return entryOf(1000);
+      },
+      files: {
+        'hits.csv': async () => {
+          if (csvCalls++ > 0) await csv.wait;
+          return HITS_CSV;
+        },
+      },
+    });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+
+    el.accession = 'P12345';
+    await vi.waitFor(() => expect(el.sequence).toHaveLength(100));
+
+    first.release();
+    await settle();
+    expect(el.sequence).toHaveLength(100);
+
+    csv.release();
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    expect(trackData()[0].detail.issues[0].message).toContain(
+      '2 of 3 rows fall outside P12345 (100 residues)'
+    );
   });
 });
 
