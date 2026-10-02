@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ebi-webcomponents.github.io/protvista/schema/v1/feature-record.schema.json",
   "title": "ProtVista feature record",
-  "description": "The canonical payload the generic bring-your-own-data adapters (features-csv, features-tsv, features-json, bed) emit and the feature tracks consume. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.",
+  "description": "The feature record your own CSV, TSV, JSON or BED file decodes to, and the feature tracks consume. CSV/TSV/JSON records keep every extra column or key (for dataTooltip) except tooltipContent, locations, residuesToHighlight and Object.prototype names; BED records carry only the canonical fields. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.",
   "type": "object",
   "required": [
     "type",
@@ -18,7 +18,7 @@
     "start": {
       "type": "integer",
       "description": "1-based start position (inclusive).",
-      "$comment": "features-json also accepts `begin` as an alias for `start`; `start` wins when both are present."
+      "$comment": "JSON sources also accept `begin` as an alias for `start`; `start` wins when both are present."
     },
     "end": {
       "type": "integer",
@@ -31,6 +31,22 @@
     "score": {
       "type": "number",
       "description": "Optional numeric score. Omitted when empty."
+    },
+    "color": {
+      "type": "string",
+      "description": "Per-feature colour (any CSS colour) for the outline, and the fill unless `fill` is set; wins over the track's `rendering.color`. CSV/TSV/JSON only — BED never sets it. Omitted when empty."
+    },
+    "shape": {
+      "type": "string",
+      "description": "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty."
+    },
+    "fill": {
+      "type": "string",
+      "description": "Per-feature fill colour; defaults to `color`. CSV/TSV/JSON only. Omitted when empty."
+    },
+    "opacity": {
+      "type": "number",
+      "description": "Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error."
     }
   }
 }

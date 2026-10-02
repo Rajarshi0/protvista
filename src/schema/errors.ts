@@ -51,8 +51,9 @@ export const isError = (issue: ValidationIssue): boolean =>
 
 /**
  * Closed set of validation issue codes. Every semantic check in
- * `validateConfig` emits one of these (`coordinate-out-of-range` is the
- * exception, emitted at runtime); structural Ajv errors are
+ * `validateConfig` emits one of these (`coordinate-out-of-range`,
+ * `data-field-ignored` and `unpaintable-color` are the exceptions, emitted
+ * at runtime on `phase: 'track-data'`); structural Ajv errors are
  * bucketed under `schema` so consumers can distinguish structural
  * from semantic failures without string-matching the message.
  */
@@ -132,6 +133,22 @@ export type ValidationIssueCode =
    * `phase: 'track-data'` at `severity: 'warning'`; the track still renders.
    */
   | 'coordinate-out-of-range'
+  /**
+   * A feature file (or inline text with a `format:`) has a column decoded
+   * data may not set — `tooltipContent`, `locations`, `residuesToHighlight`,
+   * or a name on `Object.prototype` — so the decoder dropped it. Emitted at
+   * runtime on `phase: 'track-data'` at `severity: 'warning'`; the track
+   * still renders.
+   */
+  | 'data-field-ignored'
+  /**
+   * A feature file's `color` / `fill` value is not one a browser will paint
+   * (`#catFace`, `bleu`), so the canvas draws that feature in the previous
+   * feature's colour. The value is kept: the check does not know every
+   * modern CSS colour. Emitted at runtime on `phase: 'track-data'` at
+   * `severity: 'warning'`.
+   */
+  | 'unpaintable-color'
   // ── Extends resolution ─────────────────────────────────
   /** The `extends` chain forms a cycle (a → b → a). */
   | 'circular-extends'

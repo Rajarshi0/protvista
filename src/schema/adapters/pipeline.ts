@@ -23,7 +23,9 @@
  *
  * A caller may also pass a `coordinates` sink to collect each decoded row's
  * coordinates and row number, for the sequence-bounds warning
- * (`./coordinates`), without touching the payload.
+ * (`./coordinates`), without touching the payload. A `warnings` sink
+ * likewise collects a feature decoder's findings (columns it dropped,
+ * colours a browser will not paint) instead of the decoder logging them.
  */
 
 import type { DataFormat, ShapeName } from '../types.js';
@@ -42,6 +44,7 @@ import { linegraph, toSeries } from './linegraph.js';
 import { variation, toVariants } from './variation.js';
 import { bed } from './bed.js';
 import type { CoordinateRow } from './coordinates.js';
+import type { DecodeWarning } from './feature-fields.js';
 
 /** Raised when a format cannot produce the records a shape requires. */
 export class ShapeFormatMismatchError extends Error {
@@ -96,19 +99,21 @@ function wrap(shape: ShapeName, records: unknown[]): unknown {
 
 /**
  * Decode delimited text into records of `shape`. `rowNumbers`, when given,
- * receives each record's row number in record order.
+ * receives each record's row number in record order; `warnings` receives
+ * the feature decoder's warnings (the other shapes have none).
  */
 function fromDelimited(
   shape: ShapeName,
   text: string,
   delimiter: string,
   formatLabel: string,
-  rowNumbers?: number[]
+  rowNumbers?: number[],
+  warnings?: DecodeWarning[]
 ): unknown[] {
   const rows = parseDelimited(text, delimiter);
   switch (shape) {
     case 'feature':
-      return rowsToFeatureRecords(rows, { formatLabel, rowNumbers });
+      return rowsToFeatureRecords(rows, { formatLabel, rowNumbers, warnings });
     case 'point':
       return rowsToPointRecords(rows, { formatLabel, rowNumbers });
     case 'variation':
@@ -173,11 +178,12 @@ function jsonCoordinates(shape: ShapeName, payload: unknown): CoordinateRow[] {
 function fromJson(
   shape: ShapeName,
   body: unknown,
-  formatLabel: string
+  formatLabel: string,
+  warnings?: DecodeWarning[]
 ): unknown {
   switch (shape) {
     case 'feature':
-      return featuresJson(body, formatLabel);
+      return featuresJson(body, formatLabel, warnings);
     case 'point':
       return linegraph(body, formatLabel);
     case 'variation':
@@ -225,6 +231,13 @@ export interface PipelineOptions {
    * taken before any `filter:`. The returned payload is identical either way.
    */
   coordinates?: CoordinateRow[];
+  /**
+   * When given, receives the feature decoder's warnings — at most one
+   * `data-field-ignored` (columns it dropped) and one `unpaintable-color`
+   * (colours it kept but a browser will not paint) per call. Nothing is
+   * logged without it; the returned payload is identical either way.
+   */
+  warnings?: DecodeWarning[];
 }
 
 /**
@@ -274,13 +287,14 @@ export function runPipeline(
       body,
       delimiter,
       formatLabel,
-      rowNumbers
+      rowNumbers,
+      opts.warnings
     );
     collect(records);
     return wrap(shape, records);
   }
 
-  const payload = fromJson(shape, body, formatLabel);
+  const payload = fromJson(shape, body, formatLabel, opts.warnings);
   if (sink) for (const row of jsonCoordinates(shape, payload)) sink.push(row);
   return payload;
 }

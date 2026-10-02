@@ -179,7 +179,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     panel: 'never',
     badge: false,
     rationale:
-      'Coordinates outside the sequence still render as authored — a badge or panel would mark a working row as broken.',
+      'The row loaded and renders as written — coordinates outside the sequence, an ignored column, an unpaintable colour — so a badge or panel would mark a working row as broken.',
   },
   {
     severity: 'warning',

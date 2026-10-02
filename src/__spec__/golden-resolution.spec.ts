@@ -22,10 +22,10 @@
  * Intended payload deltas, agreed as part of the spec (so: update the
  * snapshot, note it in the commit, don't "fix" the code):
  *
- *   - `features-json` currently keeps exactly `type`/`start`/`end`/
- *     `description`/`score` and drops every other field. Per the spec it will
- *     preserve unrecognised fields, so payloads from JSON feature sources
- *     gain back any extra keys their fixtures carry.
+ *   - Feature records from CSV/TSV/JSON files keep every column beyond
+ *     `type`/`start`/`end`/`description`/`score`, as the spec requires (#283,
+ *     landed). No shipped fixture before `examples/csv-styled` carried an
+ *     extra column, so no earlier snapshot changed.
  *
  * Coverage is every config the repository ships: each `examples/` directory,
  * the starter kit and its recipes, and `src/default-config.yaml` — the last
@@ -140,11 +140,12 @@ it('discovers every shipped config', () => {
       'examples/linegraph-csv',
       'examples/variation-csv',
       'examples/extend-default',
+      'examples/csv-styled',
       'starter-kit/config.yaml',
       'src/default-config.yaml',
     ])
   );
-  expect(CASES.length).toBeGreaterThanOrEqual(12);
+  expect(CASES.length).toBeGreaterThanOrEqual(13);
 });
 
 function fetchersFor(root: string) {

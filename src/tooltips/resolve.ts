@@ -11,7 +11,8 @@
  *   - `kind: 'markdown'` — Markdoc parse → transform → render. The item is
  *                         flattened into the Markdoc variable scope so
  *                         authors reference fields as `{% $fieldName %}`.
- *                         Plain Markdoc only; no domain-specific tags.
+ *                         Plain Markdoc plus one generic `{% link %}` tag
+ *                         for field-valued links; no domain-specific tags.
  *
  * There is no `kind: 'custom'` branch and no programmatic per-kind
  * override surface. Consumers who need rich / interactive / stateful
@@ -108,9 +109,45 @@ function renderNode(node: RenderableTreeNode): string {
 // -----------------------------------------------------------------------------
 
 /**
+ * `{% link href=$url %}PubMed{% /link %}` → `<a href="…">PubMed</a>`, and
+ * the self-closing `{% link href=$url /%}`, which uses the URL as its text.
+ *
+ * Markdoc has no way to put a variable into a link destination —
+ * `[t]({% $url %})` renders literally and an `href=` annotation fails
+ * validation — so a per-feature URL column needs a tag. The href goes
+ * through `renderNode` → `sanitizeUrl` like every other; a missing, empty
+ * or disallowed one (`javascript:`, a bare relative path) degrades to the
+ * text without a link rather than an `<a>` with an empty href, matching the
+ * auto-fallback's xref rendering. Same tab, no `target`, as those xrefs.
+ *
+ * Nothing here warns: a feature whose URL cell is blank or refused is data,
+ * not an authoring mistake in the template.
+ */
+const linkTag: Schema = {
+  render: 'a',
+  // Inline, like `helpTag`, so the link stays inside its sentence's `<p>`.
+  inline: true,
+  selfClosing: true,
+  attributes: {
+    href: { type: String, required: true },
+  },
+  transform(node, config) {
+    const { href } = node.transformAttributes(config);
+    const url = href == null ? '' : String(href);
+    const children = node.transformChildren(config);
+    const text: RenderableTreeNode[] = children.length > 0 ? children : [url];
+    // Markdoc flattens an array result into the parent's children, so this
+    // is the text in place of the link, inline in the same paragraph.
+    if (sanitizeUrl(url) === '') return text;
+    return new Tag('a', { href: url }, text);
+  },
+};
+
+/**
  * Markdoc config for the `kind: markdown` branch. Intentionally minimal:
  * authors get plain Markdoc (fields via `{% $field %}`, conditionals via
- * `{% if %}`/`{% /if %}`) and nothing more. No domain-specific tags.
+ * `{% if %}`/`{% /if %}`) plus the generic `{% link %}` tag above, and
+ * nothing more. No domain-specific tags.
  */
 const markdocConfig = {
   /**
@@ -124,6 +161,7 @@ const markdocConfig = {
   nodes: {
     document: { ...Markdoc.nodes.document, render: null as unknown as string },
   },
+  tags: { link: linkTag },
 };
 
 // -----------------------------------------------------------------------------
@@ -410,8 +448,10 @@ const AUTO_FALLBACK_RESERVED_KEYS = new Set([
   'description',
   'end',
   'evidences',
+  'fill',
   'hasPredictions',
   'locations',
+  'opacity',
   'protvistaFeatureId',
   'residuesToHighlight',
   'score',

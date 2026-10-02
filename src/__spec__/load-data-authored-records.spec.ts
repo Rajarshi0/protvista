@@ -13,7 +13,9 @@
  * the three transports agreeing, the pass-through for payloads already in the
  * renderer's representation, the blast-radius containment, and authored
  * point/variation coordinates held to whole numbers, with feature arrays
- * bypassing the validator.
+ * bypassing the validator. Then (#283) feature records from a file and the
+ * same records inline coming out identical, and the decoder's warnings
+ * returned on `trackWarnings` rather than logged.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -366,5 +368,239 @@ describe('authored coordinates must be whole numbers', () => {
     // `toMatchObject`, not `toEqual`: the tooltip resolver annotates the
     // payload. This pins the bypass `adaptAuthoredRecords` leaves in place.
     expect(data['G-t']).toMatchObject([{ type: 'DOMAIN', start: 5, end: 4 }]);
+  });
+});
+
+describe('file and inline feature records are interchangeable (#283)', () => {
+  // The same two features, written five ways. Every extra value is a
+  // non-empty string in every form (CSV cells are strings, so the YAML/JSON
+  // forms quote theirs), and the row with no colour omits the key in
+  // YAML/JSON and leaves the cell blank in CSV/TSV — so the comparison is
+  // about pass-through, not transport typing.
+  const PMID_URL = 'https://pubmed.ncbi.nlm.nih.gov';
+  const RECORDS = [
+    {
+      type: 'DOMAIN',
+      start: 1,
+      end: 9,
+      description: 'Kinase',
+      color: '#1f77b4',
+      pmid: '12345',
+      url: `${PMID_URL}/12345/`,
+    },
+    {
+      type: 'SITE',
+      start: 4,
+      end: 4,
+      description: 'Active',
+      pmid: '67890',
+      url: `${PMID_URL}/67890/`,
+    },
+  ];
+  const HEADER = ['type', 'start', 'end', 'description', 'color', 'pmid', 'url'];
+  const delimited = (sep: string) =>
+    [
+      HEADER,
+      ['DOMAIN', '1', '9', 'Kinase', '#1f77b4', '12345', `${PMID_URL}/12345/`],
+      ['SITE', '4', '4', 'Active', '', '67890', `${PMID_URL}/67890/`],
+    ]
+      .map((cells) => cells.join(sep))
+      .join('\n');
+  const FILES: Record<string, unknown> = {
+    './hits.csv': delimited(','),
+    './hits.tsv': delimited('\t'),
+    './hits.json': RECORDS,
+  };
+  const TEMPLATE =
+    'PMID {% $pmid %}: {% link href=$url %}PubMed{% /link %}';
+
+  const loadTrack = (data: unknown) => {
+    const r = registry();
+    return loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        {
+          accession: 'P05067',
+          rows: [
+            {
+              id: 'G',
+              tracks: [
+                {
+                  id: 't',
+                  kind: 'features',
+                  rendering: { color: 'red' },
+                  dataTooltip: { kind: 'markdown', template: TEMPLATE },
+                  data,
+                } as never,
+              ],
+            },
+          ],
+        },
+        { registry: r }
+      ),
+      async (url) => FILES[url] ?? null,
+      (name) => r.getAdapter(name),
+      {}
+    );
+  };
+
+  it('every form yields the same payload, tooltips included', async () => {
+    const forms = await Promise.all([
+      loadTrack('./hits.csv'),
+      loadTrack('./hits.tsv'),
+      loadTrack('./hits.json'),
+      loadTrack({ from: 'inline', inlineData: RECORDS }),
+      loadTrack({ from: 'inline', inlineData: delimited(','), format: 'csv' }),
+    ]);
+    const [csv, ...others] = forms;
+    const payload = csv.data['G-t'] as Array<Record<string, unknown>>;
+    expect(payload).toHaveLength(2);
+    expect(payload[0]).toMatchObject({ color: '#1f77b4', pmid: '12345' });
+    expect(payload[1]).not.toHaveProperty('color');
+    expect(payload[0].tooltipContent).toBe(
+      `<p>PMID 12345: <a href="${PMID_URL}/12345/">PubMed</a></p>`
+    );
+    for (const form of others) expect(form.data['G-t']).toEqual(payload);
+    for (const form of forms) {
+      expect(form.trackWarnings).toEqual({});
+      expect(form.trackFailures).toEqual({});
+    }
+  });
+
+  it('a blank extra CSV cell becomes an empty string; YAML may omit the key', async () => {
+    const body = 'type,start,end,description,pmid\nDOMAIN,1,9,x,\n';
+    const { data } = await loadTrack({ from: 'inline', inlineData: body, format: 'csv' });
+    expect((data['G-t'] as Array<Record<string, unknown>>)[0].pmid).toBe('');
+  });
+});
+
+describe('decoder warnings are returned, not logged (#283)', () => {
+  const loadFile = (file: string, body: unknown) => {
+    const r = registry();
+    return loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        {
+          accession: 'P05067',
+          rows: [
+            { id: 'G', tracks: [{ id: 't', kind: 'features', data: file }] },
+          ],
+        },
+        { registry: r }
+      ),
+      async () => body,
+      (name) => r.getAdapter(name),
+      {}
+    );
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('a CSV file with a `tooltipContent` column returns one warning', async () => {
+    const warn = vi.spyOn(console, 'warn');
+    const { data, trackWarnings, trackFailures } = await loadFile(
+      './hits.csv',
+      'type,start,end,description,tooltipContent\nDOMAIN,1,9,x,<b>hi</b>\n'
+    );
+    expect(trackWarnings).toEqual({
+      'G-t': [
+        {
+          code: 'data-field-ignored',
+          message: expect.stringMatching(
+            /^\.\/hits\.csv \(parsed as CSV\): ignored column\(s\) "tooltipContent"/
+          ),
+        },
+      ],
+    });
+    expect(trackFailures).toEqual({});
+    // The resolver built the tooltip, not the file.
+    const [record] = data['G-t'] as Array<{ tooltipContent: string }>;
+    expect(record.tooltipContent).not.toContain('<b>hi</b>');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a JSON file reports an unpaintable colour', async () => {
+    const { trackWarnings } = await loadFile('./hits.json', [
+      { type: 'DOMAIN', start: 1, end: 9, color: 'bleu' },
+    ]);
+    expect(trackWarnings['G-t'].map((w) => w.code)).toEqual(['unpaintable-color']);
+    expect(trackWarnings['G-t'][0].message).toMatch(/^\.\/hits\.json \(parsed as JSON\): /);
+  });
+
+  it('inline CSV text names "inline data"', async () => {
+    const { trackWarnings } = await load({
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'G',
+          tracks: [
+            {
+              id: 't',
+              kind: 'features',
+              data: {
+                from: 'inline',
+                format: 'csv',
+                inlineData: 'type,start,end,description,locations\nDOMAIN,1,9,x,y\n',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(trackWarnings['G-t'][0].message).toMatch(
+      /^inline data \(parsed as CSV\): ignored column\(s\) "locations"/
+    );
+  });
+
+  it('a setTrackData() text payload with a format warns like a file', async () => {
+    const r = registry();
+    const { trackWarnings } = await loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        {
+          accession: 'P05067',
+          rows: [
+            {
+              id: 'G',
+              tracks: [
+                { id: 't', kind: 'features', data: { from: 'custom', format: 'csv' } },
+              ],
+            },
+          ],
+        },
+        { registry: r }
+      ),
+      noFetch,
+      (name) => r.getAdapter(name),
+      { 'G-t': 'type,start,end,description,color\nDOMAIN,1,9,x,#catFace\n' }
+    );
+    expect(trackWarnings['G-t'].map((w) => w.code)).toEqual(['unpaintable-color']);
+  });
+
+  it('structured inline records keep the viewer fields, with no warning', async () => {
+    const { data, trackWarnings } = await load(
+      inlineConfig('features', [
+        { type: 'DOMAIN', start: 1, end: 9, tooltipContent: 'trusted', color: 'bleu' },
+      ])
+    );
+    expect(data['G-t']).toMatchObject([{ tooltipContent: 'trusted' }]);
+    expect(trackWarnings).toEqual({});
+  });
+
+  it('a file that throws has a failure and no warnings', async () => {
+    const { trackWarnings, trackFailures } = await loadFile(
+      './hits.csv',
+      'type,start,end,description,tooltipContent,opacity\nDOMAIN,1,9,x,y,abc\n'
+    );
+    expect(trackFailures['G-t'].message).toMatch(
+      /row 2, column "opacity": expected a number from 0 to 1, got "abc"/
+    );
+    expect(trackWarnings).toEqual({});
+  });
+
+  it('a BED file has no warnings entry', async () => {
+    const { data, trackWarnings } = await loadFile('./hits.bed', 'chr1\t0\t9\tx\n');
+    expect(data['G-t']).toHaveLength(1);
+    expect(trackWarnings).toEqual({});
   });
 });

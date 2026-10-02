@@ -162,3 +162,22 @@ describe('bed adapter', () => {
     warn.mockRestore();
   });
 });
+
+describe('bed adapter — canonical fields only (#283)', () => {
+  it('emits only the canonical keys, even for BED9+ lines', () => {
+    // CSV/TSV/JSON feature files keep extra columns since #283; BED's
+    // columns are positional, so none of them (strand, thickStart,
+    // itemRgb, …) becomes a record field.
+    const src = [
+      'chr1\t100\t200\tpeak1\t500\t+\t110\t190\t255,0,0\t2\t10,20\t0,80',
+      'chr1\t300\t400',
+    ].join('\n');
+    const canonical = new Set(['type', 'start', 'end', 'description', 'score']);
+    const records = bed(src) as Array<Record<string, unknown>>;
+    expect(records).toHaveLength(2);
+    for (const record of records) {
+      for (const key of Object.keys(record)) expect(canonical).toContain(key);
+    }
+    expect(records[0]).not.toHaveProperty('color');
+  });
+});

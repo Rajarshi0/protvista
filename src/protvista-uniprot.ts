@@ -145,6 +145,7 @@ import {
   formatOutOfRangeWarning,
   type TrackCoordinates,
 } from './schema/adapters/coordinates.js';
+import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import {
   routeFailure,
   type FailureChannels,
@@ -1395,6 +1396,7 @@ class ProtvistaUniprot extends LitElement {
       trackUrls,
       trackCoordinates,
       trackFailures,
+      trackWarnings,
       skipWarnings,
     } = await loadProtvistaData(
       variables,
@@ -1489,6 +1491,11 @@ class ProtvistaUniprot extends LitElement {
         consoleLevel: 'warn',
       });
     }
+
+    // What a feature decoder noticed without rejecting the file — a column it
+    // dropped, a colour the canvas cannot paint. Once per load, like the
+    // coordinate warning; a targeted retry reports only the tracks it reran.
+    this._reportDecodeWarnings(trackWarnings, trackCoordinates);
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.
@@ -1766,6 +1773,62 @@ class ProtvistaUniprot extends LitElement {
             },
           }
         );
+      }
+    }
+  }
+
+  /**
+   * Route each feature decoder warning the loader returned as a `track-data`
+   * warning on its row.
+   *
+   * The row loaded and renders as written — a dropped `tooltipContent`
+   * column changes nothing it draws, and an unpaintable colour is kept — so
+   * this rides the same routing row as the sequence-bounds warning: the
+   * event (with a `data-field-ignored` / `unpaintable-color` issue, which the
+   * playground lists) and the console, never the `⚠` badge or the panel,
+   * even under `strict`.
+   *
+   * `trackCoordinates` supplies the fetched URL for a file or URL track, the
+   * same value the bounds warning reports; inline data has none.
+   */
+  private _reportDecodeWarnings(
+    trackWarnings: Record<string, DecodeWarning[]>,
+    trackCoordinates: Record<string, TrackCoordinates>
+  ) {
+    if (!this.config) return;
+    for (const group of this.config.rows) {
+      for (const track of group.tracks) {
+        const key = `${group.id}-${track.id}`;
+        const warnings = trackWarnings[key];
+        if (!warnings) continue;
+        const url = trackCoordinates[key]?.url;
+        for (const { code, message } of warnings) {
+          this._report(
+            {
+              severity: 'warning',
+              phase: 'track-data',
+              scope: { trackKey: key },
+              ...(url !== undefined ? { source: url } : {}),
+              message: `[protvista] ${message}`,
+              consoleLevel: 'warn',
+            },
+            {
+              issues: [
+                {
+                  path: group.standalone ? track.id : `${group.id}/${track.id}`,
+                  message,
+                  code,
+                  severity: 'warning',
+                },
+              ],
+              context: {
+                groupId: group.id,
+                trackId: track.id,
+                ...(url !== undefined ? { url } : {}),
+              },
+            }
+          );
+        }
       }
     }
   }

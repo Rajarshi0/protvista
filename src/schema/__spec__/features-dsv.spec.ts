@@ -9,11 +9,15 @@
  *     (`type`, `start`, `end`, optional `description` / `score`);
  *   - strict, row/column-named errors on malformed input (missing
  *     header column, non-numeric coordinate, ragged row);
- *   - the non-string guard returning `[]`.
+ *   - the non-string guard returning `[]`;
+ *   - extra columns kept on the record (#283), with the render fields
+ *     trimmed/coerced and the blocked names dropped into a warnings sink.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { parseDelimited, rowsToFeatureRecords } from '../adapters/dsv.js';
+import type { DecodeWarning } from '../adapters/feature-fields.js';
+import type { CoordinateRow } from '../adapters/coordinates.js';
 
 import { runPipeline } from '../adapters/pipeline.js';
 
@@ -319,7 +323,9 @@ describe('rowsToFeatureRecords', () => {
     // The same two defects the point parser had, in the parser it inherited
     // them from: a spreadsheet export's trailing blank line was read as a
     // ragged row, and a column named `toString` collided with
-    // `Object.prototype` in the header index.
+    // `Object.prototype` in the header index. Since #283 other columns are
+    // kept, but `toString` is a blocked name, so the record still equals the
+    // canonical one (the warning it raises is pinned below).
     const base = featuresCsv('type,start,end,description\nDOMAIN,1,9,x\n');
     expect(featuresCsv('type,start,end,description\nDOMAIN,1,9,x\n\n')).toEqual(
       base
@@ -327,5 +333,308 @@ describe('rowsToFeatureRecords', () => {
     expect(
       featuresCsv('type,start,end,description,toString\nDOMAIN,1,9,x,y\n')
     ).toEqual(base);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Extra columns (#283)
+// ─────────────────────────────────────────────────────────────
+
+describe.each([
+  { format: 'csv' as const, sep: ',', source: './hits.csv', label: './hits.csv (parsed as CSV)' },
+  { format: 'tsv' as const, sep: '\t', source: './hits.tsv', label: './hits.tsv (parsed as TSV)' },
+])('extra columns ($format)', ({ format, sep, source, label }) => {
+  const file = (...lines: string[][]) =>
+    lines.map((cells) => cells.join(sep)).join('\n');
+  const decode = (body: string) => {
+    const warnings: DecodeWarning[] = [];
+    const coordinates: CoordinateRow[] = [];
+    const out = runPipeline('feature', format, body, {
+      source,
+      warnings,
+      coordinates,
+    }) as Array<Record<string, unknown>>;
+    return { out, warnings, coordinates };
+  };
+
+  it('keeps an unknown column verbatim, keyed by the trimmed header name', () => {
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', ' pmid ', 'note'],
+        ['DOMAIN', '1', '9', 'x', ' 123 ', ''],
+        ['DOMAIN', '2', '8', 'y', '456', 'n']
+      )
+    );
+    expect(out).toStrictEqual([
+      { type: 'DOMAIN', start: 1, end: 9, description: 'x', pmid: ' 123 ', note: '' },
+      { type: 'DOMAIN', start: 2, end: 8, description: 'y', pmid: '456', note: 'n' },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('puts canonical fields first, then the rest in header order', () => {
+    const { out } = decode(
+      file(
+        ['gene', 'color', 'end', 'type', 'url', 'start', 'description'],
+        ['g', 'red', '9', 'DOMAIN', 'https://x.org', '1', 'x']
+      )
+    );
+    expect(Object.keys(out[0])).toEqual([
+      'type',
+      'start',
+      'end',
+      'description',
+      'gene',
+      'color',
+      'url',
+    ]);
+  });
+
+  it('trims `color` / `shape` / `fill` and leaves them off when blank', () => {
+    const { out } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'color', 'shape', 'fill'],
+        ['DOMAIN', '1', '9', 'x', ' #1f77b4 ', ' diamond ', 'navy'],
+        ['DOMAIN', '2', '8', 'y', '', '  ', '']
+      )
+    );
+    expect(out).toStrictEqual([
+      {
+        type: 'DOMAIN',
+        start: 1,
+        end: 9,
+        description: 'x',
+        color: '#1f77b4',
+        shape: 'diamond',
+        fill: 'navy',
+      },
+      { type: 'DOMAIN', start: 2, end: 8, description: 'y' },
+    ]);
+  });
+
+  it('passes an unknown `shape` through, and treats `Color` as a plain extra', () => {
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'shape', 'Color'],
+        ['DOMAIN', '1', '9', 'x', 'blob', 'bleu']
+      )
+    );
+    expect(out[0]).toMatchObject({ shape: 'blob', Color: 'bleu' });
+    expect(out[0].color).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  it('parses `opacity` as a number from 0 to 1, leaving a blank cell off', () => {
+    const { out } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'opacity'],
+        ['DOMAIN', '1', '9', 'x', ' 0.5 '],
+        ['DOMAIN', '1', '9', 'x', '1'],
+        ['DOMAIN', '1', '9', 'x', '']
+      )
+    );
+    expect(out.map((r) => r.opacity)).toEqual([0.5, 1, undefined]);
+    expect('opacity' in out[2]).toBe(false);
+  });
+
+  it.each(['abc', '1.5', '-0.1'])('rejects an `opacity` of %j', (bad) => {
+    expect(() =>
+      decode(
+        file(
+          ['type', 'start', 'end', 'description', 'opacity'],
+          ['DOMAIN', '1', '9', 'x', '0.5'],
+          ['DOMAIN', '1', '9', 'x', bad]
+        )
+      )
+    ).toThrow(
+      `${label}: row 3, column "opacity": expected a number from 0 to 1, got "${bad}".`
+    );
+  });
+
+  it('reports a coordinate error before looking at the extras', () => {
+    expect(() =>
+      decode(
+        file(
+          ['type', 'start', 'end', 'description', 'opacity'],
+          ['DOMAIN', '1.5', '9', 'x', 'abc']
+        )
+      )
+    ).toThrow(/row 2, column "start": expected a whole number/);
+  });
+
+  it('keeps an unpaintable colour and warns once, naming it', () => {
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'color', 'fill'],
+        ['DOMAIN', '1', '9', 'x', 'bleu', ''],
+        ['DOMAIN', '1', '9', 'x', '#1f77b4', 'rgb(0 0 0)'],
+        ['DOMAIN', '1', '9', 'x', 'bleu', '#catFace'],
+        ['DOMAIN', '1', '9', 'x', 'grren', 'reed']
+      )
+    );
+    expect(out[0].color).toBe('bleu');
+    expect(warnings).toEqual([
+      {
+        code: 'unpaintable-color',
+        message:
+          `${label}: 3 row(s) have a colour the canvas cannot paint ` +
+          `("bleu", "#catFace", "grren", …); those features are drawn in ` +
+          `the previous feature's colour.`,
+      },
+    ]);
+  });
+
+  it('pushes no warning for paintable colours', () => {
+    const { warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'color', 'fill'],
+        ['DOMAIN', '1', '9', 'x', 'SteelBlue', '#abc'],
+        ['DOMAIN', '1', '9', 'x', 'hsl(10 50% 50%)', 'transparent']
+      )
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it('drops the viewer fields with exactly one warning naming them', () => {
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'tooltipContent', 'locations', 'residuesToHighlight', 'pmid'],
+        ['DOMAIN', '1', '9', 'x', '<img src=x onerror=alert(1)>', 'a', 'b', '1'],
+        ['DOMAIN', '2', '8', 'y', '<b>', 'c', 'd', '2']
+      )
+    );
+    expect(out).toStrictEqual([
+      { type: 'DOMAIN', start: 1, end: 9, description: 'x', pmid: '1' },
+      { type: 'DOMAIN', start: 2, end: 8, description: 'y', pmid: '2' },
+    ]);
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          `${label}: ignored column(s) "tooltipContent", "locations", ` +
+          `"residuesToHighlight" — these names are reserved by the viewer ` +
+          `or by JavaScript and cannot come from a data file.`,
+      },
+    ]);
+  });
+
+  it('drops `Object.prototype` names without touching the prototype', () => {
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'toString', '__proto__', 'constructor'],
+        ['DOMAIN', '1', '9', 'x', 'a', 'b', 'c']
+      )
+    );
+    expect(Object.getPrototypeOf(out[0])).toBe(Object.prototype);
+    expect(out[0]).toStrictEqual({ type: 'DOMAIN', start: 1, end: 9, description: 'x' });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('"toString", "__proto__", "constructor"');
+  });
+
+  it('drops an empty header name silently', () => {
+    const { out, warnings } = decode(
+      file(['type', 'start', 'end', 'description', ''], ['DOMAIN', '1', '9', 'x', ''])
+    );
+    expect(out).toStrictEqual([{ type: 'DOMAIN', start: 1, end: 9, description: 'x' }]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('passes a `begin` column through as a plain extra (no alias in CSV)', () => {
+    const { out } = decode(
+      file(['type', 'start', 'end', 'description', 'begin'], ['DOMAIN', '1', '9', 'x', '4'])
+    );
+    expect(out[0]).toStrictEqual({ type: 'DOMAIN', start: 1, end: 9, description: 'x', begin: '4' });
+  });
+
+  it('two warnings for a file with a blocked column and an unpaintable colour', () => {
+    const { warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'color', 'tooltipContent'],
+        ['DOMAIN', '1', '9', 'x', 'bleu', 'y']
+      )
+    );
+    expect(warnings.map((w) => w.code)).toEqual(['data-field-ignored', 'unpaintable-color']);
+  });
+
+  it('a record without extras is unchanged, and the sink stays empty', () => {
+    const { out, warnings } = decode(
+      file(['type', 'start', 'end', 'description', 'score'], ['DOMAIN', '1', '9', 'x', '0.5'])
+    );
+    expect(out).toStrictEqual([{ type: 'DOMAIN', start: 1, end: 9, description: 'x', score: 0.5 }]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('leaves row numbers and coordinates unchanged by extra columns', () => {
+    const canonical = decode(
+      file(['type', 'start', 'end', 'description'], ['DOMAIN', '1', '9', 'x'], ['', '', '', ''], ['SITE', '4', '4', 'y'])
+    );
+    const extended = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'color', 'pmid'],
+        ['DOMAIN', '1', '9', 'x', 'red', '1'],
+        ['', '', '', '', '', ''],
+        ['SITE', '4', '4', 'y', '', '2']
+      )
+    );
+    expect(extended.coordinates).toEqual(canonical.coordinates);
+    expect(extended.coordinates.map((c) => c.row)).toEqual([2, 4]);
+    // Row numbers ride beside the payload, never on a record.
+    for (const record of extended.out) {
+      expect(Object.keys(record)).not.toContain('row');
+    }
+  });
+
+  it('pushes no warnings when the decode throws', () => {
+    const warnings: DecodeWarning[] = [];
+    expect(() =>
+      runPipeline(
+        'feature',
+        format,
+        file(
+          ['type', 'start', 'end', 'description', 'tooltipContent', 'color', 'opacity'],
+          ['DOMAIN', '1', '9', 'x', 'y', 'bleu', '0.5'],
+          ['DOMAIN', '1', '9', 'x', 'y', 'bleu', '7']
+        ),
+        { source, warnings }
+      )
+    ).toThrow(/opacity/);
+    expect(warnings).toEqual([]);
+  });
+
+  it('never logs, with or without a sink', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const body = file(
+        ['type', 'start', 'end', 'description', 'tooltipContent', 'color'],
+        ['DOMAIN', '1', '9', 'x', 'y', 'bleu']
+      );
+      runPipeline('feature', format, body, { source });
+      decode(body);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('rowsToFeatureRecords — the warnings sink', () => {
+  it('reports the blocked `toString` column when a sink is passed', () => {
+    const warnings: DecodeWarning[] = [];
+    rowsToFeatureRecords(
+      [
+        ['type', 'start', 'end', 'description', 'toString'],
+        ['DOMAIN', '1', '9', 'x', 'y'],
+      ],
+      { formatLabel: 'features-csv', warnings }
+    );
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          'features-csv: ignored column(s) "toString" — these names are ' +
+          'reserved by the viewer or by JavaScript and cannot come from a ' +
+          'data file.',
+      },
+    ]);
   });
 });

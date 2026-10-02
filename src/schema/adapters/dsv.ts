@@ -1,6 +1,5 @@
 /**
- * Shared parser core for the delimited generic-format adapters
- * (`features-csv`, `features-tsv`, and `bed`).
+ * Shared parser core for the delimited (CSV/TSV) readers and `bed`.
  *
  * Three independent pieces live here so they can be reused without
  * dragging the feature-mapping opinions along:
@@ -14,6 +13,7 @@
  *   - `rowsToFeatureRecords()` layers the ProtVista feature convention
  *     on top: a required `type,start,end,description[,score]` header,
  *     numeric coercion, and strict, row/column-named error reporting.
+ *     Every other column is kept on the record (see `./feature-fields`).
  *   - `rowsToPointRecords()` is its sibling for the graph kinds: the same
  *     header/ragged/number discipline over a `position,value` header,
  *     emitting the `{ position, value }` records `linegraph` consumes.
@@ -29,6 +29,15 @@
  * off-the-shelf parser produces.
  */
 
+import {
+  FEATURE_CANONICAL_FIELDS,
+  classifyExtraField,
+  ignoredFieldsWarning,
+  isUnpaintable,
+  unpaintableColorWarning,
+  type DecodeWarning,
+} from './feature-fields.js';
+
 /** One parsed feature record, matching the shape Nightingale tracks consume. */
 export interface FeatureRecord {
   type: string;
@@ -37,6 +46,24 @@ export interface FeatureRecord {
   description?: string;
   score?: number;
 }
+
+/**
+ * A feature record decoded from an author's CSV, TSV or JSON file: the
+ * canonical fields plus whatever else the file carried. The four render
+ * fields are typed because Nightingale reads them per record; every other
+ * extra is opaque data for `dataTooltip`.
+ *
+ * Kept separate from {@link FeatureRecord} so `bed()` — whose columns are
+ * positional and carry no extras — still returns the canonical shape, and
+ * the type checker holds it to that.
+ */
+export type AuthoredFeatureRecord = FeatureRecord & {
+  color?: string;
+  shape?: string;
+  fill?: string;
+  opacity?: number;
+  [field: string]: unknown;
+};
 
 /**
  * Tokenize delimited text into rows of string fields per RFC 4180.
@@ -185,7 +212,7 @@ function wholeNumber(
 }
 
 /**
- * Turn tokenized rows (header + data) into `FeatureRecord`s.
+ * Turn tokenized rows (header + data) into feature records.
  *
  * The header row must contain `type`, `start`, `end`, and `description`
  * (in any order, no duplicates); `score` is optional. Every data row must
@@ -197,22 +224,46 @@ function wholeNumber(
  *
  * On any violation this throws with a message naming the offending row (by
  * 1-based line number, header = line 1) and, where meaningful, the column —
- * e.g. `features-csv: row 3, column "start": expected a number, got "abc"`.
- * The loader's per-track try/catch records the throw as that track's
+ * e.g. `./hits.csv (parsed as CSV): row 3, column "start": expected a number,
+ * got "abc"`. The loader's per-track try/catch records the throw as that track's
  * failure and leaves the track empty, so one bad file degrades one row. The
  * element routes it like any other track failure: this message is the ⚠
  * badge's text, the `protvista-error` event's `message`, and the console line
  * — so the author sees which row and column to fix without opening the
  * console.
  *
+ * Every other column is kept on the record, keyed by its trimmed header
+ * name, in header order after the canonical fields (`./feature-fields` has
+ * the rule):
+ *
+ *   - `color`, `shape`, `fill` are trimmed and `opacity` is coerced to a
+ *     number from 0 to 1 (anything else is a row/column error); a blank cell
+ *     leaves the field off, so the track's `rendering:` still applies to that
+ *     row.
+ *   - Any other column is kept as the verbatim cell string — untrimmed, and
+ *     `''` when blank, so the column exists on every row.
+ *   - `tooltipContent`, `locations`, `residuesToHighlight` and names on
+ *     `Object.prototype` are dropped; an empty header name is dropped
+ *     silently.
+ *
  * `opts.rowNumbers`, when given, is an out-array: it receives each returned
  * record's row number (same numbering as the errors), in the same order as
  * the returned records. Skipped blank rows add nothing.
+ *
+ * `opts.warnings`, when given, is an out-array too: it receives at most one
+ * `data-field-ignored` warning (the dropped column names) and one
+ * `unpaintable-color` warning (the `color` / `fill` values a browser will
+ * not paint, which are still kept). Nothing is logged either way; a call
+ * that throws pushes nothing.
  */
 export function rowsToFeatureRecords(
   rows: string[][],
-  opts: { formatLabel: string; rowNumbers?: number[] }
-): FeatureRecord[] {
+  opts: {
+    formatLabel: string;
+    rowNumbers?: number[];
+    warnings?: DecodeWarning[];
+  }
+): AuthoredFeatureRecord[] {
   const { formatLabel } = opts;
 
   if (rows.length === 0) return [];
@@ -242,8 +293,13 @@ export function rowsToFeatureRecords(
     }
   }
   const hasScore = index.has('score');
+  const { extras, blocked } = planExtraColumns(index);
+  // Collected for the warnings, which are pushed only once every row has
+  // decoded: a file that throws reports its error alone.
+  const unpaintable: string[] = [];
+  let unpaintableRows = 0;
 
-  const records: FeatureRecord[] = [];
+  const records: AuthoredFeatureRecord[] = [];
   for (let r = 1; r < rows.length; r++) {
     const cells = rows[r];
     const line = r + 1; // header is line 1
@@ -269,7 +325,7 @@ export function rowsToFeatureRecords(
       return n;
     };
 
-    const record: FeatureRecord = {
+    const record: AuthoredFeatureRecord = {
       type: cells[index.get('type') as number],
       start: num('start'),
       end: num('end'),
@@ -303,11 +359,72 @@ export function rowsToFeatureRecords(
       }
     }
 
+    // Extras last, after every canonical check, so a coordinate error is
+    // still the one reported for a row that has both.
+    let rowUnpaintable = false;
+    for (const { name, i, render } of extras) {
+      const raw = cells[i];
+      if (!render) {
+        // Safe as plain assignment: every `Object.prototype` name was
+        // classified as blocked and is not in the plan.
+        record[name] = raw;
+        continue;
+      }
+      const value = raw.trim();
+      if (value === '') continue;
+      if (name === 'opacity') {
+        const n = parseDecimal(value);
+        if (n === null || n < 0 || n > 1) {
+          throw new Error(
+            `${formatLabel}: row ${line}, column "opacity": expected a ` +
+              `number from 0 to 1, got "${raw}".`
+          );
+        }
+        record.opacity = n;
+        continue;
+      }
+      if (isUnpaintable(name, value)) {
+        unpaintable.push(value);
+        rowUnpaintable = true;
+      }
+      record[name] = value;
+    }
+    if (rowUnpaintable) unpaintableRows++;
+
     records.push(record);
     opts.rowNumbers?.push(line);
   }
 
+  if (blocked.length > 0) {
+    opts.warnings?.push(ignoredFieldsWarning(formatLabel, blocked));
+  }
+  if (unpaintableRows > 0) {
+    opts.warnings?.push(
+      unpaintableColorWarning(formatLabel, unpaintableRows, unpaintable)
+    );
+  }
   return records;
+}
+
+/**
+ * The non-canonical columns a feature file carries, in header order, plus
+ * the blocked names it dropped. Built once per file rather than per row.
+ */
+function planExtraColumns(index: ReadonlyMap<string, number>): {
+  extras: Array<{ name: string; i: number; render: boolean }>;
+  blocked: string[];
+} {
+  const extras: Array<{ name: string; i: number; render: boolean }> = [];
+  const blocked: string[] = [];
+  // A `Map` iterates in insertion order, which is header order.
+  for (const [name, i] of index) {
+    if (FEATURE_CANONICAL_FIELDS.has(name)) continue;
+    const group = classifyExtraField(name);
+    if (group === 'blocked') blocked.push(name);
+    else if (group !== 'skip')
+      extras.push({ name, i, render: group === 'render' });
+  }
+  return { extras, blocked };
 }
 
 /** One parsed graph point, matching the shape `linegraph` series carry. */
@@ -333,8 +450,9 @@ export const POINT_COLUMNS = ['position', 'value'] as const;
  * fields as the header, and both cells are coerced through
  * {@link parseDecimal} so the number grammar cannot drift between the
  * feature and graph formats. `position` must be a whole number; `value`
- * may be any decimal. Extra columns are permitted and ignored,
- * matching the feature layer's treatment of unknown headers.
+ * may be any decimal. Extra columns are permitted and ignored — unlike
+ * the feature layer, which keeps them for `dataTooltip`; a graph point has
+ * no per-item hover to show them in.
  *
  * Rows are returned in file order — `linegraph` draws points in the order
  * it receives them and neither sorts nor de-duplicates, so the file's

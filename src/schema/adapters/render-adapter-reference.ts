@@ -139,6 +139,17 @@ function shapeSection(shape: ShapeName): string {
   );
   parts.push('');
   parts.push(fieldTable(SHAPE_FIELDS[shape]));
+  if (shape === 'feature') {
+    parts.push('');
+    parts.push(
+      'Any other column of a CSV/TSV file, or key of a JSON record, is kept ' +
+        'on the record as written, so a `dataTooltip` can show it. ' +
+        '`tooltipContent`, `locations`, `residuesToHighlight` and names ' +
+        'JavaScript reserves (`__proto__`, `toString`, …) are dropped with a ' +
+        '`track-data` warning. BED records carry only the fields above that ' +
+        'BED can express — never the render fields.'
+    );
+  }
   return parts.join('\n');
 }
 
@@ -300,7 +311,7 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
       prop.description =
         '1-based start position (inclusive).';
       prop.$comment =
-        'features-json also accepts `begin` as an alias for `start`; `start` wins when both are present.';
+        'JSON sources also accept `begin` as an alias for `start`; `start` wins when both are present.';
     }
     properties[f.name] = prop;
   }
@@ -309,7 +320,7 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
     $id: FEATURE_RECORD_SCHEMA_ID,
     title: 'ProtVista feature record',
     description:
-      'The canonical payload the generic bring-your-own-data adapters (features-csv, features-tsv, features-json, bed) emit and the feature tracks consume. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
+      'The feature record your own CSV, TSV, JSON or BED file decodes to, and the feature tracks consume. CSV/TSV/JSON records keep every extra column or key (for dataTooltip) except tooltipContent, locations, residuesToHighlight and Object.prototype names; BED records carry only the canonical fields. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
     type: 'object',
     required: FEATURE_RECORD_FIELDS.filter((f) => f.required).map((f) => f.name),
     additionalProperties: true,

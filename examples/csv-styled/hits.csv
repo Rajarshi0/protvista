@@ -1,0 +1,5 @@
+type,start,end,description,color,ref,url
+DOMAIN,18,189,E1 domain (lab re-annotation),#1f77b4,NB-2024-017,https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains
+DOMAIN,374,565,E2 domain (lab re-annotation),#1f77b4,NB-2024-018,https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains
+BINDING,132,140,Predicted heparin-binding site,#d62728,NB-2024-021,https://pubmed.ncbi.nlm.nih.gov/?term=APP+heparin+binding
+REGION,290,340,Acidic-rich linker region,,NB-2024-022,

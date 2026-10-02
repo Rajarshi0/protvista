@@ -221,6 +221,115 @@ exports[`golden: examples/csv > resolution (expected to change with the refactor
 }
 `;
 
+exports[`golden: examples/csv-styled > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "MY_LAB": [
+      {
+        "color": "#1f77b4",
+        "description": "E1 domain (lab re-annotation)",
+        "end": 189,
+        "ref": "NB-2024-017",
+        "start": 18,
+        "tooltipContent": "<p><strong>E1 domain (lab re-annotation)</strong> (DOMAIN, 18–189)</p><p>Notebook NB-2024-017 · <a href="https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains">Read more</a></p>",
+        "type": "DOMAIN",
+        "url": "https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains",
+      },
+      {
+        "color": "#1f77b4",
+        "description": "E2 domain (lab re-annotation)",
+        "end": 565,
+        "ref": "NB-2024-018",
+        "start": 374,
+        "tooltipContent": "<p><strong>E2 domain (lab re-annotation)</strong> (DOMAIN, 374–565)</p><p>Notebook NB-2024-018 · <a href="https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains">Read more</a></p>",
+        "type": "DOMAIN",
+        "url": "https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains",
+      },
+      {
+        "color": "#d62728",
+        "description": "Predicted heparin-binding site",
+        "end": 140,
+        "ref": "NB-2024-021",
+        "start": 132,
+        "tooltipContent": "<p><strong>Predicted heparin-binding site</strong> (BINDING, 132–140)</p><p>Notebook NB-2024-021 · <a href="https://pubmed.ncbi.nlm.nih.gov/?term=APP+heparin+binding">Read more</a></p>",
+        "type": "BINDING",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/?term=APP+heparin+binding",
+      },
+      {
+        "description": "Acidic-rich linker region",
+        "end": 340,
+        "ref": "NB-2024-022",
+        "start": 290,
+        "tooltipContent": "<p><strong>Acidic-rich linker region</strong> (REGION, 290–340)</p><p>Notebook NB-2024-022 · Read more</p>",
+        "type": "REGION",
+        "url": "",
+      },
+    ],
+    "MY_LAB-hits": [
+      {
+        "color": "#1f77b4",
+        "description": "E1 domain (lab re-annotation)",
+        "end": 189,
+        "ref": "NB-2024-017",
+        "start": 18,
+        "tooltipContent": "<p><strong>E1 domain (lab re-annotation)</strong> (DOMAIN, 18–189)</p><p>Notebook NB-2024-017 · <a href="https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains">Read more</a></p>",
+        "type": "DOMAIN",
+        "url": "https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains",
+      },
+      {
+        "color": "#1f77b4",
+        "description": "E2 domain (lab re-annotation)",
+        "end": 565,
+        "ref": "NB-2024-018",
+        "start": 374,
+        "tooltipContent": "<p><strong>E2 domain (lab re-annotation)</strong> (DOMAIN, 374–565)</p><p>Notebook NB-2024-018 · <a href="https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains">Read more</a></p>",
+        "type": "DOMAIN",
+        "url": "https://www.uniprot.org/uniprotkb/P05067/entry#family_and_domains",
+      },
+      {
+        "color": "#d62728",
+        "description": "Predicted heparin-binding site",
+        "end": 140,
+        "ref": "NB-2024-021",
+        "start": 132,
+        "tooltipContent": "<p><strong>Predicted heparin-binding site</strong> (BINDING, 132–140)</p><p>Notebook NB-2024-021 · <a href="https://pubmed.ncbi.nlm.nih.gov/?term=APP+heparin+binding">Read more</a></p>",
+        "type": "BINDING",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/?term=APP+heparin+binding",
+      },
+      {
+        "description": "Acidic-rich linker region",
+        "end": 340,
+        "ref": "NB-2024-022",
+        "start": 290,
+        "tooltipContent": "<p><strong>Acidic-rich linker region</strong> (REGION, 290–340)</p><p>Notebook NB-2024-022 · Read more</p>",
+        "type": "REGION",
+        "url": "",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/csv-styled > resolution (expected to change with the refactor) 1`] = `
+{
+  "MY_LAB-hits": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "feature",
+        "url": "./hits.csv",
+      },
+    ],
+  },
+}
+`;
+
 exports[`golden: examples/extend-default > payloads (must survive the refactor byte-identically) 1`] = `
 {
   "data": {

@@ -167,6 +167,22 @@ describe('strict is read in exactly one place', () => {
       }
     }
   });
+
+  it('keeps a track-data warning to the event and console, even under strict', () => {
+    // The row loaded and renders as written — coordinates outside the
+    // sequence, a column the decoder ignored, an unpaintable colour — so no
+    // surface may mark it broken.
+    for (const strict of [false, true]) {
+      const channels = routeFailure(
+        report('warning', 'track', { phase: 'track-data' }),
+        { strict }
+      );
+      expect(channels.event).toBe(true);
+      expect(channels.panel).toBe(false);
+      expect(channels.badge).toBe(false);
+      expect(channels.console).toBe('warn');
+    }
+  });
 });
 
 describe('retry follows recoverability, and only where surfaced', () => {

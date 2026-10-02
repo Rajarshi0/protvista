@@ -3140,6 +3140,163 @@ describe('track-data coordinate warning', () => {
       '2 of 3 rows fall outside P12345 (100 residues)'
     );
   });
+
+  // ── track-data decoder warnings (#283) ──────────────────────────
+  //
+  // Nested here to reuse `stubRoutes` / `mountCollecting`. Every file below
+  // is in range for the 770-residue entry, so the only track-data events are
+  // the decoder's own.
+  describe('track-data decoder warnings', () => {
+    const IGNORED =
+      './hits.csv (parsed as CSV): ignored column(s) "tooltipContent" — these names are reserved by the viewer or by JavaScript and cannot come from a data file.';
+    const WITH_TOOLTIP =
+      'type,start,end,description,tooltipContent\nDOMAIN,1,10,a,<img src=x onerror=alert(1)>\nDOMAIN,5,20,b,\n';
+
+    it('routes an ignored column as a track-data warning: event and console, no badge', async () => {
+      stubRoutes({ csv: WITH_TOOLTIP });
+      const { el, events, trackData, warn } = mountCollecting({
+        viewerConfig: CONFIG,
+      });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      const [ev] = trackData();
+      expect(ev.detail.severity).toBe('warning');
+      expect(ev.detail.message).toBe(IGNORED);
+      expect(ev.detail.source).toBe('./hits.csv');
+      expect(ev.detail.issues).toEqual([
+        {
+          path: 'g/y',
+          code: 'data-field-ignored',
+          severity: 'warning',
+          message: IGNORED,
+        },
+      ]);
+      expect(ev.detail.context).toEqual({
+        accession: 'P05067',
+        groupId: 'g',
+        trackId: 'y',
+        url: './hits.csv',
+      });
+      expect(warn).toHaveBeenCalledWith(`[protvista] ${IGNORED}`);
+      expect(events.some((e) => e.detail.phase === 'track-fetch')).toBe(false);
+      await el.updateComplete;
+      expect(el._mountError).toBeNull();
+      expect(el._trackErrors.has('g-y')).toBe(false);
+      // Every row renders, with the resolver's tooltip rather than the file's.
+      const rows = el.data['g-y'] as Array<{ tooltipContent?: string }>;
+      expect(rows).toHaveLength(2);
+      expect(rows[0].tooltipContent).not.toContain('onerror');
+    });
+
+    it('stays off the mount panel under strict', async () => {
+      stubRoutes({ csv: WITH_TOOLTIP });
+      const { el, trackData } = mountCollecting({
+        viewerConfig: { ...CONFIG, strict: true },
+      });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      await el.updateComplete;
+      expect(el._mountError).toBeNull();
+      expect(el.querySelector(PANEL)).toBeNull();
+      expect(el._trackErrors.has('g-y')).toBe(false);
+    });
+
+    it('routes an unpaintable colour as its own code', async () => {
+      stubRoutes({
+        csv: 'type,start,end,description,color\nDOMAIN,1,10,a,bleu\nDOMAIN,5,20,b,red\n',
+      });
+      const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      const [ev] = trackData();
+      expect(ev.detail.issues[0].code).toBe('unpaintable-color');
+      expect(ev.detail.message).toBe(
+        './hits.csv (parsed as CSV): 1 row(s) have a colour the canvas cannot paint ("bleu"); those features are drawn in the previous feature\'s colour.'
+      );
+      // Kept on the record: the check does not know every CSS colour.
+      expect((el.data['g-y'] as Array<{ color?: string }>)[0].color).toBe('bleu');
+    });
+
+    it('uses the bare track id as the path for a standalone row', async () => {
+      stubRoutes({ csv: WITH_TOOLTIP });
+      const { trackData } = mountCollecting({
+        viewerConfig: {
+          rows: [{ id: 'solo', kind: 'features', data: './hits.csv' }],
+        },
+      });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      const [ev] = trackData();
+      expect(ev.detail.issues[0].path).toBe('solo');
+      expect(ev.detail.context.trackId).toBe('solo');
+    });
+
+    it('omits url and source for inline text', async () => {
+      stubRoutes();
+      const { trackData } = mountCollecting({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'g',
+              tracks: [
+                {
+                  id: 'y',
+                  kind: 'features',
+                  data: {
+                    from: 'inline',
+                    format: 'csv',
+                    inlineData:
+                      'type,start,end,description,locations\nDOMAIN,1,10,a,x\n',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      const [ev] = trackData();
+      expect(ev.detail.message).toMatch(
+        /^inline data \(parsed as CSV\): ignored column\(s\) "locations"/
+      );
+      expect(ev.detail).not.toHaveProperty('source');
+      expect(ev.detail.context).not.toHaveProperty('url');
+    });
+
+    it('fires once per data load: not on re-render, again on reload', async () => {
+      stubRoutes({ csv: WITH_TOOLTIP });
+      const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+      await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+      el.requestUpdate();
+      await el.updateComplete;
+      expect(trackData()).toHaveLength(1);
+
+      await el._loadData();
+      expect(trackData()).toHaveLength(2);
+    });
+
+    it('routes a bad opacity as a track-fetch failure with a badge instead', async () => {
+      stubRoutes({
+        csv: 'type,start,end,description,opacity\nDOMAIN,1,10,a,1.5\n',
+      });
+      const { el, events, trackData } = mountCollecting({
+        viewerConfig: CONFIG,
+      });
+
+      await vi.waitFor(() =>
+        expect(events.some((e) => e.detail.phase === 'track-fetch')).toBe(true)
+      );
+      const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+      expect(tf.detail.context.errorKind).toBe('adapter');
+      expect(tf.detail.message).toBe(
+        './hits.csv (parsed as CSV): row 2, column "opacity": expected a number from 0 to 1, got "1.5".'
+      );
+      expect(el._trackErrors.has('g-y')).toBe(true);
+      expect(trackData()).toHaveLength(0);
+    });
+  });
 });
 
 // ── format helper ─────────────────────────────────────────────────

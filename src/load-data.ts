@@ -36,6 +36,9 @@
  *   5. Return each authored track's decoded coordinates and row numbers,
  *      taken before `filter:`, as `trackCoordinates` — kept out of `data`
  *      for the component's sequence-bounds warning.
+ *   6. Return each track's decoder warnings (feature columns dropped,
+ *      colours a browser will not paint) as `trackWarnings`, for the
+ *      component to route as `track-data` warnings.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM, no `console`. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
@@ -58,6 +61,7 @@ import type {
   CoordinateRow,
   TrackCoordinates,
 } from './schema/adapters/coordinates.js';
+import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import { SHAPES } from './schema/shapes.js';
 import { resolveTooltip } from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
@@ -169,6 +173,18 @@ type LoadResult = {
    */
   trackFailures: Record<string, TrackProcessingFailure>;
   /**
+   * What a feature decoder noticed about a track's data without rejecting
+   * it, keyed by `${groupId}-${trackId}`: columns it dropped because decoded
+   * data may not set them (`data-field-ignored`), and `color` / `fill`
+   * values it kept but a browser will not paint (`unpaintable-color`). Only
+   * tracks with at least one warning have a key, and a track whose decode
+   * threw has none (its failure is in `trackFailures`).
+   *
+   * Returned rather than logged, for the same reason as `trackFailures`; the
+   * caller routes each as a `track-data` warning.
+   */
+  trackWarnings: Record<string, DecodeWarning[]>;
+  /**
    * One message per URL template that was not fetched because a `{token}`
    * had no value or a refused one (see `substituteTemplate`). Returned rather
    * than logged for the same reason as `trackFailures`; the caller routes
@@ -267,9 +283,10 @@ function isRenderedRepresentation(payload: unknown): boolean {
  * records arrive over the network, inline in the config, or through
  * `setTrackData()`, so the adapter that validates and wraps them runs for all
  * three. Kinds whose records need no wrapping (the feature family) and
- * provider-only kinds have no record adapter and pass through untouched —
- * running `features-json` here would strip every field outside its five
- * documented ones, including any a `dataTooltip` path references.
+ * provider-only kinds have no record adapter and pass through untouched:
+ * structured feature records are already the renderer's representation, and
+ * inline config is trusted to set the viewer fields (`tooltipContent`,
+ * `locations`) the feature decoder drops from decoded data.
  *
  * A payload already in the renderer's representation is passed through, so the
  * previously-documented `setTrackData()` contract keeps working.
@@ -282,12 +299,20 @@ function isRenderedRepresentation(payload: unknown): boolean {
  * With `collectCoordinates`, the author's coordinates are returned alongside
  * the payload for the sequence-bounds warning; `setTrackData()` payloads are
  * not checked, so that path skips collecting them.
+ *
+ * Text decoded here (inline text, or a `setTrackData()` string, with a
+ * `format:`) reports the decoder's warnings exactly as a file does: they are
+ * returned as `warnings` when there are any.
  */
 async function adaptAuthoredRecords(
   payload: unknown,
   track: NormalizedTrack,
   collectCoordinates: boolean
-): Promise<{ payload: unknown; coordinates?: TrackCoordinates }> {
+): Promise<{
+  payload: unknown;
+  coordinates?: TrackCoordinates;
+  warnings?: DecodeWarning[];
+}> {
   const source = track.data[0];
   const shape = source?.shape;
   // No shape means no record contract to hold the payload to.
@@ -304,9 +329,9 @@ async function adaptAuthoredRecords(
       : declared;
 
   // A shape that does not wrap means JSON records *are* the representation,
-  // and running them through a validator would only strip fields a
-  // `dataTooltip` may reference. Encoded text still has to be decoded — the
-  // raw string is no one's representation.
+  // and trusted config may set fields the decoder keeps out of decoded data,
+  // so they are not run through it. Encoded text still has to be decoded —
+  // the raw string is no one's representation.
   if (format === 'json' && !SHAPES[shape].wraps) {
     if (!collectCoordinates || !Array.isArray(payload)) return { payload };
     return {
@@ -321,16 +346,21 @@ async function adaptAuthoredRecords(
   }
   if (isRenderedRepresentation(payload)) return { payload };
   // No `source`, so a parse error reads "inline data (parsed as CSV): …".
+  const warnings: DecodeWarning[] = [];
+  const found = () => (warnings.length > 0 ? { warnings } : {});
   if (!collectCoordinates) {
-    return { payload: await runPipeline(shape, format, payload) };
+    const result = await runPipeline(shape, format, payload, { warnings });
+    return { payload: result, ...found() };
   }
   const rows: CoordinateRow[] = [];
   const result = await runPipeline(shape, format, payload, {
     coordinates: rows,
+    warnings,
   });
   return {
     payload: result,
     coordinates: { label: sourceLabel(undefined, format), shape, format, rows },
+    ...found(),
   };
 }
 
@@ -568,6 +598,7 @@ export async function loadProtvistaData(
 
   const data: Record<string, unknown> = {};
   const trackFailures: Record<string, TrackProcessingFailure> = {};
+  const trackWarnings: Record<string, DecodeWarning[]> = {};
 
   // Resolve an adapter by name through the injected registry resolver — the
   // loader itself holds no adapter map and knows no adapter names. A
@@ -697,30 +728,24 @@ export async function loadProtvistaData(
             // `setTrackData()` payloads are not bounds-checked: they are
             // documented as already in renderer form, so no coordinates
             // are collected.
-            return filterResolveAndAssign(
-              (
-                await adaptAuthoredRecords(
-                  customTrackData[trackKey],
-                  track,
-                  false
-                )
-              ).payload,
-              trackKey,
-              track
+            const { payload, warnings } = await adaptAuthoredRecords(
+              customTrackData[trackKey],
+              track,
+              false
             );
+            if (warnings) trackWarnings[trackKey] = warnings;
+            return filterResolveAndAssign(payload, trackKey, track);
           }
 
           // `from: inline` — the payload lives on the descriptor itself
           // (`inlineData`, populated by the normalizer); no fetch. Filter +
           // tooltip resolution still apply, mirroring `from: custom` above.
           if (first.from === 'inline') {
-            const { payload, coordinates } = await adaptAuthoredRecords(
-              first.inlineData,
-              track,
-              true
-            );
+            const { payload, coordinates, warnings } =
+              await adaptAuthoredRecords(first.inlineData, track, true);
             // Recorded before `filter:`, like the formatted branch below.
             if (coordinates) trackCoordinates[trackKey] = coordinates;
+            if (warnings) trackWarnings[trackKey] = warnings;
             return filterResolveAndAssign(payload, trackKey, track);
           }
 
@@ -767,12 +792,14 @@ export async function loadProtvistaData(
               substituted.get(String(url ?? '')) ?? String(url ?? '');
             const shape = first.shape ?? 'feature';
             const rows: CoordinateRow[] = [];
+            const warnings: DecodeWarning[] = [];
             transformedData = await runPipeline(
               shape,
               first.format,
               trackData[0],
-              { source, coordinates: rows }
+              { source, coordinates: rows, warnings }
             );
+            if (warnings.length > 0) trackWarnings[trackKey] = warnings;
             // Every decoded row, before `filter:` below.
             trackCoordinates[trackKey] = {
               label: sourceLabel(source, first.format),
@@ -853,6 +880,7 @@ export async function loadProtvistaData(
     trackUrls,
     trackCoordinates,
     trackFailures,
+    trackWarnings,
     skipWarnings,
   };
 }

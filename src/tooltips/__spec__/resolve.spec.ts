@@ -393,3 +393,107 @@ describe('resolveTooltip — markdown renderer quirks', () => {
     expect(out).toContain('1-2');
   });
 });
+
+describe('resolveTooltip — the {% link %} tag (#283)', () => {
+  const md = (template: string, item: Record<string, unknown>) =>
+    resolveTooltip(item, { kind: 'markdown', template }, ctx);
+  const LINK = 'See {% link href=$url %}PubMed{% /link %} now';
+
+  it.each([
+    'https://pubmed.ncbi.nlm.nih.gov/123/',
+    'http://example.org/a',
+    'mailto:someone@example.org',
+    '/entry/P05067',
+    '#section',
+    '?q=1',
+  ])('links an allowlisted URL: %s', (url) => {
+    expect(md(LINK, { url })).toBe(`<p>See <a href="${url}">PubMed</a> now</p>`);
+  });
+
+  it.each([
+    ['javascript:alert(1)'],
+    ['data:text/html,<b>x</b>'],
+    ['docs/x.html'],
+    [''],
+    [undefined],
+  ])('renders plain text, inline, for %j', (url) => {
+    expect(md(LINK, url === undefined ? {} : { url })).toBe('<p>See PubMed now</p>');
+  });
+
+  it('uses the URL as the text in the self-closing form', () => {
+    expect(md('PubMed: {% link href=$url /%}', { url: 'https://x.org/a' })).toBe(
+      '<p>PubMed: <a href="https://x.org/a">https://x.org/a</a></p>'
+    );
+    // Alone on its line, a Markdoc tag is a block of its own: no `<p>`.
+    expect(md('{% link href=$url /%}', { url: 'https://x.org/a' })).toBe(
+      '<a href="https://x.org/a">https://x.org/a</a>'
+    );
+  });
+
+  it('degrades the self-closing form to the escaped URL for a blocked scheme', () => {
+    expect(
+      md('URL: {% link href=$url /%}', { url: 'javascript:alert("<x>")' })
+    ).toBe('<p>URL: javascript:alert(&quot;&lt;x&gt;&quot;)</p>');
+    expect(md('a {% link href=$url /%} b', {})).toBe('<p>a  b</p>');
+  });
+
+  it('escapes the href and the text', () => {
+    const out = md('{% link href=$url /%}', { url: 'https://x.org/?q="<b>"' });
+    expect(out).toBe(
+      '<a href="https://x.org/?q=&quot;&lt;b&gt;&quot;">https://x.org/?q=&quot;&lt;b&gt;&quot;</a>'
+    );
+    const a = htmlFragment(out).querySelector('a')!;
+    expect(a.getAttribute('href')).toBe('https://x.org/?q="<b>"');
+    expect(a.querySelector('b')).toBeNull();
+  });
+
+  it('keeps inline formatting inside the link text', () => {
+    expect(
+      md('{% link href=$url %}**Pub**Med{% /link %}', { url: '/a' })
+    ).toBe('<p><a href="/a"><strong>Pub</strong>Med</a></p>');
+  });
+
+  it('reads a CSV-shaped record: plain extras as variables and fields paths', () => {
+    const record = {
+      type: 'DOMAIN',
+      start: 1,
+      end: 9,
+      pmid: '12345',
+      'p-value': '0.01',
+      url: 'https://pubmed.ncbi.nlm.nih.gov/12345/',
+    };
+    expect(md('PMID {% $pmid %}, p {% $p-value %}', record)).toBe(
+      '<p>PMID 12345, p 0.01</p>'
+    );
+    expect(
+      resolveTooltip(
+        record,
+        { kind: 'fields', fields: [{ path: 'pmid', label: 'PubMed ID' }] },
+        ctx
+      )
+    ).toBe('<h5>PubMed ID</h5><p>12345</p>');
+  });
+});
+
+describe('resolveTooltip — auto-fallback keeps render fields out (#283)', () => {
+  it('omits color, shape, fill and opacity rows but shows other extras', () => {
+    const out = resolveTooltip(
+      {
+        type: 'DOMAIN',
+        start: 1,
+        end: 9,
+        color: '#1f77b4',
+        shape: 'diamond',
+        fill: '#aec7e8',
+        opacity: 0.5,
+        gene: 'APP',
+      },
+      undefined,
+      { ...ctx, kind: '' }
+    );
+    const headings = Array.from(htmlFragment(out).querySelectorAll('h5')).map(
+      (h) => h.textContent
+    );
+    expect(headings).toEqual(['Type', 'Start', 'End', 'Gene']);
+  });
+});

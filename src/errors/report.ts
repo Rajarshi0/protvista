@@ -25,10 +25,15 @@
  *                         body was unparseable, or its decoder / adapter
  *                         threw on the records (badge + event)
  *   - `set-track-data`  — misuse of the `setTrackData()` escape hatch
- *   - `track-data`      — an authored track's coordinates fall outside the
- *                         loaded sequence (event only; the issue carries
- *                         `code: 'coordinate-out-of-range'` and
- *                         `severity: 'warning'`)
+ *   - `track-data`      — an authored track loaded and renders as written,
+ *                         but something in its data is worth knowing: its
+ *                         coordinates fall outside the loaded sequence
+ *                         (`coordinate-out-of-range`), or its feature file
+ *                         had columns the decoder ignored
+ *                         (`data-field-ignored`) or colours the canvas
+ *                         cannot paint (`unpaintable-color`). Event and
+ *                         console only; the issue carries that `code` and
+ *                         `severity: 'warning'`
  *
  * Two are reserved for surfaces that don't exist in the codebase yet;
  * they are declared here so the vocabulary is stable and so that when

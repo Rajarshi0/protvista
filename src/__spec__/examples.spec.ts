@@ -105,6 +105,7 @@ it('discovers the expected example directories', () => {
       'json',
       'bed',
       'extend-default',
+      'csv-styled',
     ])
   );
 });

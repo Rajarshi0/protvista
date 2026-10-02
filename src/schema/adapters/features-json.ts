@@ -13,9 +13,24 @@
  * `begin` (the UniProt convention); it is normalised to `start` on
  * output. `start` wins when both are present and non-null; a `null`
  * (or absent) `start` falls back to `begin` rather than masking it.
- * Records are pared down to the canonical `FeatureRecord` shape the
- * Nightingale tracks consume — extra fields are dropped so the four
- * generic adapters share one output contract.
+ * `begin` itself is used up as the alias and not copied.
+ *
+ * Every other key is kept on the record, after the canonical fields and in
+ * the object's own key order, so a JSON file and the same records written
+ * inline render alike (`./feature-fields` has the rule):
+ *
+ *   - `color`, `shape`, `fill` must be strings (trimmed) and `opacity` a
+ *     number from 0 to 1; `null` or `''` leaves the field off, so the
+ *     track's `rendering:` still applies. A wrong type throws.
+ *   - Any other key is kept as given — objects and arrays by reference.
+ *   - `tooltipContent`, `locations`, `residuesToHighlight` and names on
+ *     `Object.prototype` (an own `__proto__` key from `JSON.parse`
+ *     included) are dropped.
+ *
+ * An optional third argument is a warnings sink (`DecodeWarning[]`), filled
+ * the way `rowsToFeatureRecords` fills its `opts.warnings`: at most one
+ * `data-field-ignored` and one `unpaintable-color` warning per call, pushed
+ * only when the call returns. Nothing is logged.
  *
  * `description` and `score` are optional: absent or `null` omits the
  * field from the output, but a *present* value of the wrong type (e.g.
@@ -38,7 +53,15 @@
  */
 
 import type { AdapterFunction } from '../types.js';
-import type { FeatureRecord } from './dsv.js';
+import type { AuthoredFeatureRecord } from './dsv.js';
+import {
+  FEATURE_CANONICAL_FIELDS,
+  classifyExtraField,
+  ignoredFieldsWarning,
+  isUnpaintable,
+  unpaintableColorWarning,
+  type DecodeWarning,
+} from './feature-fields.js';
 
 /**
  * Default error prefix, used when this validator is called directly rather
@@ -66,15 +89,21 @@ function describe(x: unknown): string {
   return typeof x;
 }
 
-export const featuresJson: AdapterFunction = (raw, labelArg) => {
+export const featuresJson: AdapterFunction = (raw, labelArg, warningsArg) => {
   const label = typeof labelArg === 'string' ? labelArg : FORMAT_LABEL;
+  const warnings = Array.isArray(warningsArg)
+    ? (warningsArg as DecodeWarning[])
+    : undefined;
   if (!Array.isArray(raw)) {
     throw new Error(
       `${label}: expected an array of feature records; got ${describe(raw)}.`
     );
   }
 
-  const records: FeatureRecord[] = [];
+  const records: AuthoredFeatureRecord[] = [];
+  const blocked = new Set<string>();
+  const unpaintable: string[] = [];
+  let unpaintableRows = 0;
   for (let i = 0; i < raw.length; i++) {
     const item: unknown = raw[i];
 
@@ -132,7 +161,7 @@ export const featuresJson: AdapterFunction = (raw, labelArg) => {
       );
     }
 
-    const record: FeatureRecord = {
+    const record: AuthoredFeatureRecord = {
       type: r.type,
       start: rawStart,
       end: r.end,
@@ -160,8 +189,66 @@ export const featuresJson: AdapterFunction = (raw, labelArg) => {
       record.score = r.score;
     }
 
+    let rowUnpaintable = false;
+    for (const key of Object.keys(r)) {
+      if (FEATURE_CANONICAL_FIELDS.has(key) || key === 'begin') continue;
+      const group = classifyExtraField(key);
+      if (group === 'skip') continue;
+      if (group === 'blocked') {
+        blocked.add(key);
+        continue;
+      }
+      const value = r[key];
+      if (group === 'extra') {
+        // Safe as plain assignment: every `Object.prototype` name, `__proto__`
+        // included, was classified as blocked above.
+        record[key] = value;
+        continue;
+      }
+      // `null` and `''` alike leave a render field off, as `null` does for
+      // `description` / `score`.
+      if (value == null || value === '') continue;
+      if (key === 'opacity') {
+        if (typeof value !== 'number') {
+          throw new Error(
+            `${label}: record ${i}, field "opacity": expected a number from ` +
+              `0 to 1, got ${describe(value)}.`
+          );
+        }
+        if (!Number.isFinite(value) || value < 0 || value > 1) {
+          throw new Error(
+            `${label}: record ${i}, field "opacity": expected a number from ` +
+              `0 to 1, got ${value}.`
+          );
+        }
+        record.opacity = value;
+        continue;
+      }
+      if (typeof value !== 'string') {
+        throw new Error(
+          `${label}: record ${i}, field "${key}": expected a string, ` +
+            `got ${describe(value)}.`
+        );
+      }
+      const trimmed = value.trim();
+      if (trimmed === '') continue;
+      if (isUnpaintable(key, trimmed)) {
+        unpaintable.push(trimmed);
+        rowUnpaintable = true;
+      }
+      record[key] = trimmed;
+    }
+    if (rowUnpaintable) unpaintableRows++;
+
     records.push(record);
   }
 
+  if (blocked.size > 0)
+    warnings?.push(ignoredFieldsWarning(label, [...blocked]));
+  if (unpaintableRows > 0) {
+    warnings?.push(
+      unpaintableColorWarning(label, unpaintableRows, unpaintable)
+    );
+  }
   return records;
 };
