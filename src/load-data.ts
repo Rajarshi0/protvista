@@ -24,6 +24,9 @@
  *      components, or the first one's data for linegraph /
  *      colored-sequence groups. The element rebuilds it from the
  *      per-track keys whenever the layout changes which tracks it draws.
+ *   5. Return each authored track's decoded coordinates and row numbers,
+ *      taken before `filter:`, as `trackCoordinates` — kept out of `data`
+ *      for the component's sequence-bounds warning.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
@@ -41,7 +44,11 @@ import {
   type NormalizedTrack,
 } from './schema/normalize.js';
 import { DATA_FORMATS } from './schema/file-formats.js';
-import { runPipeline } from './schema/adapters/pipeline.js';
+import { runPipeline, sourceLabel } from './schema/adapters/pipeline.js';
+import type {
+  CoordinateRow,
+  TrackCoordinates,
+} from './schema/adapters/coordinates.js';
 import { SHAPES } from './schema/shapes.js';
 import { resolveTooltip } from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
@@ -126,6 +133,17 @@ type LoadResult = {
    * against it instead of re-deriving the substitution.
    */
   trackUrls: Record<string, string[]>;
+  /**
+   * What the sequence-bounds warning needs about each authored track, keyed
+   * by `${groupId}-${trackId}`: every decoded row's coordinates and row
+   * number, taken before `filter:`, plus the source label, shape, format,
+   * and fetched URL. Only file/URL sources with a `format` and `from:
+   * inline` data in the author record contract have an entry;
+   * `setTrackData()`, provider-adapter, and rendered-form inline payloads
+   * have none. Never part of `data`, so row numbers cannot leak into
+   * tooltips.
+   */
+  trackCoordinates: Record<string, TrackCoordinates>;
 };
 
 /**
@@ -207,11 +225,11 @@ function isRenderedRepresentation(payload: unknown): boolean {
 async function adaptAuthoredRecords(
   payload: unknown,
   track: NormalizedTrack
-): Promise<unknown> {
+): Promise<{ payload: unknown; coordinates?: TrackCoordinates }> {
   const source = track.data[0];
   const shape = source?.shape;
   // No shape means no record contract to hold the payload to.
-  if (shape === undefined) return payload;
+  if (shape === undefined) return { payload };
 
   // A delimited format needs a string to decode. A payload that is already
   // structured (a `setTrackData()` record array on a descriptor that also
@@ -227,10 +245,51 @@ async function adaptAuthoredRecords(
   // and running them through a validator would only strip fields a
   // `dataTooltip` may reference. Encoded text still has to be decoded — the
   // raw string is no one's representation.
-  if (format === 'json' && !SHAPES[shape].wraps) return payload;
-  if (isRenderedRepresentation(payload)) return payload;
+  //
+  // Alongside the payload, the author's coordinates are returned for the
+  // sequence-bounds warning.
+  if (format === 'json' && !SHAPES[shape].wraps) {
+    if (!Array.isArray(payload)) return { payload };
+    return {
+      payload,
+      coordinates: {
+        label: sourceLabel(undefined, 'json'),
+        shape,
+        format: 'json',
+        rows: payload.map(authoredFeatureRow),
+      },
+    };
+  }
+  if (isRenderedRepresentation(payload)) return { payload };
+  const rows: CoordinateRow[] = [];
   // No `source`, so a parse error reads "inline data (parsed as CSV): …".
-  return runPipeline(shape, format, payload);
+  const result = await runPipeline(shape, format, payload, {
+    coordinates: rows,
+  });
+  return {
+    payload: result,
+    coordinates: { label: sourceLabel(undefined, format), shape, format, rows },
+  };
+}
+
+/**
+ * A feature record's coordinates as the author wrote them — `start`, with
+ * `begin` as the fallback, the way `featuresJson` reads it. Inline feature
+ * arrays skip that validator, so a value that is not a finite number is left
+ * out rather than counted: the bounds check is not a type check.
+ */
+function authoredFeatureRow(record: unknown, row: number): CoordinateRow {
+  if (!record || typeof record !== 'object') return { row, fields: [] };
+  const r = record as { start?: unknown; begin?: unknown; end?: unknown };
+  const fields: Array<readonly ['start' | 'end', number]> = [];
+  const start = r.start != null ? r.start : r.begin;
+  if (typeof start === 'number' && Number.isFinite(start)) {
+    fields.push(['start', start]);
+  }
+  if (typeof r.end === 'number' && Number.isFinite(r.end)) {
+    fields.push(['end', r.end]);
+  }
+  return { row, fields };
 }
 
 /**
@@ -379,6 +438,7 @@ export async function loadProtvistaData(
   // carry their path on `url`, so they are fetched here like any URL.
   const templates = new Set<string>();
   const trackUrls: Record<string, string[]> = {};
+  const trackCoordinates: Record<string, TrackCoordinates> = {};
   // Per-template body type: `text` for the delimited generic-format
   // adapters, `json` (default) for everything else. Keyed by template so a
   // URL shared by two tracks resolves once; if any referencing track needs
@@ -551,8 +611,12 @@ export async function loadProtvistaData(
               );
               return;
             }
+            // `setTrackData()` payloads are not bounds-checked: they are
+            // documented as already in renderer form, so the coordinates
+            // are discarded.
             return filterResolveAndAssign(
-              await adaptAuthoredRecords(customTrackData[trackKey], track),
+              (await adaptAuthoredRecords(customTrackData[trackKey], track))
+                .payload,
               trackKey,
               track
             );
@@ -562,11 +626,13 @@ export async function loadProtvistaData(
           // (`inlineData`, populated by the normalizer); no fetch. Filter +
           // tooltip resolution still apply, mirroring `from: custom` above.
           if (first.from === 'inline') {
-            return filterResolveAndAssign(
-              await adaptAuthoredRecords(first.inlineData, track),
-              trackKey,
+            const { payload, coordinates } = await adaptAuthoredRecords(
+              first.inlineData,
               track
             );
+            // Recorded before `filter:`, like the formatted branch below.
+            if (coordinates) trackCoordinates[trackKey] = coordinates;
+            return filterResolveAndAssign(payload, trackKey, track);
           }
 
           const trackData = (Array.isArray(url) ? url : [url ?? '']).map(
@@ -580,13 +646,24 @@ export async function loadProtvistaData(
           //    guards and post-processing live inside each.
           let transformedData: any = trackData;
           if (first.format !== undefined) {
+            // The author's own path, so a parse error names their file.
+            const source = substituteAccession(String(url ?? ''), accession);
+            const shape = first.shape ?? 'feature';
+            const rows: CoordinateRow[] = [];
             transformedData = await runPipeline(
-              first.shape ?? 'feature',
+              shape,
               first.format,
               trackData[0],
-              // The author's own path, so a parse error names their file.
-              { source: substituteAccession(String(url ?? ''), accession) }
+              { source, coordinates: rows }
             );
+            // Every decoded row, before `filter:` below.
+            trackCoordinates[trackKey] = {
+              label: sourceLabel(source, first.format),
+              shape,
+              format: first.format,
+              rows,
+              url: source,
+            };
           } else if (adapter) {
             transformedData = await resolveAdapterFn(adapter)(...trackData);
           }
@@ -638,5 +715,5 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
-  return { rawData, data, hasData, trackUrls };
+  return { rawData, data, hasData, trackUrls, trackCoordinates };
 }
