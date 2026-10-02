@@ -11,6 +11,10 @@
  *                                          by load-data.ts before the data
  *                                          is handed to Nightingale
  *
+ * An optional fourth argument, a `TooltipFieldTracker`, observes each item
+ * an authored spec renders against so the loader can report the spec's
+ * field references no item carried; it never changes the HTML.
+ *
  * Existing non-empty `item.tooltipContent` wins before the resolver is
  * called. Otherwise `spec` is sourced in this order of precedence:
  *   1. track.dataTooltip       (YAML author override)

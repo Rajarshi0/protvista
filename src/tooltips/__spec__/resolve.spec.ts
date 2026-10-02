@@ -2,10 +2,15 @@
  * Smoke coverage for `resolveTooltip`. Each branch (`fields`,
  * `markdown`) gets a representative input.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Tag } from '@markdoc/markdoc';
-import { resolveTooltip } from '../resolve.js';
-import type { TooltipContext } from '../types.js';
+import {
+  createTooltipFieldTracker,
+  formatTooltipFieldMiss,
+  resolveTooltip,
+  tooltipFieldRefs,
+} from '../resolve.js';
+import type { TooltipContext, TooltipSpec } from '../types.js';
 
 const ctx: TooltipContext = {
   accession: 'P05067',
@@ -573,5 +578,206 @@ describe('resolveTooltip — renderNode guards on real Tag instances (#283)', ()
       new Tag('b', { onclick: 'alert(4)', OnMouseOver: 'alert(5)' }, ['hi'])
     );
     expect(out).toBe('<p>Note: <b>hi</b></p>');
+  });
+});
+
+describe('resolveTooltip — unknown-field tracker (#135)', () => {
+  // The tracker is a pure accumulator: it returns what it found and the
+  // element routes it, so nothing here may reach the console.
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  /** Render every item through `spec` with a tracker, then flush it. */
+  const misses = (spec: TooltipSpec, items: unknown[], c = ctx) => {
+    const tracker = createTooltipFieldTracker(spec, c);
+    for (const item of items) resolveTooltip(item, spec, c, tracker);
+    return tracker.flush();
+  };
+  const md = (template: string, variables?: Record<string, unknown>) =>
+    ({ kind: 'markdown', template, variables }) as TooltipSpec;
+  const tenItems = Array.from({ length: 10 }, (_, i) => ({
+    type: 'DOMAIN',
+    start: i + 1,
+    end: i + 5,
+  }));
+
+  it('summarises three unknown markdown fields over ten items once, without logging', () => {
+    const spec = md(
+      '**{% $type %}** {% $foo %} {% $bar %} {% $baz %} {% $start %}'
+    );
+    const tracker = createTooltipFieldTracker(spec, ctx);
+    for (const item of tenItems) resolveTooltip(item, spec, ctx, tracker);
+
+    const fields = tracker.flush();
+    expect(fields).toEqual(['foo', 'bar', 'baz']);
+    // Single-use: the summary is handed over once.
+    expect(tracker.flush()).toEqual([]);
+    const message = formatTooltipFieldMiss('G', 't', fields);
+    expect(message).toBe(
+      'Track G/t: dataTooltip references unknown fields: foo, bar, baz'
+    );
+    // One summary per track, not one per data point — and not from here: the
+    // single routed console line is asserted in error-surface.spec.ts.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('summarises three unknown `fields` paths over ten items once', () => {
+    const spec: TooltipSpec = {
+      kind: 'fields',
+      fields: [
+        { path: 'type', label: 'Type' },
+        { path: 'foo', label: 'Foo' },
+        { path: 'bar.x', label: 'Bar' },
+        { path: 'baz', label: 'Baz' },
+      ],
+    };
+    expect(misses(spec, tenItems)).toEqual(['foo', 'bar.x', 'baz']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not report a field present on only one item', () => {
+    const items = [...tenItems.slice(0, 9), { ...tenItems[9], score: 3 }];
+    expect(misses(md('{% $score %}'), items)).toEqual([]);
+  });
+
+  it.each([[''], [null], [undefined]])(
+    'does not report a field present with the value %j',
+    (score) => {
+      expect(misses(md('{% $score %}'), [{ score }])).toEqual([]);
+      expect(
+        misses({ kind: 'fields', fields: [{ path: 'score', label: 'S' }] }, [
+          { score },
+        ])
+      ).toEqual([]);
+    }
+  );
+
+  it('treats a null intermediate as present, and a missing leaf under an object as missing', () => {
+    // The `fields` form: Markdoc itself throws resolving `$a.b` through a
+    // null `a`, so a markdown template is observed directly below.
+    const spec: TooltipSpec = {
+      kind: 'fields',
+      fields: [{ path: 'variantType.wildType', label: 'WT' }],
+    };
+    expect(
+      misses(spec, [{ variantType: null }, { variantType: null }])
+    ).toEqual([]);
+    expect(misses(spec, [{ variantType: { other: 1 } }, {}])).toEqual([
+      'variantType.wildType',
+    ]);
+
+    const tracker = createTooltipFieldTracker(
+      md('{% $variantType.wildType %}'),
+      ctx
+    );
+    tracker.observe({ variantType: null });
+    expect(tracker.flush()).toEqual([]);
+  });
+
+  it('walks array indices and boxes primitives', () => {
+    const spec = md('{% $items.0.id %} {% $description.length %}');
+    expect(
+      misses(spec, [{ items: [{ id: 'a' }], description: 'kinase' }])
+    ).toEqual([]);
+    expect(misses(spec, [{ items: [], description: 'kinase' }])).toEqual([
+      'items.0.id',
+    ]);
+  });
+
+  it('collects every reference form, deduplicated in first-reference order', () => {
+    const template =
+      '**{% $name %}** {% if equals($kind, "x") %}{% $score %}{% /if %} ' +
+      '{% if $score %}y{% /if %} [t]({% $href %}) {% $a.b[0] %} ' +
+      '`{% $code %}` {% if not($neg) %}z{% /if %} ' +
+      '{% link href=$url %}PubMed{% /link %}\n\n' +
+      '```\n{% $fenced %}\n```';
+    expect(tooltipFieldRefs(md(template))).toEqual([
+      'name',
+      'kind',
+      'score',
+      'href',
+      'a.b.0',
+      'neg',
+      'url',
+      'fenced',
+    ]);
+  });
+
+  it('follows the renderer on code: inline code is literal, a fence interpolates', () => {
+    const spec = md('`{% $code %}`\n\n```\n{% $fenced %}\n```');
+    expect(resolveTooltip({ code: 'C', fenced: 'F' }, spec, ctx)).toBe(
+      '<p><code>{% $code %}</code></p><pre>F\n</pre>'
+    );
+    expect(misses(spec, [{}])).toEqual(['fenced']);
+  });
+
+  it('reports a field only the {% link %} tag names', () => {
+    expect(
+      misses(md('{% link href=$url %}PubMed{% /link %}'), [{ pmid: '1' }])
+    ).toEqual(['url']);
+  });
+
+  it('checks markdown `ctx.*` against the context, once, not against items', () => {
+    const spec = md('{% $ctx.trackId %} {% $ctx.nope %}');
+    expect(misses(spec, [{ trackId: 'x' }, {}])).toEqual(['ctx.nope']);
+  });
+
+  it('never reports a key supplied through spec.variables', () => {
+    expect(misses(md('{% $unit %} {% $foo %}', { unit: 'kDa' }), [{}])).toEqual(
+      ['foo']
+    );
+  });
+
+  it('checks a `fields` path rooted at ctx against the item', () => {
+    const spec: TooltipSpec = {
+      kind: 'fields',
+      fields: [{ path: 'ctx.trackId', label: 'Track' }],
+    };
+    expect(misses(spec, [{}])).toEqual(['ctx.trackId']);
+    expect(misses(spec, [{ ctx: { trackId: 't' } }])).toEqual([]);
+  });
+
+  it('ignores a `fields` entry with an empty path', () => {
+    const spec: TooltipSpec = {
+      kind: 'fields',
+      fields: [{ path: '', label: 'Self' }],
+    };
+    expect(tooltipFieldRefs(spec)).toEqual([]);
+    expect(misses(spec, [{}])).toEqual([]);
+  });
+
+  it('reports nothing when no item was observed', () => {
+    expect(misses(md('{% $foo %} {% $ctx.nope %}'), [])).toEqual([]);
+  });
+
+  it('does not observe items rendered by the auto-fallback', () => {
+    const spec = md('{% $foo %}');
+    const tracker = createTooltipFieldTracker(spec, ctx);
+    resolveTooltip({ type: 'X' }, undefined, ctx, tracker);
+    expect(tracker.flush()).toEqual([]);
+  });
+
+  it('leaves the tooltip HTML unchanged', () => {
+    const item = { type: 'DOMAIN', description: 'Kinase', start: 1, end: 9 };
+    for (const spec of [
+      md('**{% $description %}** {% $start %}–{% $end %} {% $missing %}'),
+      {
+        kind: 'fields',
+        fields: [
+          { path: 'description', label: 'Desc' },
+          { path: 'missing', label: 'Missing' },
+        ],
+      } as TooltipSpec,
+    ]) {
+      const tracker = createTooltipFieldTracker(spec, ctx);
+      expect(resolveTooltip(item, spec, ctx, tracker)).toBe(
+        resolveTooltip(item, spec, ctx)
+      );
+    }
   });
 });

@@ -14,7 +14,7 @@
  * The stable set of error phases carried on the `protvista-error`
  * event's `detail.phase`. Embedders listen once and `switch` on this.
  *
- * Five phases emit today:
+ * Six phases emit today:
  *   - `config`          — config validation / parse failure (mount panel),
  *                         or a config that loaded with warnings (event only;
  *                         `detail.severity` is `'warning'`, and each issue,
@@ -34,15 +34,18 @@
  *                         cannot paint (`unpaintable-color`). Event and
  *                         console only; the issue carries that `code` and
  *                         `severity: 'warning'`
+ *   - `tooltip-field-miss` — an authored `dataTooltip` references a field
+ *                         no record on the track carries. Event and console
+ *                         only; the issue carries `code: 'tooltip-field-miss'`
+ *                         and `severity: 'warning'`, and `context.fields`
+ *                         lists the fields
  *
- * Two are reserved for surfaces that don't exist in the codebase yet;
- * they are declared here so the vocabulary is stable and so that when
- * those features land they emit through the same `_report` seam
- * (one listener covers every flavour):
+ * One is reserved for a surface that doesn't exist in the codebase yet;
+ * it is declared here so the vocabulary is stable and so that when the
+ * feature lands it emits through the same `_report` seam (one listener
+ * covers every flavour):
  *   - `transform-calculate` — a `calculate` expression threw for some
  *                             items (see specs/transform-engine.md)
- *   - `tooltip-field-miss`  — a `dataTooltip` template referenced a
- *                             field the adapter output does not carry
  */
 export type ErrorPhase =
   | 'config'
@@ -84,4 +87,9 @@ export interface ErrorContext {
    * text, which names the author's file and the offending row.
    */
   errorKind?: 'network' | 'http' | 'parse' | 'adapter' | 'render';
+  /**
+   * For `tooltip-field-miss`, the field paths the track's `dataTooltip`
+   * references that no record carries, in template order.
+   */
+  fields?: string[];
 }

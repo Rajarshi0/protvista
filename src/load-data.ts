@@ -39,6 +39,9 @@
  *   6. Return each track's decoder warnings (feature columns dropped,
  *      colours a browser will not paint) as `trackWarnings`, for the
  *      component to route as `track-data` warnings.
+ *   7. Return, as `tooltipFieldMisses`, each track whose authored
+ *      `dataTooltip` names a field none of its rendered records carries,
+ *      for the component to route as `tooltip-field-miss` warnings.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM, no `console`. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
@@ -63,7 +66,11 @@ import type {
 } from './schema/adapters/coordinates.js';
 import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import { SHAPES } from './schema/shapes.js';
-import { resolveTooltip } from './tooltips/resolve.js';
+import {
+  createTooltipFieldTracker,
+  resolveTooltip,
+  type TooltipFieldTracker,
+} from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
 import type { TooltipContext, TooltipSpec } from './tooltips/types.js';
 import { withFeatureSource, type FeatureSource } from './feature-source.js';
@@ -192,7 +199,39 @@ type LoadResult = {
    * each as a warning.
    */
   skipWarnings: string[];
+  /**
+   * Each track whose authored `dataTooltip` references a field that none of
+   * the records it rendered against carries — `{% $score %}` on a track with
+   * no `score` anywhere — in config order. Always present (`[]` when clean);
+   * a targeted reload lists only the tracks it reran.
+   *
+   * Returned rather than logged, for the same reason as `trackFailures`; the
+   * caller routes each as a `tooltip-field-miss` warning.
+   */
+  tooltipFieldMisses: TooltipFieldMiss[];
 };
+
+/** One track's unknown tooltip fields. See `LoadResult.tooltipFieldMisses`. */
+export type TooltipFieldMiss = {
+  groupId: string;
+  trackId: string;
+  /** The referenced paths no record carried, in template order. */
+  fields: string[];
+};
+
+/**
+ * Components that draw no per-item tooltip, so `dataTooltip` does not apply
+ * to them. What `applyTooltipResolver` sees for these is the renderer's own
+ * wrapper (a line graph's `[{ name, values }]` series), not the author's
+ * records, so checking the template's fields against it would warn about
+ * fields the author's data does carry. A deny-list rather than an allow-list,
+ * so a consumer-registered component is still checked.
+ */
+const NO_ITEM_TOOLTIP_COMPONENTS: ReadonlySet<string> = new Set([
+  'nightingale-linegraph-track',
+  'nightingale-colored-sequence',
+  'nightingale-sequence-heatmap',
+]);
 
 /** One track's non-fetch outcome. See `LoadResult.trackFailures`. */
 export type TrackProcessingFailure = {
@@ -414,6 +453,9 @@ function authoredFeatureRow(record: unknown, row: number): CoordinateRow {
  * The resolver's output is the canonical source of `tooltipContent`
  * unless the adapter has already supplied a non-empty tooltip.
  *
+ * `fieldTracker` observes every item the resolver renders — not one whose
+ * adapter-supplied tooltip wins — for the caller's unknown-field check.
+ *
  * Handles the two shapes adapters emit:
  *   - an array of feature-like objects (most adapters) — returns a new
  *     array of items with `tooltipContent` spread in;
@@ -428,7 +470,8 @@ function applyTooltipResolver(
   transformedData: unknown,
   spec: TooltipSpec | undefined,
   ctx: TooltipContext,
-  source: FeatureSource
+  source: FeatureSource,
+  fieldTracker?: TooltipFieldTracker
 ): unknown {
   const annotate = (item: unknown): unknown => {
     if (!item || typeof item !== 'object') return item;
@@ -437,7 +480,7 @@ function applyTooltipResolver(
     if (existingTooltip != null && existingTooltip !== '') {
       return withFeatureSource(item, source);
     }
-    const html = resolveTooltip(item, spec, ctx);
+    const html = resolveTooltip(item, spec, ctx, fieldTracker);
     return withFeatureSource(
       html ? { ...item, tooltipContent: html } : item,
       source
@@ -600,6 +643,9 @@ export async function loadProtvistaData(
   const data: Record<string, unknown> = {};
   const trackFailures: Record<string, TrackProcessingFailure> = {};
   const trackWarnings: Record<string, DecodeWarning[]> = {};
+  // Keyed by `${groupId}-${trackId}`; ordered by config into
+  // `tooltipFieldMisses` once every group has loaded.
+  const fieldMisses = new Map<string, string[]>();
 
   // Resolve an adapter by name through the injected registry resolver — the
   // loader itself holds no adapter map and knows no adapter names. A
@@ -643,6 +689,42 @@ export async function loadProtvistaData(
     }
   };
 
+  // Resolve per-item tooltips for one track's filtered payload. Existing
+  // `tooltipContent` wins, then track-level `dataTooltip`, then the
+  // per-kind built-in default, then the compact auto-fallback. Shared by
+  // every source, so spec selection lives in one place.
+  //
+  // An authored `dataTooltip` is also checked for fields none of the
+  // rendered records carries: the tracker sees each item as it renders, and
+  // what it found is recorded for the caller to route, never logged. A
+  // per-kind default is library-owned and not checked — a default's field
+  // missing from your own file is not something you can fix — and neither is
+  // a component that draws no per-item tooltip.
+  const resolveTrackTooltips = (
+    filteredData: unknown,
+    groupId: string,
+    track: NormalizedTrack
+  ): unknown => {
+    const { kind, dataTooltip, id: trackId } = track;
+    const spec: TooltipSpec | undefined =
+      dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
+    const ctx: TooltipContext = { accession, trackId, kind: kind ?? '' };
+    const tracker =
+      dataTooltip && !NO_ITEM_TOOLTIP_COMPONENTS.has(track.component)
+        ? createTooltipFieldTracker(dataTooltip, ctx)
+        : undefined;
+    const annotated = applyTooltipResolver(
+      filteredData,
+      spec,
+      ctx,
+      { trackId, kind: kind ?? null },
+      tracker
+    );
+    const missing = tracker?.flush() ?? [];
+    if (missing.length > 0) fieldMisses.set(`${groupId}-${trackId}`, missing);
+    return annotated;
+  };
+
   // Shared tail for `from: custom` and `from: inline` tracks: apply
   // the track's `filter:` shortcut, resolve tooltips, and assign the
   // result. The only difference between the two sources is where
@@ -651,10 +733,10 @@ export async function loadProtvistaData(
   // skip the fetch + adapter step entirely.
   const filterResolveAndAssign = (
     transformedData: unknown,
-    trackKey: string,
+    groupId: string,
     track: NormalizedTrack
   ): unknown => {
-    const { filter, kind, dataTooltip, id: trackId } = track;
+    const { filter } = track;
     const filteredData =
       Array.isArray(transformedData) && filter
         ? (transformedData as Array<{ type?: string }>).filter(
@@ -662,15 +744,8 @@ export async function loadProtvistaData(
           )
         : transformedData;
     if (filteredData == null) return undefined;
-    const spec: TooltipSpec | undefined =
-      dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-    const annotated = applyTooltipResolver(
-      filteredData,
-      spec,
-      { accession, trackId, kind: kind ?? '' },
-      { trackId, kind: kind ?? null }
-    );
-    assignTrackData(trackKey, annotated, track);
+    const annotated = resolveTrackTooltips(filteredData, groupId, track);
+    assignTrackData(`${groupId}-${track.id}`, annotated, track);
     return annotated;
   };
 
@@ -683,13 +758,7 @@ export async function loadProtvistaData(
     }
     const groupData = await Promise.all(
       group.tracks.map(async (track) => {
-        const {
-          data: dataConfig,
-          id: trackId,
-          filter,
-          kind,
-          dataTooltip,
-        } = track;
+        const { data: dataConfig, id: trackId, filter } = track;
         const trackKey = `${groupId}-${trackId}`;
         // Sibling in a touched group that isn't itself being retried:
         // reuse its previous per-track data so the group aggregate below
@@ -735,7 +804,7 @@ export async function loadProtvistaData(
               false
             );
             if (warnings) trackWarnings[trackKey] = warnings;
-            return filterResolveAndAssign(payload, trackKey, track);
+            return filterResolveAndAssign(payload, groupId, track);
           }
 
           // `from: inline` — the payload lives on the descriptor itself
@@ -747,7 +816,7 @@ export async function loadProtvistaData(
             // Recorded before `filter:`, like the formatted branch below.
             if (coordinates) trackCoordinates[trackKey] = coordinates;
             if (warnings) trackWarnings[trackKey] = warnings;
-            return filterResolveAndAssign(payload, trackKey, track);
+            return filterResolveAndAssign(payload, groupId, track);
           }
 
           // Every URL was skipped (an undefined or refused variable,
@@ -832,20 +901,11 @@ export async function loadProtvistaData(
             return;
           }
 
-          // 3. Resolve per-item tooltips. Existing `tooltipContent`
-          //    wins, then track-level `dataTooltip`, then the per-kind
-          //    built-in default, then the compact auto-fallback. Graph
-          //    tracks (linegraph, colored-sequence, heatmap) have no
+          // 3. Resolve per-item tooltips (see `resolveTrackTooltips`).
+          //    Graph tracks (linegraph, colored-sequence, heatmap) have no
           //    per-item hover, so the resolver returns `''` and no field
           //    is written.
-          const spec: TooltipSpec | undefined =
-            dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-          const annotated = applyTooltipResolver(
-            filteredData,
-            spec,
-            { accession, trackId, kind: kind ?? '' },
-            { trackId, kind: kind ?? null }
-          );
+          const annotated = resolveTrackTooltips(filteredData, groupId, track);
           // 4. Assign track data (+ a pristine baseline for filter tracks)
           assignTrackData(trackKey, annotated, track);
           return annotated;
@@ -874,6 +934,21 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
+  // Config order, whatever order the tracks' loads settled in.
+  const tooltipFieldMisses: TooltipFieldMiss[] = [];
+  for (const group of config.rows) {
+    for (const track of group.tracks) {
+      const fields = fieldMisses.get(`${group.id}-${track.id}`);
+      if (fields) {
+        tooltipFieldMisses.push({
+          groupId: group.id,
+          trackId: track.id,
+          fields,
+        });
+      }
+    }
+  }
+
   return {
     rawData,
     data,
@@ -883,5 +958,6 @@ export async function loadProtvistaData(
     trackFailures,
     trackWarnings,
     skipWarnings,
+    tooltipFieldMisses,
   };
 }

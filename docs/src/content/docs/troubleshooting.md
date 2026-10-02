@@ -41,7 +41,7 @@ viewer.addEventListener('protvista-error', (event) => {
 | `severity` | `'error'` or `'warning'` — see [Where a failure shows up](#where-a-failure-shows-up). A warning names something that loaded, but not as written: a config warning, a `theme:` colour that could not be resolved, a component with no renderer. |
 | `message` | One line: the text the `⚠` badge or the alert panel shows, without the `[protvista]` tag the console line starts with. For a malformed file or a track that could not draw its data, this is what the decoder or the component threw, naming your file and the offending row. |
 | `source` | The URL or path the failure came from, when it had one. Absent for an inline, `custom` or `setTrackData()` source. |
-| `issues` | For `config`, the `ValidationIssue[]`; `[]` otherwise. |
+| `issues` | For `config`, the `ValidationIssue[]`. For `track-data` and `tooltip-field-miss`, one issue with `severity: 'warning'` whose `code` says what was found and whose `path` names the track. `[]` otherwise. |
 | `context` | Identifiers for the failure — see [The `context` object](#the-context-object). |
 
 ### Phases
@@ -53,6 +53,7 @@ viewer.addEventListener('protvista-error', (event) => {
 | `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, a 4xx on a path or URL to your own data, or a payload the track could not draw. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
 | `track-data` | A bring-your-own-data track loaded and renders as written, but something in its data is worth knowing: rows whose coordinates fall outside the entry's sequence — a start below 1, or a position past the last residue — or, for a feature file, columns that were ignored (`tooltipContent`, `locations`, `residuesToHighlight`, names like `toString`), `shape` values that were ignored because they name a JavaScript built-in (`valueOf`, `constructor`, …), or `color` / `fill` values the canvas cannot paint. `detail.issues` holds one issue with `severity: 'warning'` and `code` set to `coordinate-out-of-range`, `data-field-ignored` or `unpaintable-color`. | `groupId`, `trackId`, `url` (file and URL tracks) |
+| `tooltip-field-miss` | A track's authored `dataTooltip` references a field that none of the track's records carries, so that part of every tooltip is blank. The track still renders. Fires once per track per load, listing every such field. `detail.issues` holds one issue with `code: 'tooltip-field-miss'` and `severity: 'warning'`. | `groupId`, `trackId`, `fields` |
 
 ### Where a failure shows up
 
@@ -70,6 +71,7 @@ disagree.
 | `warning` | viewer | `set-track-data` | yes | yes | under `strict` | — |
 | `warning` | viewer | any | yes | yes | never | — |
 | `warning` | track | `track-data` | yes | yes | never | no |
+| `warning` | track | `tooltip-field-miss` | yes | yes | never | no |
 | `warning` | track | any | yes | yes | under `strict` | yes |
 | `info` | viewer | any | yes | no | never | — |
 | `info` | track | any | yes | no | never | no |
@@ -96,6 +98,9 @@ Reading it:
   paint — goes the other way for a track. The rows loaded and render as
   written, so it takes neither the `⚠` badge nor the panel; the event and the
   console line carry it.
+- A **`tooltip-field-miss`** warning is the same for the same reason: every
+  record renders, and only the track's tooltip template names a field the data
+  never has. No badge and no panel; the event and the console line carry it.
 - **`info`** is an expected absence, not a failure: a provider endpoint
   answering 404 for an entity with no data of this kind, or a `from: custom`
   track nobody injected data into. It gets a console line and no user surface.
@@ -177,6 +182,29 @@ number, got "abc"` — and fires a `track-fetch` event with `errorKind:
 'adapter'` and the identical text. The rest of the viewer keeps working; only
 that one track degrades. No Retry is offered, because re-running the same
 decoder over the same bytes gives the same answer: fix the file.
+
+### A tooltip is missing rows or shows blanks
+
+A field a tooltip names that a record does not have renders as nothing: a
+`fields` row drops out, and a `{% $field %}` in a template renders empty. That
+is normal for a field only some records carry. When **no** record on the track
+has it, the name is almost always wrong — a typo, a different capitalisation,
+or a column your file calls something else — so the console gets one line per
+track naming every such field:
+
+```
+[protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
+```
+
+The same text fires a `tooltip-field-miss` event (`context.fields` lists the
+names), and the [playground](/protvista/playground/) lists it as a warning. The
+names a template can use are the record's own: the provider adapter's output,
+or the column headers of your file — see
+[Fields from your own file](/protvista/data-tooltip#fields-from-your-own-file).
+A field that is present but empty — a blank cell in a column of your own — is
+not missing; see
+[When a field is missing](/protvista/data-tooltip#when-a-field-is-missing) for
+the few columns where it is.
 
 ### Common coordinate mistakes
 

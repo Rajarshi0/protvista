@@ -25,6 +25,12 @@
  * thin walker that delegates to that stock renderer for every node
  * kind we care about (text / paragraph / inline formatting /
  * conditional blocks).
+ *
+ * A missing field renders as nothing, per item, and that stays silent here.
+ * The per-track view — "no record on this track has `score`" — comes from a
+ * `TooltipFieldTracker` the loader passes to `resolveTooltip`; it returns
+ * what it found rather than logging it, and the element routes the result
+ * as a `tooltip-field-miss` warning.
  */
 import Markdoc, {
   Tag,
@@ -746,6 +752,192 @@ function renderAutoFallback(item: unknown, ctx: TooltipContext): string {
 }
 
 // -----------------------------------------------------------------------------
+// Unknown-field tracking
+// -----------------------------------------------------------------------------
+
+/** One field path a spec references: as written, and pre-split for the walk. */
+interface FieldRef {
+  path: string;
+  segments: readonly string[];
+}
+
+/**
+ * Memo of the field references in each markdown template. Every track that
+ * authors a template gets a tracker per load, and the parse it needs is the
+ * same each time; the key space is bounded by the config's distinct
+ * templates, so — like `labelRenderCache` — the map needs no eviction.
+ */
+const markdownRefCache = new Map<string, readonly FieldRef[]>();
+
+/**
+ * Collect every variable path in a Markdoc attribute value, in source order:
+ * the `{% $x %}` interpolation itself, `{% if $x %}`, a function's
+ * parameters (`equals($x, "y")`, `not($x)`), a tag attribute
+ * (`{% link href=$x %}`), and anything nested in an array or hash literal.
+ */
+function collectVariablePaths(value: unknown, out: FieldRef[]): void {
+  if (Markdoc.Ast.isVariable(value)) {
+    const segments = value.path.map(String);
+    out.push({ path: segments.join('.'), segments });
+  } else if (Markdoc.Ast.isFunction(value)) {
+    for (const param of Object.values(value.parameters)) {
+      collectVariablePaths(param, out);
+    }
+  } else if (Array.isArray(value)) {
+    for (const entry of value) collectVariablePaths(entry, out);
+  } else if (value && typeof value === 'object' && !Markdoc.Ast.isAst(value)) {
+    for (const entry of Object.values(value)) collectVariablePaths(entry, out);
+  }
+}
+
+/** Keep the first occurrence of each path, in order. */
+function dedupeRefs(refs: FieldRef[]): FieldRef[] {
+  const seen = new Set<string>();
+  return refs.filter(({ path }) => !seen.has(path) && !!seen.add(path));
+}
+
+function fieldRefs(spec: TooltipSpec): readonly FieldRef[] {
+  if (spec.kind === 'fields') {
+    // `path: ''` resolves to the item itself, so it names no field.
+    return dedupeRefs(
+      spec.fields
+        .filter(({ path }) => path !== '')
+        .map(({ path }) => ({ path, segments: path.split('.') }))
+    );
+  }
+  const cached = markdownRefCache.get(spec.template);
+  if (cached) return cached;
+  // Parse, not transform: a reference counts whether or not the branch it
+  // sits in renders. The parse decides what is a reference exactly as the
+  // render does: `{% $x %}` inside inline code is literal text and never
+  // appears as a variable, while one inside a fence is interpolated, and
+  // does.
+  const ast = Markdoc.parse(spec.template);
+  const refs: FieldRef[] = [];
+  for (const node of [ast, ...ast.walk()]) {
+    collectVariablePaths(node.attributes, refs);
+  }
+  const deduped = dedupeRefs(refs);
+  markdownRefCache.set(spec.template, deduped);
+  return deduped;
+}
+
+/**
+ * The field paths a tooltip spec references, deduplicated in the order they
+ * first appear: each `fields` entry's `path`, or every Markdoc variable in a
+ * `markdown` template, dotted (`variantType.wildType`, `items.0.id`).
+ */
+export function tooltipFieldRefs(spec: TooltipSpec): string[] {
+  return fieldRefs(spec).map(({ path }) => path);
+}
+
+/** `Object.hasOwn`, which the ES2021 target does not have. */
+const hasOwn = (value: unknown, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Whether a field path *exists* on a value, as distinct from whether it has a
+ * value there. Each segment must be an own key of the value before it.
+ * `hasOwnProperty` boxes a primitive, so `description.length` on a string and
+ * `items.0` on an array hold without a special case (`in` would throw on the
+ * string).
+ *
+ * A key that holds `null` or `undefined` before the last segment ends the
+ * walk as present: the record has that field and says it has no value there,
+ * which is data, not a mistake in the template. So does `''`, `null` or
+ * `undefined` at the leaf.
+ */
+function pathExists(scope: unknown, segments: readonly string[]): boolean {
+  let current = scope;
+  for (const segment of segments) {
+    if (current == null) return true;
+    if (!hasOwn(current, segment)) return false;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return true;
+}
+
+/**
+ * Accumulates, over one track's items, which of its spec's field paths no
+ * item carries. See `createTooltipFieldTracker`.
+ */
+export interface TooltipFieldTracker {
+  /** Note one item the spec rendered against. */
+  observe(item: unknown): void;
+  /**
+   * The referenced paths no observed item carried, in template order. `[]`
+   * when nothing was observed, and on every call after the first. Returns
+   * rather than logs: the loader that drives this has no console, and the
+   * element routes the result (`src/errors/router.ts`).
+   */
+  flush(): string[];
+}
+
+/**
+ * Track one track's authored `dataTooltip` against the items it renders, so
+ * a template naming a field the data never carries can be reported once per
+ * track rather than rendering blank in silence.
+ *
+ * The references are extracted statically, once per spec, into a pending
+ * set; each observed item deletes the ones it has. Once every reference has
+ * been seen, observing an item costs nothing. In a markdown template a path
+ * rooted at `ctx`, or at a key of `spec.variables`, resolves against those
+ * (later keys shadowing earlier, as in the render scope) — never against the
+ * item — so it is checked here, once. A `fields` path always reads the item.
+ */
+export function createTooltipFieldTracker(
+  spec: TooltipSpec,
+  ctx: TooltipContext
+): TooltipFieldTracker {
+  const refs = fieldRefs(spec);
+  const fixedScope =
+    spec.kind === 'markdown' ? { ...spec.variables, ctx } : undefined;
+  const fixedMisses = new Set<string>();
+  const pending = new Map<string, readonly string[]>();
+  for (const { path, segments } of refs) {
+    if (fixedScope && hasOwn(fixedScope, segments[0])) {
+      if (!pathExists(fixedScope, segments)) fixedMisses.add(path);
+    } else {
+      pending.set(path, segments);
+    }
+  }
+  let observed = false;
+  let flushed = false;
+  return {
+    observe(item) {
+      if (item == null || typeof item !== 'object') return;
+      observed = true;
+      for (const [path, segments] of pending) {
+        if (pathExists(item, segments)) pending.delete(path);
+      }
+    },
+    flush() {
+      if (flushed || !observed) {
+        flushed = true;
+        return [];
+      }
+      flushed = true;
+      return refs
+        .map(({ path }) => path)
+        .filter((path) => fixedMisses.has(path) || pending.has(path));
+    },
+  };
+}
+
+/**
+ * The text of a tooltip field-miss warning, without the console's
+ * `[protvista-uniprot]` tag — the element adds that for the console line, and
+ * the event and the issue carry this text as is.
+ */
+export function formatTooltipFieldMiss(
+  groupId: string,
+  trackId: string,
+  fields: readonly string[]
+): string {
+  return `Track ${groupId}/${trackId}: dataTooltip references unknown fields: ${fields.join(', ')}`;
+}
+
+// -----------------------------------------------------------------------------
 // Entry point
 // -----------------------------------------------------------------------------
 
@@ -758,13 +950,19 @@ function renderAutoFallback(item: unknown, ctx: TooltipContext): string {
  * see `renderAutoFallback`. If the item has none of those fields the
  * result is still `''`. Callers attach the returned string to
  * `feature.tooltipContent`; Nightingale reads it on hover.
+ *
+ * `fieldTracker`, when given, observes every item `spec` renders against
+ * (never one the auto-fallback renders), so the caller can report the
+ * spec's references no item carried. It does not change the output.
  */
 export function resolveTooltip(
   item: unknown,
   spec: TooltipSpec | undefined,
-  ctx: TooltipContext
+  ctx: TooltipContext,
+  fieldTracker?: TooltipFieldTracker
 ): string {
   if (!spec) return renderAutoFallback(item, ctx);
+  fieldTracker?.observe(item);
   switch (spec.kind) {
     case 'fields':
       return renderFieldsSpec(item, spec.fields);

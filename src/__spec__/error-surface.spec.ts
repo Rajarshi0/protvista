@@ -3326,6 +3326,204 @@ describe('track-data coordinate warning', () => {
       expect(trackData()).toHaveLength(0);
     });
   });
+
+  // ── tooltip-field-miss warning (#135) ───────────────────────────
+  //
+  // Nested here to reuse `stubRoutes` / `mountCollecting`. The file is in
+  // range for the 770-residue entry and has no ignored columns, so the only
+  // warning is the tooltip's.
+  describe('tooltip-field-miss warning', () => {
+    const IN_RANGE =
+      'type,start,end,description\nDOMAIN,1,10,a\nDOMAIN,5,20,b\n';
+    const TEMPLATE = '{% $description %} {% $pvalue %} {% $Gene %}';
+    const MESSAGE =
+      'Track g/y: dataTooltip references unknown fields: pvalue, Gene';
+    const withTooltip = (dataTooltip: unknown = TEMPLATE) => ({
+      rows: [
+        {
+          id: 'g',
+          tracks: [
+            { id: 'y', kind: 'features', data: './hits.csv', dataTooltip },
+          ],
+        },
+      ],
+    });
+
+    function mountMisses(props: Partial<El>) {
+      const mounted = mountCollecting(props);
+      const misses = () =>
+        mounted.events.filter((e) => e.detail.phase === 'tooltip-field-miss');
+      /** The routed console lines for this finding, not unrelated ones. */
+      const lines = () =>
+        mounted.warn.mock.calls.filter(
+          ([first]) =>
+            typeof first === 'string' &&
+            first.includes('dataTooltip references unknown fields')
+        );
+      return { ...mounted, misses, lines };
+    }
+
+    it('fires one warning per track, naming every unknown field, and logs it once', async () => {
+      stubRoutes({ csv: IN_RANGE });
+      const { el, events, misses, lines } = mountMisses({
+        viewerConfig: withTooltip(),
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(1));
+      const [ev] = misses();
+      expect(ev.detail.severity).toBe('warning');
+      expect(ev.detail.message).toBe(MESSAGE);
+      // The template is the config's, not the file's.
+      expect(ev.detail).not.toHaveProperty('source');
+      expect(ev.detail.issues).toEqual([
+        {
+          path: 'g/y',
+          code: 'tooltip-field-miss',
+          severity: 'warning',
+          message: MESSAGE,
+        },
+      ]);
+      expect(ev.detail.context).toEqual({
+        accession: 'P05067',
+        groupId: 'g',
+        trackId: 'y',
+        fields: ['pvalue', 'Gene'],
+      });
+      // One summary for the track, not one per record: the single console
+      // line is the router's.
+      expect(lines()).toEqual([[`[protvista-uniprot] ${MESSAGE}`]]);
+      expect(
+        events.filter((e) => e.detail.phase !== 'tooltip-field-miss')
+      ).toEqual([]);
+      // Every row still renders, with what the template could fill in.
+      const rows = el.data['g-y'] as Array<{ tooltipContent?: string }>;
+      expect(rows).toHaveLength(2);
+      expect(rows[0].tooltipContent).toBe('<p>a  </p>');
+      await el.updateComplete;
+      expect(el._mountError).toBeNull();
+      expect(el._trackErrors.has('g-y')).toBe(false);
+      expect(el.querySelector(BADGE)).toBeNull();
+    });
+
+    it('stays off the mount panel and the badge under strict', async () => {
+      stubRoutes({ csv: IN_RANGE });
+      const { el, misses, lines } = mountMisses({
+        viewerConfig: { ...withTooltip(), strict: true },
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(1));
+      await el.updateComplete;
+      expect(lines()).toHaveLength(1);
+      expect(el._mountError).toBeNull();
+      expect(el.querySelector(PANEL)).toBeNull();
+      expect(el._trackErrors.has('g-y')).toBe(false);
+      expect(el.querySelector(BADGE)).toBeNull();
+    });
+
+    it('uses the bare track id as the path for a standalone row', async () => {
+      stubRoutes({ csv: IN_RANGE });
+      const { misses } = mountMisses({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'solo',
+              kind: 'features',
+              data: './hits.csv',
+              dataTooltip: '{% $nope %}',
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(1));
+      const [ev] = misses();
+      expect(ev.detail.issues[0].path).toBe('solo');
+      expect(ev.detail.message).toBe(
+        'Track solo/solo: dataTooltip references unknown fields: nope'
+      );
+      expect(ev.detail.context.trackId).toBe('solo');
+    });
+
+    it('fires once per data load: not on re-render, again on reload', async () => {
+      stubRoutes({ csv: IN_RANGE });
+      const { el, misses, lines } = mountMisses({
+        viewerConfig: withTooltip(),
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(1));
+      el.requestUpdate();
+      await el.updateComplete;
+      expect(misses()).toHaveLength(1);
+
+      await el._loadData();
+      expect(misses()).toHaveLength(2);
+      expect(lines()).toHaveLength(2);
+    });
+
+    it('reports again for only the track a targeted retry reruns', async () => {
+      stubRoutes({ csv: IN_RANGE });
+      const { el, events, misses } = mountMisses({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'g',
+              tracks: [
+                {
+                  id: 'x',
+                  kind: 'features',
+                  data: './hits.csv',
+                  dataTooltip: '{% $nope %}',
+                },
+                {
+                  id: 'y',
+                  kind: 'features',
+                  data: './hits.csv',
+                  dataTooltip: '{% $nope %}',
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(2));
+      // Config order.
+      expect(misses().map((e) => e.detail.context.trackId)).toEqual(['x', 'y']);
+      events.length = 0;
+
+      await el._loadData(new Set(['g-y']));
+      expect(misses()).toHaveLength(1);
+      expect(misses()[0].detail.context.trackId).toBe('y');
+    });
+
+    it('fires nothing for a track with no authored dataTooltip', async () => {
+      // `features`' own default names fields too, but defaults are not checked.
+      stubRoutes({ csv: IN_RANGE });
+      const { el, misses, lines } = mountMisses({ viewerConfig: CONFIG });
+
+      await vi.waitFor(() => {
+        expect(el.data['g-y']).toBeDefined();
+        expect(el.sequence).toBeDefined();
+      });
+      expect(misses()).toHaveLength(0);
+      expect(lines()).toHaveLength(0);
+    });
+
+    it('fires nothing when every referenced field is present on some record', async () => {
+      stubRoutes({
+        csv: 'type,start,end,description,pvalue\nDOMAIN,1,10,a,\nDOMAIN,5,20,b,0.01\n',
+      });
+      const { el, misses } = mountMisses({
+        viewerConfig: withTooltip('{% $description %} {% $pvalue %}'),
+      });
+
+      await vi.waitFor(() => {
+        expect(el.data['g-y']).toBeDefined();
+        expect(el.sequence).toBeDefined();
+      });
+      expect(misses()).toHaveLength(0);
+    });
+  });
 });
 
 // ── format helper ─────────────────────────────────────────────────

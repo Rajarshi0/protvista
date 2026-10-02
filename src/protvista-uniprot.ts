@@ -30,13 +30,14 @@ import {
   loadProtvistaData,
   UNFILTERED_SUFFIX,
   type CustomTrackData,
+  type TooltipFieldMiss,
   type TrackProcessingFailure,
 } from './load-data.js';
 import {
   installClickTooltip,
   type TooltipController,
 } from './tooltips/popover.js';
-import { renderLabel } from './tooltips/resolve.js';
+import { formatTooltipFieldMiss, renderLabel } from './tooltips/resolve.js';
 import { escapeHtml } from './utils/security.js';
 import { getFeatureSource, type FeatureSource } from './feature-source.js';
 import { warnLostProperties } from './lost-properties.js';
@@ -351,6 +352,15 @@ const hasRenderableData = (value: unknown): boolean => {
  */
 const showsSeriesLabel = (tracks: readonly NormalizedTrack[]): boolean =>
   !tracks.some((t) => t.data?.some((d) => isAuthoredSource(d)));
+
+/**
+ * The `path` a runtime track warning's issue names the track by: the bare
+ * track id on a standalone row, which has no group of its own, and
+ * `group/track` otherwise. Shared by every track-scoped runtime warning, so
+ * they all name a row the same way.
+ */
+const issuePath = (row: NormalizedRow, trackId: string): string =>
+  row.standalone ? trackId : `${row.id}/${trackId}`;
 
 /**
  * How long a just-moved row stays highlighted. Long enough to find the row
@@ -1398,6 +1408,7 @@ class ProtvistaUniprot extends LitElement {
       trackFailures,
       trackWarnings,
       skipWarnings,
+      tooltipFieldMisses,
     } = await loadProtvistaData(
       variables,
       this.config,
@@ -1496,6 +1507,10 @@ class ProtvistaUniprot extends LitElement {
     // dropped, a colour the canvas cannot paint. Once per load, like the
     // coordinate warning; a targeted retry reports only the tracks it reran.
     this._reportDecodeWarnings(trackWarnings, trackCoordinates);
+
+    // An authored tooltip template that names a field no record carries.
+    // Once per load, after the decoder's own warnings about the same data.
+    this._reportTooltipFieldMisses(tooltipFieldMisses);
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.
@@ -1758,7 +1773,7 @@ class ProtvistaUniprot extends LitElement {
           {
             issues: [
               {
-                path: group.standalone ? track.id : `${group.id}/${track.id}`,
+                path: issuePath(group, track.id),
                 message,
                 code: 'coordinate-out-of-range',
                 severity: 'warning',
@@ -1815,7 +1830,7 @@ class ProtvistaUniprot extends LitElement {
             {
               issues: [
                 {
-                  path: group.standalone ? track.id : `${group.id}/${track.id}`,
+                  path: issuePath(group, track.id),
                   message,
                   code,
                   severity: 'warning',
@@ -1830,6 +1845,47 @@ class ProtvistaUniprot extends LitElement {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Route each track the loader found with an authored `dataTooltip` naming
+   * fields none of its records carries, as one `tooltip-field-miss` warning
+   * per track listing every such field.
+   *
+   * Every record renders; only the tooltip shows blanks where the template
+   * expected a value. Its routing row (`src/errors/router.ts`) keeps it to the
+   * event (with a `tooltip-field-miss` issue, which the playground lists) and
+   * the console — never the `⚠` badge or the panel, even under `strict`. No
+   * `source`: the mistake is in the config's template, not in a file, and a
+   * Retry would read the same template again.
+   */
+  private _reportTooltipFieldMisses(misses: TooltipFieldMiss[]) {
+    if (!this.config) return;
+    for (const { groupId, trackId, fields } of misses) {
+      const group = this.config.rows.find((row) => row.id === groupId);
+      if (!group) continue;
+      const message = formatTooltipFieldMiss(groupId, trackId, fields);
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'tooltip-field-miss',
+          scope: { trackKey: `${groupId}-${trackId}` },
+          message: `[protvista-uniprot] ${message}`,
+          consoleLevel: 'warn',
+        },
+        {
+          issues: [
+            {
+              path: issuePath(group, trackId),
+              message,
+              code: 'tooltip-field-miss',
+              severity: 'warning',
+            },
+          ],
+          context: { groupId, trackId, fields },
+        }
+      );
     }
   }
 

@@ -24,6 +24,9 @@
  *      accession, track id, and kind verbatim, and is reachable from
  *      a Markdoc template via `$ctx.accession` / `$ctx.trackId` /
  *      `$ctx.kind`.
+ *   6. An authored `dataTooltip` naming fields no rendered item carries is
+ *      returned on `tooltipFieldMisses`, never logged — and never for a
+ *      per-kind default or a graph component.
  *
  * Rich / interactive / stateful tooltips are NOT the loader's
  * concern — consumers wire those via the Nightingale `change` event
@@ -263,5 +266,190 @@ describe('tooltip pipeline — loader-driven end-to-end', () => {
     expect(item.tooltipContent).toContain(ACCESSION);
     expect(item.tooltipContent).toContain('my-track');
     expect(item.tooltipContent).toContain('features-domain');
+  });
+});
+
+describe('tooltip pipeline — unknown dataTooltip fields (#135)', () => {
+  // The loader returns what it found and logs nothing: the element routes it
+  // (`_reportTooltipFieldMisses`), which is where the one console line is made.
+  const tenDomains = async () =>
+    Array.from({ length: 10 }, (_, i) => ({
+      type: 'DOMAIN',
+      start: i + 1,
+      end: i + 3,
+    }));
+
+  const load = async (
+    track: Parameters<typeof makeConfig>[0],
+    adapters: AdapterMap = { 'uniprot-features-json': tenDomains },
+    customTrackData?: Record<string, unknown>
+  ) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await loadProtvistaData(
+        ACCESSION,
+        makeConfig(track),
+        fetchOne,
+        (name) => adapters[name],
+        customTrackData
+      );
+      expect(warn).not.toHaveBeenCalled();
+      return result;
+    } finally {
+      warn.mockRestore();
+    }
+  };
+
+  const urlTrack = (extra: Partial<Parameters<typeof makeConfig>[0]>) => ({
+    id: 't',
+    label: 't',
+    component: 'nightingale-track-canvas',
+    rendering: {},
+    data: [
+      { from: 'url' as const, url: 'u', adapter: 'uniprot-features-json' },
+    ],
+    ...extra,
+  });
+
+  it('returns one miss per track naming every unknown field, without logging', async () => {
+    const result = await load(
+      urlTrack({
+        dataTooltip: {
+          kind: 'markdown',
+          template: '{% $type %} {% $pvalue %} {% $start %} {% $Gene %}',
+        },
+      })
+    );
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 't', fields: ['pvalue', 'Gene'] },
+    ]);
+  });
+
+  it('checks the `fields` form too', async () => {
+    const result = await load(
+      urlTrack({
+        dataTooltip: {
+          kind: 'fields',
+          fields: [
+            { path: 'type', label: 'Type' },
+            { path: 'pvalue', label: 'p' },
+          ],
+        },
+      })
+    );
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 't', fields: ['pvalue'] },
+    ]);
+  });
+
+  it('never checks a per-kind default', async () => {
+    // `features`' default names `description`, which these items lack.
+    const result = await load(urlTrack({ kind: 'features' }));
+    expect(result.tooltipFieldMisses).toEqual([]);
+  });
+
+  it('checks an inline track', async () => {
+    const result = await load({
+      id: 'inl',
+      label: 'inl',
+      component: 'nightingale-track-canvas',
+      rendering: {},
+      dataTooltip: { kind: 'markdown', template: '{% $nope %}' },
+      data: [
+        {
+          from: 'inline',
+          inlineData: [{ type: 'DOMAIN', start: 1, end: 5 }],
+        },
+      ],
+    });
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 'inl', fields: ['nope'] },
+    ]);
+  });
+
+  it('checks a setTrackData() track', async () => {
+    const result = await load(
+      {
+        id: 'c',
+        label: 'c',
+        component: 'nightingale-track-canvas',
+        rendering: {},
+        dataTooltip: { kind: 'markdown', template: '{% $type %} {% $nope %}' },
+        data: [{ from: 'custom' }],
+      },
+      {},
+      { 'GROUP-c': [{ type: 'DOMAIN', start: 1, end: 5 }] }
+    );
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 'c', fields: ['nope'] },
+    ]);
+  });
+
+  it('does not count items whose adapter supplied the tooltip', async () => {
+    const result = await load(
+      urlTrack({ dataTooltip: { kind: 'markdown', template: '{% $nope %}' } }),
+      {
+        'uniprot-features-json': async () => [
+          { type: 'X', tooltipContent: '<p>from the adapter</p>' },
+        ],
+      }
+    );
+    expect(result.tooltipFieldMisses).toEqual([]);
+  });
+
+  it('checks only what `filter:` leaves for the tooltip to render', async () => {
+    const result = await load(
+      urlTrack({
+        filter: 'DOMAIN',
+        dataTooltip: { kind: 'markdown', template: '{% $site %}' },
+      }),
+      {
+        'uniprot-features-json': async () => [
+          { type: 'DOMAIN', start: 1, end: 5 },
+          { type: 'SITE', start: 2, end: 2, site: 'active' },
+        ],
+      }
+    );
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 't', fields: ['site'] },
+    ]);
+  });
+
+  it("never checks a line graph, whose payload is the renderer's series wrapper", async () => {
+    const result = await load({
+      id: 'lg',
+      label: 'lg',
+      component: 'nightingale-linegraph-track',
+      rendering: {},
+      dataTooltip: { kind: 'markdown', template: '{% $value %}' },
+      data: [
+        {
+          from: 'inline',
+          shape: 'point',
+          inlineData: [
+            { position: 1, value: 3 },
+            { position: 2, value: 4 },
+          ],
+        },
+      ],
+    });
+    // The records carry `value`; what the resolver saw is the series wrapper.
+    expect(result.data['GROUP-lg']).toEqual([
+      expect.objectContaining({ values: expect.any(Array) }),
+    ]);
+    expect(result.tooltipFieldMisses).toEqual([]);
+  });
+
+  it('records nothing for a track whose adapter threw', async () => {
+    const result = await load(
+      urlTrack({ dataTooltip: { kind: 'markdown', template: '{% $nope %}' } }),
+      {
+        'uniprot-features-json': async () => {
+          throw new Error('bad body');
+        },
+      }
+    );
+    expect(result.trackFailures['GROUP-t']).toBeDefined();
+    expect(result.tooltipFieldMisses).toEqual([]);
   });
 });

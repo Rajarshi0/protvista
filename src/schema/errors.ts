@@ -53,7 +53,8 @@ export const isError = (issue: ValidationIssue): boolean =>
  * Closed set of validation issue codes. Every semantic check in
  * `validateConfig` emits one of these (`coordinate-out-of-range`,
  * `data-field-ignored` and `unpaintable-color` are the exceptions, emitted
- * at runtime on `phase: 'track-data'`); structural Ajv errors are
+ * at runtime on `phase: 'track-data'`, as is `tooltip-field-miss`, on its
+ * own phase); structural Ajv errors are
  * bucketed under `schema` so consumers can distinguish structural
  * from semantic failures without string-matching the message.
  */
@@ -151,6 +152,14 @@ export type ValidationIssueCode =
    * `severity: 'warning'`.
    */
   | 'unpaintable-color'
+  /**
+   * A track's authored `dataTooltip` references a field that no record on
+   * the track carries, so it renders empty in every tooltip. Emitted at
+   * runtime on `phase: 'tooltip-field-miss'` at `severity: 'warning'`, once
+   * per track per load — never by `validateConfig`, which never sees the
+   * data. The track renders as written.
+   */
+  | 'tooltip-field-miss'
   // ── Extends resolution ─────────────────────────────────
   /** The `extends` chain forms a cycle (a → b → a). */
   | 'circular-extends'
