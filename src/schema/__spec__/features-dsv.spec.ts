@@ -187,7 +187,9 @@ describe('features-csv adapter', () => {
   it('throws a row-named error when end is before start', () => {
     const csv = 'type,start,end,description\nDOMAIN,1,5,a\nDOMAIN,5,4,b';
     expect(() => featuresCsv(csv)).toThrow(
-      './hits.csv (parsed as CSV): row 3: end (4) is before start (5).'
+      new Error(
+        './hits.csv (parsed as CSV): row 3: end (4) is before start (5).'
+      )
     );
   });
 
@@ -201,14 +203,18 @@ describe('features-csv adapter', () => {
   it('rejects a fractional start with a row+column-named error', () => {
     const csv = 'type,start,end,description\nDOMAIN,18.5,20,x';
     expect(() => featuresCsv(csv)).toThrow(
-      './hits.csv (parsed as CSV): row 2, column "start": expected a whole number, got "18.5".'
+      new Error(
+        './hits.csv (parsed as CSV): row 2, column "start": expected a whole number, got "18.5".'
+      )
     );
   });
 
   it('rejects a fractional end', () => {
     const csv = 'type,start,end,description\nDOMAIN,18,20.25,x';
     expect(() => featuresCsv(csv)).toThrow(
-      './hits.csv (parsed as CSV): row 2, column "end": expected a whole number, got "20.25".'
+      new Error(
+        './hits.csv (parsed as CSV): row 2, column "end": expected a whole number, got "20.25".'
+      )
     );
   });
 
@@ -283,7 +289,9 @@ describe('features-tsv adapter', () => {
   it('throws a row-named error when end is before start', () => {
     const tsv = 'type\tstart\tend\tdescription\nDOMAIN\t5\t4\tb';
     expect(() => featuresTsv(tsv)).toThrow(
-      './hits.tsv (parsed as TSV): row 2: end (4) is before start (5).'
+      new Error(
+        './hits.tsv (parsed as TSV): row 2: end (4) is before start (5).'
+      )
     );
   });
 });

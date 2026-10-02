@@ -193,13 +193,17 @@ describe('variation-csv / variation-tsv', () => {
 
   it('rejects a fractional position, naming the row and column', () => {
     expect(() => variationCsv('position,variant\n4.5,K\n')).toThrow(
-      './my-variants.csv (parsed as CSV): row 2, column "position": expected a whole number, got "4.5".'
+      new Error(
+        './my-variants.csv (parsed as CSV): row 2, column "position": expected a whole number, got "4.5".'
+      )
     );
   });
 
   it('rejects a fractional position in TSV too', () => {
     expect(() => variationTsv('position\tvariant\n4.5\tK\n')).toThrow(
-      './my-variants.tsv (parsed as TSV): row 2, column "position": expected a whole number, got "4.5".'
+      new Error(
+        './my-variants.tsv (parsed as TSV): row 2, column "position": expected a whole number, got "4.5".'
+      )
     );
   });
 });

@@ -166,8 +166,8 @@ export function parseDecimal(raw: string): number | null {
 }
 
 /**
- * Throw unless an already-parsed coordinate is a whole number. `raw` in the
- * message is the untrimmed cell, as in the "expected a number" errors.
+ * Throw unless an already-parsed coordinate is a whole number. The message
+ * quotes the untrimmed cell, as the "expected a number" errors do.
  */
 function wholeNumber(
   cells: string[],
@@ -273,7 +273,7 @@ export function rowsToFeatureRecords(
     };
 
     // Coordinates must be whole residues; checked after both parse so a
-    // non-number anywhere in the row is reported first.
+    // non-number start or end is reported first.
     wholeNumber(cells, index, 'start', record.start, line, formatLabel);
     wholeNumber(cells, index, 'end', record.end, line, formatLabel);
     if (record.end < record.start) {

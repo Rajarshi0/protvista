@@ -99,7 +99,9 @@ describe('linegraph-csv / linegraph-tsv', () => {
 
   it('rejects a fractional position, naming the row and column', () => {
     expect(() => linegraphCsv('position,value\n1,4\n2.5,7\n')).toThrow(
-      './depth.csv (parsed as CSV): row 3, column "position": expected a whole number, got "2.5".'
+      new Error(
+        './depth.csv (parsed as CSV): row 3, column "position": expected a whole number, got "2.5".'
+      )
     );
   });
 
