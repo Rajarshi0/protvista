@@ -21,7 +21,9 @@ type TestableElement = HTMLElement & {
 };
 
 const mount = (config: unknown): TestableElement => {
-  const el = document.createElement('protvista-uniprot') as TestableElement;
+  const el = document.createElement(
+    'protvista-uniprot'
+  ) as unknown as TestableElement;
   // Avoid the background sequence fetch — applyTheme runs before it.
   el.loadEntry = () => new Promise(() => {});
   el.viewerConfig = config;

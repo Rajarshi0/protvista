@@ -64,6 +64,17 @@ export interface DomainAdapterDoc {
   inputs: 1 | 2;
   /** Whether the adapter fetches a further URL discovered in its input. */
   fetchesSecondaryUrl: boolean;
+  /**
+   * What each output item is, in a sentence or two — e.g. which API fields
+   * pass through unchanged. Rendered above `outputFields`.
+   */
+  outputSummary?: string;
+  /**
+   * Output fields a consumer can rely on beyond the rendered basics
+   * (`start`, `end`, `type`) — what a tooltip built from `detail.feature` reads.
+   * Part of the adapter's output contract.
+   */
+  outputFields?: readonly { name: string; notes: string }[];
 }
 
 
@@ -183,6 +194,32 @@ export const ADAPTER_REFERENCE: readonly AdapterDoc[] = [
       'UniProt Proteomics API response — `{ features: [{ unique, ptms }] }`; PTMs are lifted onto each peptide as residues to highlight.',
     inputs: 1,
     fetchesSecondaryUrl: false,
+    outputSummary:
+      "Each item is the API's peptide feature with every field passed through under its own name and value (`begin`, `end`, `peptide`, `unique`, `ptms`, `evidences`, `xrefs`, …), plus the fields below. Only `type` is overwritten; its API value is kept as `sourceType`.",
+    outputFields: [
+      {
+        name: 'type',
+        notes:
+          "`'unique'` or `'non_unique'` (from the API's `unique` flag), so `filter:` can split the two tracks.",
+      },
+      {
+        name: 'sourceType',
+        notes:
+          "The API feature's own `type` (`PROTEOMICS` or `PROTEOMICS_PTM`), which `type` replaces.",
+      },
+      {
+        name: 'ptms',
+        notes:
+          "The API feature's `ptms`, unchanged. Each `position` is relative to the peptide (1 = its first residue).",
+      },
+      { name: 'taxid', notes: "The response's top-level `taxid`, copied onto each feature." },
+      { name: 'start', notes: 'The API `begin`, which is also kept.' },
+      {
+        name: 'residuesToHighlight',
+        notes: 'The peptide\'s `ptms` as `{ name, position, sources, dbReferences }`, for highlighting.',
+      },
+      { name: 'category', notes: 'Always `PROTEOMICS`.' },
+    ],
   },
   {
     name: 'uniprot-proteomics-ptm-json',
@@ -193,6 +230,25 @@ export const ADAPTER_REFERENCE: readonly AdapterDoc[] = [
       'PTMeXchange proteomics-PTM response — `{ features: [{ begin, peptide, ptms: [{ name, position, dbReferences }] }] }`; emitted as per-residue MOD_RES markers coloured by confidence.',
     inputs: 1,
     fetchesSecondaryUrl: false,
+    outputSummary:
+      "Each item is a marker the adapter builds, one per modification per residue (`start` = `end` = the absolute position). The API's own `ptms` entries behind it pass through unchanged. The modified residue is not repeated on the marker; read it from the entry sequence at `start`.",
+    outputFields: [
+      {
+        name: 'type',
+        notes: 'Always `MOD_RES_LS`.',
+      },
+      {
+        name: 'ptms',
+        notes:
+          "The API's `ptms` entries for this modification at this residue, unchanged, across every peptide that reports it. Each `position` is relative to its own peptide.",
+      },
+      {
+        name: 'confidenceScore',
+        notes:
+          "The value the marker's `color` is computed from: the `Confidence score` property shared by every entry's `dbReferences` (`Gold`, `Silver` or `Bronze`). `null` when the entries report no score, or a mixture of scores (a mixture also logs a warning).",
+      },
+      { name: 'color', notes: "The colour for `confidenceScore`, or `black` when it is `null`." },
+    ],
   },
   {
     name: 'uniprot-proteins-pdb-json',

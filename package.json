@@ -43,6 +43,12 @@
     "*": {
       "config": [
         "./dist/types/config.d.ts"
+      ],
+      "structure": [
+        "./dist/types/structure.d.ts"
+      ],
+      "react": [
+        "./dist/types/react.d.ts"
       ]
     }
   },
@@ -56,6 +62,14 @@
       "types": "./dist/types/config.d.ts",
       "import": "./dist/config.mjs",
       "default": "./dist/config.mjs"
+    },
+    "./structure": {
+      "types": "./dist/types/structure.d.ts",
+      "import": "./dist/structure.mjs",
+      "default": "./dist/structure.mjs"
+    },
+    "./react": {
+      "types": "./dist/types/react.d.ts"
     },
     "./package.json": "./package.json"
   },
@@ -103,6 +117,14 @@
     "lit": "^3.3.3",
     "timing-functions": "^2.0.1"
   },
+  "peerDependencies": {
+    "@types/react": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@astrojs/starlight": "^0.42.1",
@@ -116,6 +138,7 @@
     "@types/color-hash": "2.0.0",
     "@types/js-yaml": "4.0.9",
     "@types/node": "26.6.1",
+    "@types/react": "19.3.0",
     "@typescript-eslint/eslint-plugin": "8.70.0",
     "@typescript-eslint/parser": "8.70.0",
     "@vitest/browser": "5.0.1",

@@ -88,6 +88,11 @@ import { filterConfig, colorConfig } from 'protvista-uniprot/config';
 
 Import these from `protvista-uniprot/config`, not the package root. The root self-registers `<protvista-uniprot>` on load, so importing anything from it makes a bundler keep the whole viewer (Lit, the Nightingale tracks, Mol\*). The `./config` subpath reaches none of that, so a consumer that only needs the filter data can tree-shake the element away.
 
+Two more subpaths load less than the root:
+
+- `protvista-uniprot/structure` — defines `<protvista-uniprot-structure>` alone, without the track viewer.
+- `protvista-uniprot/react` — types only: JSX declarations for both elements, with attribute spellings (`import type {} from 'protvista-uniprot/react'`).
+
 ## API
 
 Reactive properties on the `<protvista-uniprot>` element (HTML attribute name in brackets where it differs from the JS property name):
@@ -97,7 +102,8 @@ Reactive properties on the `<protvista-uniprot>` element (HTML attribute name in
 - `viewerConfig`: `ProtvistaViewerConfig` — a parsed config object (or a YAML/JSON string), assigned as a JS property (no matching HTML attribute). Alternative to `config-src` when the embedder already has the config in memory.
 - `nostructure` [`nostructure`]: `boolean` (default `false`) — suppresses the PDBe 3D structure group.
 - `notooltip` [`notooltip`]: `boolean` (default `false`) — suppresses the built-in click tooltip. Typically set by embedders rendering their own overlay. See [React host integration](https://ebi-webcomponents.github.io/protvista/react-integration) for the consumer-side pattern.
-- `suspend` [`suspend`]: `boolean` (default `false`) — pauses rendering. Useful when the accession is about to change and you want to avoid a flash of intermediate state.
+- `suspend` [`suspend`]: `boolean` (default `false`) — holds off loading and rendering until cleared. Useful when the accession is about to change and you want to avoid a flash of intermediate state.
+- `adapters`: `Record<string, AdapterFunction>` — adapters to register by name, assigned as a JS property (no HTML attribute); the declarative form of `registerAdapter()`. May be set before the element is defined; applied before loading starts.
 - `noPersistLayout` [`no-persist-layout`]: `boolean` (default `false`) — opts out of layout persistence (a user's reorder/show-hide is neither restored on mount nor saved to localStorage or the `?layout=` URL). See [Customize the layout](https://ebi-webcomponents.github.io/protvista/customize-layout).
 
 ### Layout (Customize layout)

@@ -104,6 +104,17 @@ export type ValidationIssueCode =
    * provider adapter, named with an explicit `adapter:`.
    */
   | 'multi-source-format'
+  /**
+   * Every track in a group is `detailOnly`, so nothing feeds the collapsed
+   * aggregate. A `severity: 'warning'`: the group falls back to the canvas
+   * component with an empty collapsed view.
+   */
+  | 'all-tracks-detail-only'
+  /**
+   * `detailOnly` on a standalone row, which has no collapsed aggregate, so
+   * the flag does nothing. A `severity: 'warning'`.
+   */
+  | 'detail-only-standalone'
   // ── Extends resolution ─────────────────────────────────
   /** The `extends` chain forms a cycle (a → b → a). */
   | 'circular-extends'
