@@ -1750,8 +1750,11 @@ class ProtvistaUniprot extends LitElement {
 
     if (!this.accession) return;
     const requested = this.accession;
+    // A response for a superseded accession is dropped: the newer
+    // accession's own `_init()` owns `sequence`, the panel and `loading`.
     this.loadEntry(requested)
       .then((result) => {
+        if (requested !== this.accession) return;
         const seq = result.entry?.sequence?.sequence;
         if (typeof seq === 'string' && seq.length > 0) {
           this.sequence = seq;
@@ -1777,6 +1780,7 @@ class ProtvistaUniprot extends LitElement {
         this._reportSequenceFailure(result.error);
       })
       .catch((err) => {
+        if (requested !== this.accession) return;
         // `loadEntry` classifies every expected failure itself, but an
         // unexpected throw could still escape. Without this handler the
         // rejection would surface as an unhandled promise rejection in the
