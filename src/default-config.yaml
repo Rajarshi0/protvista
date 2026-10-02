@@ -383,12 +383,6 @@ rows:
   # ───────────────────────────────────────────────────────────
   - id: VARIATION
     label: '{% help slug="variant_viewer" %}Variants{% /help %}'
-    # Explicit because the two child kinds (`variant-counts` +
-    # `variants`) resolve to different components — without this,
-    # the collapsed-group aggregate view would fall back to
-    # `nightingale-track-canvas`, breaking parity with the legacy
-    # viewer's linegraph aggregate.
-    component: nightingale-linegraph-track
     tracks:
       - id: variation_graph
         label: Counts
@@ -399,6 +393,7 @@ rows:
       - id: variation
         kind: variants
         data: variation
+        detailOnly: true
         filterUI: nightingale-filter
         description: Natural variant of the protein, including polymorphisms, variations between strains, isolates or cultivars, disease-associated mutations and RNA editing events
 
@@ -407,10 +402,6 @@ rows:
   # ───────────────────────────────────────────────────────────
   - id: RNA_EDITING
     label: '{% help slug="rna_editing" %}RNA Editing{% /help %}'
-    # Explicit: `rna-editing-counts` (linegraph) + `rna-editing`
-    # (track-canvas) are mixed, so the collapsed-group aggregate
-    # needs an explicit component to match the legacy linegraph.
-    component: nightingale-linegraph-track
     tracks:
       - id: rna_editing_graph
         label: Counts
@@ -428,6 +419,7 @@ rows:
       - id: 'RNA Editing'
         kind: rna-editing
         data: rnaEditing
+        detailOnly: true
         description: RNA editing events leading to one or more amino acid changes compared to the translation of the non-edited RNA version.
 
   # ───────────────────────────────────────────────────────────
@@ -507,12 +499,11 @@ rows:
   # ───────────────────────────────────────────────────────────
   - id: ALPHAMISSENSE_PATHOGENICITY
     label: '{% help slug="structure_section#alphamissense-prediction-of-genetic-variation-consequence-in-the-feature-viewer" %}AlphaMissense{% /help %}'
-    # Explicit component + rendering for parity: the two child kinds
-    # (`alphamissense-pathogenicity` → coloured-sequence, `alphamissense-heatmap`
-    # → sequence-heatmap) are mixed, so the collapsed aggregate
-    # would otherwise default to `nightingale-track-canvas` without
-    # a colour ramp.
-    component: nightingale-colored-sequence
+    # Explicit group-level rendering so the collapsed aggregate
+    # view uses the same AlphaMissense ramp as the per-track coloured
+    # sequence. The `alphamissense-pathogenicity` kind carries this
+    # preset at track level only, and a group's rendering never
+    # inherits from its tracks' kinds.
     rendering:
       colorScale:
         theme: alphamissense-ramp
@@ -527,6 +518,7 @@ rows:
       - id: alphamissense_pathogenicity_heatmap
         label: '[AlphaMissense Pathogenicity](https://alphafold.ebi.ac.uk/entry/{accession})'
         kind: alphamissense-heatmap
+        detailOnly: true
         data:
           source: [alphafoldPrediction, proteins]
         description: AlphaMissense pathogenicity

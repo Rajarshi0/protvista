@@ -165,6 +165,11 @@ export interface NormalizedTrack {
    * `NormalizedRow.hidden`.
    */
   hidden?: boolean;
+  /**
+   * When `true`, this track does not feed its group's collapsed view — see
+   * `aggregateTracks`.
+   */
+  detailOnly?: boolean;
   /** Resolved cascade: defaults → group → kind preset → track. */
   rendering: RenderingOptions;
 }
@@ -290,6 +295,54 @@ export function normalizeConfig(
 // Group
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * The tracks that can feed a group's collapsed (aggregate) view: every track
+ * not marked `detailOnly`, in order. Fixed by the config, so it is what
+ * component inference and validation read. Empty when every track is
+ * `detailOnly`.
+ */
+export function aggregateTracks<T extends { detailOnly?: boolean }>(
+  tracks: readonly T[]
+): T[] {
+  return tracks.filter((t) => !t.detailOnly);
+}
+
+/**
+ * The tracks a group's collapsed view draws right now: its `aggregateTracks`
+ * that are not `hidden`, in the current order. A hidden track is absent from
+ * the canvas, collapsed or not. The single source of truth for the aggregate
+ * payload (loader, `setTrackData` reload, layout changes), the track a graph
+ * aggregate draws and names as its source, and series-label detection, so
+ * they cannot drift apart.
+ */
+export function drawnAggregateTracks<
+  T extends { detailOnly?: boolean; hidden?: boolean },
+>(tracks: readonly T[]): T[] {
+  return aggregateTracks(tracks).filter((t) => !t.hidden);
+}
+
+/**
+ * A group's collapsed-view payload, from each drawn track's own payload. A
+ * graph group (line graph, coloured sequence) draws only its first drawn
+ * track, so its payload is that track's, `undefined` included (the component
+ * reads that as "no data"). Any other group flattens its drawn tracks' items,
+ * dropping the `undefined` a failed or empty track leaves: holes would reach
+ * Nightingale's `.data` setter, and an all-failed group would read as having
+ * data.
+ */
+export function aggregatePayload<
+  T extends { detailOnly?: boolean; hidden?: boolean },
+>(
+  group: { component: ComponentName; tracks: readonly T[] },
+  payloadOf: (track: T) => unknown
+): unknown {
+  const payloads = drawnAggregateTracks(group.tracks).map(payloadOf);
+  return group.component === 'nightingale-linegraph-track' ||
+    group.component === 'nightingale-colored-sequence'
+    ? payloads[0]
+    : payloads.flat().filter((entry) => entry != null);
+}
+
 function normalizeGroup(
   c: GroupConfig,
   defaults: NormalizedDefaults,
@@ -313,14 +366,16 @@ function normalizeGroup(
   );
 
   // Group component inference. Explicit wins; otherwise look at
-  // the child tracks' resolved components — if they all agree, use
-  // that; if they diverge, fall back to the generic canvas track
-  // (which can render mixed content).
+  // the resolved components of the tracks that feed the collapsed view
+  // (`detailOnly` tracks don't) — if they all agree, use that; if they
+  // diverge, fall back to the generic canvas track (which can render
+  // mixed content).
+  const feeding = aggregateTracks(tracks);
   let component: ComponentName;
   if (c.component) {
     component = c.component;
-  } else if (tracks.length > 0) {
-    const childComponents = new Set(tracks.map((t) => t.component));
+  } else if (feeding.length > 0) {
+    const childComponents = new Set(feeding.map((t) => t.component));
     if (childComponents.size === 1) {
       // Iterator#next is the only way to pull the single value out
       // without casting through an array.
@@ -329,8 +384,9 @@ function normalizeGroup(
       component = 'nightingale-track-canvas';
     }
   } else {
-    // Zero-track group — pick a sensible default so nothing
-    // downstream blows up if the group ends up rendered anyway.
+    // Zero-track group, or every track is `detailOnly` — pick a
+    // sensible default so nothing downstream blows up if the group ends
+    // up rendered anyway.
     component = 'nightingale-track-canvas';
   }
 
@@ -456,6 +512,7 @@ function normalizeTrack(
     ...(t.filter !== undefined ? { filter: t.filter } : {}),
     ...(t.filterUI !== undefined ? { filterUI: t.filterUI } : {}),
     ...(t.hidden !== undefined ? { hidden: t.hidden } : {}),
+    ...(t.detailOnly !== undefined ? { detailOnly: t.detailOnly } : {}),
     rendering,
   };
 }

@@ -87,6 +87,31 @@ These back the kinds named for their provider. Their input is a response from an
 | `alphamissense-pathogenicity` | `alphamissense-average-csv` | `nightingale-colored-sequence` | 2 (+ fetches a further URL) | AlphaFold prediction list (with an AlphaMissense annotations URL) plus the UniProt entry. The adapter fetches the annotations CSV and returns per-position average pathogenicity codes. |
 | `alphamissense-heatmap` | `alphamissense-full-csv` | `nightingale-sequence-heatmap` | 2 (+ fetches a further URL) | Same AlphaMissense annotations as `alphamissense-average-csv`, but returns the full per-mutation `{ xValue, yValue, score }` matrix for the heatmap. |
 
+### `uniprot-proteomics-json` output
+
+Each item is the API's peptide feature with every field passed through under its own name and value (`begin`, `end`, `peptide`, `unique`, `ptms`, `evidences`, `xrefs`, …), plus the fields below. Only `type` is overwritten; its API value is kept as `sourceType`.
+
+| Field | Notes |
+|---|---|
+| `type` | `'unique'` or `'non_unique'` (from the API's `unique` flag), so `filter:` can split the two tracks. |
+| `sourceType` | The API feature's own `type` (`PROTEOMICS` or `PROTEOMICS_PTM`), which `type` replaces. |
+| `ptms` | The API feature's `ptms`, unchanged. Each `position` is relative to the peptide (1 = its first residue). |
+| `taxid` | The response's top-level `taxid`, copied onto each feature. |
+| `start` | The API `begin`, which is also kept. |
+| `residuesToHighlight` | The peptide's `ptms` as `{ name, position, sources, dbReferences }`, for highlighting. |
+| `category` | Always `PROTEOMICS`. |
+
+### `uniprot-proteomics-ptm-json` output
+
+Each item is a marker the adapter builds, one per modification per residue (`start` = `end` = the absolute position). The API's own `ptms` entries behind it pass through unchanged. The modified residue is not repeated on the marker; read it from the entry sequence at `start`.
+
+| Field | Notes |
+|---|---|
+| `type` | Always `MOD_RES_LS`. |
+| `ptms` | The API's `ptms` entries for this modification at this residue, unchanged, across every peptide that reports it. Each `position` is relative to its own peptide. |
+| `confidenceScore` | The value the marker's `color` is computed from: the `Confidence score` property shared by every entry's `dbReferences` (`Gold`, `Silver` or `Bronze`). `null` when the entries report no score, or a mixture of scores (a mixture also logs a warning). |
+| `color` | The colour for `confidenceScore`, or `black` when it is `null`. |
+
 ## Related
 
 - [Configuration vs data](/protvista/configuration-vs-data) — what config controls vs what providers supply.

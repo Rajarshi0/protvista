@@ -39,20 +39,7 @@ import {
   type VirtualElement,
   type ReferenceElement,
 } from '@floating-ui/dom';
-
-/**
- * Subset of Nightingale's `change` event `detail` that this module
- * consumes. Kept narrow on purpose — new fields Nightingale adds
- * shouldn't force a signature change here.
- */
-interface NightingaleChangeDetail {
-  eventType?: 'click' | 'mouseover' | 'mouseout' | string;
-  feature?: {
-    tooltipContent?: string;
-    [key: string]: unknown;
-  };
-  coords?: [number, number];
-}
+import type { ProtvistaChangeEventDetail } from '../events.js';
 
 export interface TooltipController {
   /** Remove the popover DOM element and detach every listener. */
@@ -285,7 +272,7 @@ export function installClickTooltip(
 
   const onChange = (e: Event) => {
     if (!enabled()) return;
-    const detail = (e as CustomEvent<NightingaleChangeDetail>).detail;
+    const detail = (e as CustomEvent<ProtvistaChangeEventDetail>).detail;
     if (!detail || detail.eventType !== 'click') return;
     const html = detail.feature?.tooltipContent;
     if (!html) {

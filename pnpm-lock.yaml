@@ -254,6 +254,9 @@ importers:
       '@types/node':
         specifier: 26.6.1
         version: 26.6.1
+      '@types/react':
+        specifier: 19.3.0
+        version: 19.3.0
       '@typescript-eslint/eslint-plugin':
         specifier: 8.70.0
         version: 8.70.0(@typescript-eslint/parser@8.70.0(eslint@10.10.0(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3))(eslint@10.10.0(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)

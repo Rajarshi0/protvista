@@ -77,6 +77,16 @@ dist-tag rather than `latest`. Install the beta explicitly with
 Either way, the tag behaves like any other HTML element — style it, size it,
 and place it wherever you like.
 
+#### Other entry points
+
+The package root defines the whole viewer. These subpaths load less:
+
+| Import | What you get |
+| --- | --- |
+| `protvista-uniprot/config` | `filterConfig` and `colorConfig` — the variant filter and colour config — with no element and no side effects. Use it when you only need the data, e.g. to filter variants in your own UI. |
+| `protvista-uniprot/structure` | Defines `<protvista-uniprot-structure>` alone — the 3D structure viewer and its table — without the track viewer. Its attributes are `accession`, `no-table`, `selected-id` and `color-theme`. |
+| `protvista-uniprot/react` | Types only: JSX declarations for both elements (see [Rich tooltips in React](/protvista/react-integration#typing-the-elements-in-jsx)). |
+
 ## The attributes you'll use
 
 Set these as HTML attributes (or as JavaScript properties on the element).
@@ -88,7 +98,8 @@ Set these as HTML attributes (or as JavaScript properties on the element).
 | `viewerConfig` | object | A config object (or a YAML/JSON string) assigned as a JS property — there is no matching HTML attribute. An alternative to `config-src` when you already have the config in memory. |
 | `nostructure` | boolean | Hides the 3D structure group. |
 | `notooltip` | boolean | Suppresses the built-in click tooltip (set this when you render your own — see [Rich tooltips in React](/protvista/react-integration)). |
-| `suspend` | boolean | Pauses rendering, e.g. while an accession is about to change. |
+| `suspend` | boolean | Holds off loading (and rendering) until it is removed, e.g. while you configure the element or an accession is about to change. |
+| `adapters` | object | A map of adapter name to function, assigned as a JS property — the declarative form of `registerAdapter()`. May be set before the element is defined. See [Escape hatches](/protvista/escape-hatches). |
 
 ## Driving it with your own config
 
