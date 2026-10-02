@@ -221,10 +221,15 @@ function isRenderedRepresentation(payload: unknown): boolean {
  * body. Inline text is the case `format:` was introduced for — there is no
  * extension to read it off and no content sniffing — so ignoring it here would
  * make the one remedy the validator recommends a no-op.
+ *
+ * With `collectCoordinates`, the author's coordinates are returned alongside
+ * the payload for the sequence-bounds warning; `setTrackData()` payloads are
+ * not checked, so that path skips collecting them.
  */
 async function adaptAuthoredRecords(
   payload: unknown,
-  track: NormalizedTrack
+  track: NormalizedTrack,
+  collectCoordinates: boolean
 ): Promise<{ payload: unknown; coordinates?: TrackCoordinates }> {
   const source = track.data[0];
   const shape = source?.shape;
@@ -245,11 +250,8 @@ async function adaptAuthoredRecords(
   // and running them through a validator would only strip fields a
   // `dataTooltip` may reference. Encoded text still has to be decoded — the
   // raw string is no one's representation.
-  //
-  // Alongside the payload, the author's coordinates are returned for the
-  // sequence-bounds warning.
   if (format === 'json' && !SHAPES[shape].wraps) {
-    if (!Array.isArray(payload)) return { payload };
+    if (!collectCoordinates || !Array.isArray(payload)) return { payload };
     return {
       payload,
       coordinates: {
@@ -261,8 +263,11 @@ async function adaptAuthoredRecords(
     };
   }
   if (isRenderedRepresentation(payload)) return { payload };
-  const rows: CoordinateRow[] = [];
   // No `source`, so a parse error reads "inline data (parsed as CSV): …".
+  if (!collectCoordinates) {
+    return { payload: await runPipeline(shape, format, payload) };
+  }
+  const rows: CoordinateRow[] = [];
   const result = await runPipeline(shape, format, payload, {
     coordinates: rows,
   });
@@ -612,11 +617,16 @@ export async function loadProtvistaData(
               return;
             }
             // `setTrackData()` payloads are not bounds-checked: they are
-            // documented as already in renderer form, so the coordinates
-            // are discarded.
+            // documented as already in renderer form, so no coordinates
+            // are collected.
             return filterResolveAndAssign(
-              (await adaptAuthoredRecords(customTrackData[trackKey], track))
-                .payload,
+              (
+                await adaptAuthoredRecords(
+                  customTrackData[trackKey],
+                  track,
+                  false
+                )
+              ).payload,
               trackKey,
               track
             );
@@ -628,7 +638,8 @@ export async function loadProtvistaData(
           if (first.from === 'inline') {
             const { payload, coordinates } = await adaptAuthoredRecords(
               first.inlineData,
-              track
+              track,
+              true
             );
             // Recorded before `filter:`, like the formatted branch below.
             if (coordinates) trackCoordinates[trackKey] = coordinates;
