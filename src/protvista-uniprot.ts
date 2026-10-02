@@ -1352,7 +1352,7 @@ class ProtvistaUniprot extends LitElement {
       Omit<TrackFetchError, 'groupId' | 'trackId'>
     >();
 
-    const { rawData, data, hasData, trackUrls, trackFailures } =
+    const { rawData, data, hasData, trackUrls, trackFailures, skipWarnings } =
       await loadProtvistaData(
         variables,
         this.config,
@@ -1433,6 +1433,19 @@ class ProtvistaUniprot extends LitElement {
     // just those tracks' error state.
     this._trackUrls = only ? { ...this._trackUrls, ...trackUrls } : trackUrls;
     this._collectTrackErrors(trackUrls, fetchErrors, trackFailures, only);
+
+    // A URL template left unfetched because a `{token}` had no usable value.
+    // Viewer-scoped: one template can feed several tracks, and the fix (a
+    // `variables:` entry or a `data-*` attribute) is not any one row's.
+    for (const message of skipWarnings) {
+      this._report({
+        severity: 'warning',
+        phase: 'track-fetch',
+        scope: 'viewer',
+        message,
+        consoleLevel: 'warn',
+      });
+    }
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.

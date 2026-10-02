@@ -350,11 +350,13 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
     await settle();
     flushFrames();
     expect(load).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(el.loading).toBe(false));
-    expect(featureUrls()).toEqual([]);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('undefined variable')
+    // Routed once the batch settles, so wait for it rather than `loading`.
+    await vi.waitFor(() =>
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('undefined variable')
+      )
     );
+    expect(featureUrls()).toEqual([]);
   });
 
   describe('changes that cannot affect a URL do not reload', () => {

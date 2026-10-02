@@ -150,6 +150,13 @@ type LoadResult = {
    * routes them (see `_collectTrackErrors`).
    */
   trackFailures: Record<string, TrackProcessingFailure>;
+  /**
+   * One message per URL template that was not fetched because a `{token}`
+   * had no value or a refused one (see `substituteTemplate`). Returned rather
+   * than logged for the same reason as `trackFailures`; the caller routes
+   * each as a warning.
+   */
+  skipWarnings: string[];
 };
 
 /** One track's non-fetch outcome. See `LoadResult.trackFailures`. */
@@ -418,6 +425,7 @@ export async function loadProtvistaData(
   const trackUrls: Record<string, string[]> = {};
   const substituted = new Map<string, string>();
   const skipped = new Set<string>();
+  const skipWarnings: string[] = [];
   const substitute = (template: string, trackPath: string): string | null => {
     const known = substituted.get(template);
     if (known !== undefined) return known;
@@ -429,7 +437,7 @@ export async function loadProtvistaData(
     }
     skipped.add(template);
     const braced = (tokens: string[]) => tokens.map((t) => `{${t}}`).join(', ');
-    console.warn(
+    skipWarnings.push(
       `[protvista-uniprot] Not fetching '${template}' for track ${trackPath}: ` +
         ('unresolved' in result
           ? `undefined variable(s) ${braced(result.unresolved)}. ` +
@@ -530,7 +538,10 @@ export async function loadProtvistaData(
     // no raw response for the legacy heuristic to see. Without `custom` here,
     // a viewer drawn wholly from injected data reads as "no data".
     const isSupplied = source?.from === 'inline' || source?.from === 'custom';
-    if ((isAuthoredSource(source) || isSupplied) && hasRenderableRows(payload)) {
+    if (
+      (isAuthoredSource(source) || isSupplied) &&
+      hasRenderableRows(payload)
+    ) {
       hasData = true;
     }
   };
@@ -680,8 +691,7 @@ export async function loadProtvistaData(
               trackData[0],
               // The author's own path, so a parse error names their file.
               {
-                source:
-                  substituted.get(String(url ?? '')) ?? String(url ?? ''),
+                source: substituted.get(String(url ?? '')) ?? String(url ?? ''),
               }
             );
           } else if (adapter) {
@@ -749,5 +759,5 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
-  return { rawData, data, hasData, trackUrls, trackFailures };
+  return { rawData, data, hasData, trackUrls, trackFailures, skipWarnings };
 }
