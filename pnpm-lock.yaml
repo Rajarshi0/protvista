@@ -162,6 +162,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  lodash-es: ^4.18.1
+  svgo: ^4.1.0
+
 importers:
 
   .:
@@ -2482,9 +2486,6 @@ packages:
   css-select@4.3.0:
     resolution: {integrity: sha512-wPpOYtnsVontu2mODhA19JrqWxNsfdatRKd64kmpRbQgh1KtItko5sTnEpPdpSaJszTOhEMlF/RPz28qj4HqhQ==}
 
-  css-select@5.2.2:
-    resolution: {integrity: sha512-TizTzUddG/xYLA3NXodFM0fSbNizXjOKhqiQQwvhlspadZokn1KDy0NZFS0wuEubIYAV5/c1/lAr0TaaFXEXzw==}
-
   css-select@6.0.0:
     resolution: {integrity: sha512-rZZVSLle8v0+EY8QAkDWrKhpgt6SA5OtHsgBnsj6ZaLb5dmDVOWUDtQitd9ydxxvEjhewNudS6eTVU7uOyzvXw==}
 
@@ -4158,15 +4159,6 @@ packages:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
 
-  lodash-es@4.17.11:
-    resolution: {integrity: sha512-DHb1ub+rMjjrxqlB3H56/6MXtm1lSksDp2rA2cNWjG8mlDUYFhUj3Di2Zn5IwSU87xLv8tNIQ7sSwE/YOX/D/Q==}
-
-  lodash-es@4.17.15:
-    resolution: {integrity: sha512-rlrc3yU3+JNOpZ9zj5pQtxnx2THmvRykwL4Xlxoa8I9lHBlVbbyPhgyPMioxVZ4NqyxaVVtaJnzsyOidQIhyyQ==}
-
-  lodash-es@4.17.23:
-    resolution: {integrity: sha512-kVI48u3PZr38HdYz98UmfPnXl2DXrpdctLrFLCd3kOx1xUkOmpFPx7gCWWM5MPkL/fD8zb+Ph0QzjGFs4+hHWg==}
-
   lodash-es@4.18.1:
     resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
 
@@ -5452,11 +5444,6 @@ packages:
   svg-inline-loader@0.8.2:
     resolution: {integrity: sha512-kbrcEh5n5JkypaSC152eGfGcnT4lkR0eSfvefaUJkLqgGjRQJyKDvvEE/CCv5aTSdfXuc+N98w16iAojhShI3g==}
 
-  svgo@4.0.1:
-    resolution: {integrity: sha512-XDpWUOPC6FEibaLzjfe0ucaV0YrOjYotGJO1WpF0Zd+n6ZGEQUsSugaoLq9QkEZtAfQIxT42UChcssDVPP3+/w==}
-    engines: {node: '>=16'}
-    hasBin: true
-
   svgo@4.1.0:
     resolution: {integrity: sha512-bkxnTg1kSU0guhIBmibA6UUhrQmPVA1XsQLN+ylCd+UWzbnLkySOcXpyk1mrl05f+pcaCx2eHb+sp6BgMZWX+Q==}
     engines: {node: '>=16'}
@@ -6465,12 +6452,12 @@ snapshots:
     dependencies:
       '@chevrotain/gast': 11.1.2
       '@chevrotain/types': 11.1.2
-      lodash-es: 4.17.23
+      lodash-es: 4.18.1
 
   '@chevrotain/gast@11.1.2':
     dependencies:
       '@chevrotain/types': 11.1.2
-      lodash-es: 4.17.23
+      lodash-es: 4.18.1
 
   '@chevrotain/regexp-to-ast@11.1.2': {}
 
@@ -7083,7 +7070,7 @@ snapshots:
     dependencies:
       '@nightingale-elements/nightingale-manager': 5.11.0
       '@nightingale-elements/nightingale-new-core': 5.11.0
-      lodash-es: 4.17.11
+      lodash-es: 4.18.1
 
   '@nightingale-elements/nightingale-linegraph-track@5.11.0':
     dependencies:
@@ -7140,7 +7127,7 @@ snapshots:
     dependencies:
       '@nightingale-elements/nightingale-new-core': 5.11.0
       d3: 7.9.0
-      lodash-es: 4.17.15
+      lodash-es: 4.18.1
 
   '@nightingale-elements/nightingale-variation-canvas@5.11.1':
     dependencies:
@@ -7153,7 +7140,7 @@ snapshots:
       '@nightingale-elements/nightingale-new-core': 5.11.0
       '@nightingale-elements/nightingale-track': 5.11.1
       d3: 7.8.5
-      lodash-es: 4.17.15
+      lodash-es: 4.18.1
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
@@ -8328,7 +8315,7 @@ snapshots:
       '@chevrotain/regexp-to-ast': 11.1.2
       '@chevrotain/types': 11.1.2
       '@chevrotain/utils': 11.1.2
-      lodash-es: 4.17.23
+      lodash-es: 4.18.1
 
   chokidar@5.0.0:
     dependencies:
@@ -8574,14 +8561,6 @@ snapshots:
       css-what: 6.2.2
       domhandler: 4.3.1
       domutils: 2.8.0
-      nth-check: 2.1.1
-
-  css-select@5.2.2:
-    dependencies:
-      boolbase: 1.0.0
-      css-what: 6.2.2
-      domhandler: 5.0.3
-      domutils: 3.2.2
       nth-check: 2.1.1
 
   css-select@6.0.0:
@@ -10539,12 +10518,6 @@ snapshots:
     dependencies:
       p-locate: 5.0.0
 
-  lodash-es@4.17.11: {}
-
-  lodash-es@4.17.15: {}
-
-  lodash-es@4.17.23: {}
-
   lodash-es@4.18.1: {}
 
   lodash@4.18.1: {}
@@ -12268,16 +12241,6 @@ snapshots:
       object-assign: 4.1.1
       simple-html-tokenizer: 0.1.1
 
-  svgo@4.0.1:
-    dependencies:
-      commander: 11.1.0
-      css-select: 5.2.2
-      css-tree: 3.2.1
-      css-what: 6.2.2
-      csso: 5.0.5
-      picocolors: 1.1.1
-      sax: 1.6.1
-
   svgo@4.1.0:
     dependencies:
       commander: 11.1.0
@@ -12733,7 +12696,7 @@ snapshots:
 
   vite-plugin-svgo@3.0.1(typescript@6.0.3)(vite@8.3.2(@types/node@26.6.3)(esbuild@0.28.2)(terser@5.51.2)):
     dependencies:
-      svgo: 4.0.1
+      svgo: 4.1.0
       typescript: 6.0.3
       vite: 8.3.2(@types/node@26.6.3)(esbuild@0.28.2)(terser@5.51.2)
 
