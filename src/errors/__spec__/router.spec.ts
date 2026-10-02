@@ -248,19 +248,14 @@ describe('failure sites report rather than route', () => {
     expect(consoleCalls(sources['src/load-data.ts'])).toEqual([]);
   });
 
-  it('makes one routed console call in the component, plus the one render-time diagnostic', () => {
+  it('makes exactly one console call in the component, inside the router seam', () => {
     const calls = consoleCalls(sources['src/protvista-uniprot.ts']);
-    // The routed one, indexed by the channel the router returned…
-    expect(calls).toContain('console[channels.console](');
+    // Every failure class now routes, so there is one `console` call in the
+    // whole module and it is indexed by the channel the router returned.
+    expect(calls).toEqual(['console[channels.console](']);
     expect(sources['src/protvista-uniprot.ts']).toContain(
       'console[channels.console](report.message'
     );
-    // …and exactly one other: a Nightingale component rejecting the payload
-    // it was handed (`_assignComponentData`). That one fires from the data
-    // push inside `updated()`, and routing it needs a badge keyed by an
-    // origin the push walk does not resolve yet. The count is the ratchet
-    // that stops a *new* unrouted site slipping in beside it.
-    expect(calls).toHaveLength(2);
   });
 
   it('dispatches protvista-error from the seam only', () => {
@@ -275,15 +270,21 @@ describe('failure sites report rather than route', () => {
     expect(sources['src/load-data.ts']).not.toContain('dispatchEvent');
   });
 
-  it('raises the alert panel only from the two routed paths', () => {
-    // `_report`'s routed promotion, and the aggregated per-track panel that
-    // defers to it. Any third caller is a site deciding for itself again.
+  it('raises the alert panel only from the three routed paths', () => {
+    // `_report`'s routed promotion, plus the two callers that aggregate and so
+    // raise it themselves from the channels the router handed back: the
+    // per-track correlation pass, and the render-handover failure (which fires
+    // outside that pass). Any further caller is a site deciding for itself.
     const raises = [
       ...sources['src/protvista-uniprot.ts'].matchAll(
         /this\._setMountError\(/g
       ),
     ];
-    expect(raises).toHaveLength(2);
+    expect(raises).toHaveLength(3);
+    // Each one is reached only behind a routed decision, never a `strict` read.
+    for (const guard of ['channels.panel', 'panelWanted']) {
+      expect(sources['src/protvista-uniprot.ts']).toContain(guard);
+    }
   });
 
   it('reads config.strict in exactly one place', () => {

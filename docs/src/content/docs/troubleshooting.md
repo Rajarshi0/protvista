@@ -36,7 +36,7 @@ viewer.addEventListener('protvista-error', (event) => {
 | --- | --- | --- |
 | `config` | The config fails to parse or validate, or it loads with warnings. `detail.issues` lists what's wrong, and a warning's issue has `severity: 'warning'`. | — |
 | `sequence` | No usable sequence was found for the accession. | `accession`, plus (on a fetch failure) `errorKind` / `status` / `url` |
-| `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, or a `from: file` path that 404'd. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
+| `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, a `from: file` path that 404'd, or a payload the track could not draw. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
 
 ### Where a failure shows up
@@ -90,7 +90,11 @@ Every field is optional; the reporter fills in what's relevant to the phase.
 - `parse` — a successful response whose body couldn't be parsed;
 - `adapter` — the body arrived, but the decoder, the shape validator or the
   named adapter threw on it. The badge and the event carry the thrown message
-  verbatim, which names your file and the offending row.
+  verbatim, which names your file and the offending row;
+- `render` — the payload was built, and the track itself rejected it on
+  handover (a line graph handed feature records, say). `trackId` is absent when
+  the rejected payload was a collapsed group's combined view rather than one
+  track's.
 
 ## Common problems
 
@@ -116,6 +120,15 @@ The viewer says so on screen: a `from: file` path that 404s shows a `⚠` badge
 reading "`./hotspots.csv` could not be found (HTTP 404) — check the path is
 relative to the page." A track that stays empty with no badge really did load
 and really is empty.
+
+### A track is empty but its data looks right
+
+If `errorKind` is `render`, the data loaded and parsed — the track just could
+not draw it. That is a shape mismatch rather than a content problem: a line
+graph handed feature records, or a `setTrackData()` payload that does not match
+the record contract for the track's `kind`. The badge carries what the
+component threw, and the other tracks are unaffected. See
+[Load your own data](/protvista/your-data) for the shape each kind expects.
 
 ### A data file is malformed
 

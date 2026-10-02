@@ -49,7 +49,11 @@ type El = HTMLElement & {
   hasData: boolean;
   openGroups: string[];
   _mountError: { phase: string; summary: string } | null;
-  _trackErrors: Map<string, { status: number; url: string; message?: string }>;
+  _trackErrors: Map<
+    string,
+    { status: number; url: string; message?: string; kind?: string; trackId?: string | null }
+  >;
+  _assignComponentData(element: unknown, payload: unknown, key: string): void;
   _groupErrors: Set<string>;
   _init(): Promise<void>;
   _loadData(only?: Set<string>): Promise<void>;
@@ -1785,6 +1789,149 @@ describe('setTrackData misuse', () => {
   });
 });
 
+// ── render handover ───────────────────────────────────────────────
+
+describe('a component rejecting its payload', () => {
+  /** An element whose `data` setter throws, like a real mismatched track. */
+  const exploding = () => ({
+    set data(_v: unknown) {
+      throw new TypeError('undefined is not iterable');
+    },
+  });
+
+  it('badges the row and fires the event, not just a console line', async () => {
+    // The last step of the pipeline, and the one that used to be console-only:
+    // the payload was built fine and the Nightingale element could not read
+    // it. The message ends with advice for whoever wrote the data, which is
+    // exactly the audience a console-only report misses.
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    // An expanded group with an aggregate: the group badge stands down there,
+    // so the badge under test is unambiguously the track's own.
+    const el = buildLoaded(normConfig([customTrack('t')]), {
+      openGroups: ['g'],
+      hasData: true,
+      data: { g: [{ type: 'DOMAIN' }], 'g-t': [{ type: 'DOMAIN' }] },
+    });
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el._assignComponentData(exploding(), [{ type: 'DOMAIN' }], 'g-t');
+    const target = renderTarget(el);
+
+    const badges = target.querySelectorAll(BADGE);
+    expect(badges).toHaveLength(1);
+    const badge = badges[0];
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toContain(
+      "track 'g-t' could not render the data it was given"
+    );
+    // Deterministic — the same payload will not read better on a second go.
+    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
+
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf.detail.context.errorKind).toBe('render');
+    expect(tf.detail.context.trackId).toBe('t');
+    expect(errorSpy).toHaveBeenCalledOnce();
+  });
+
+  it('does not take the other tracks down with it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = buildLoaded(
+      normConfig([customTrack('bad'), customTrack('good')])
+    );
+    const received: unknown[] = [];
+    const healthy = {
+      set data(v: unknown) {
+        received.push(v);
+      },
+    };
+
+    el._assignComponentData(exploding(), [{ position: 1 }], 'g-bad');
+    el._assignComponentData(healthy, [{ position: 2 }], 'g-good');
+
+    expect(received).toEqual([[{ position: 2 }]]);
+    expect(el._trackErrors.has('g-bad')).toBe(true);
+    expect(el._trackErrors.has('g-good')).toBe(false);
+  });
+
+  it('reports once, not on every re-push', async () => {
+    // The push walk re-runs whenever a group expands or data changes, and the
+    // same payload fails the same way each time. Re-firing the event on every
+    // expand would be noise over a badge that is already up.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')]));
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    for (let i = 0; i < 3; i += 1) {
+      el._assignComponentData(exploding(), [{ type: 'DOMAIN' }], 'g-t');
+    }
+
+    expect(events).toHaveLength(1);
+  });
+
+  it('promotes to the panel under strict', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')], { strict: true }));
+
+    el._assignComponentData(exploding(), [{ type: 'DOMAIN' }], 'g-t');
+
+    expect(el._mountError?.phase).toBe('track-fetch');
+    expect(el._mountError?.summary).toContain("Track 'g/t' failed to load");
+  });
+
+  it("attributes a collapsed group's aggregate to the row, not to a track", async () => {
+    // The push walk hands over two key shapes. A bare row id is the aggregate
+    // a collapsed group draws every track from — there is no one track to
+    // blame, so the group badge carries the message and the event omits
+    // `trackId` rather than reporting it as null.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')]), {
+      data: { g: [{ type: 'DOMAIN' }] },
+      hasData: true,
+    });
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el._assignComponentData(exploding(), [{ type: 'DOMAIN' }], 'g');
+    const target = renderTarget(el);
+
+    expect(el._trackErrors.get('g')!.trackId).toBeNull();
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf.detail.context.groupId).toBe('g');
+    expect('trackId' in tf.detail.context).toBe(false);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    // The aggregate's own message, not the generic "Some tracks…" count.
+    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toContain(
+      'could not render the data it was given'
+    );
+  });
+
+  it('still reports a key that matches no row, without promising a badge', async () => {
+    // The walk and the config disagreeing should not happen — and if it does,
+    // going unreported is the one outcome worse than having no row to badge.
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')]));
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el._assignComponentData(exploding(), [{ type: 'DOMAIN' }], 'nonexistent');
+
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(events).toHaveLength(1);
+    expect(el._trackErrors.has('nonexistent')).toBe(false);
+    expect(el._mountError).toBeNull();
+  });
+});
+
 // ── routing matrix ────────────────────────────────────────────────
 
 /**
@@ -1799,7 +1946,9 @@ describe('setTrackData misuse', () => {
  *
  * `src/errors/__spec__/router.spec.ts` pins the table itself (totality, the
  * published documentation, the one place `strict` is read). This pins that the
- * failures actually get there.
+ * failures actually get there. The two classes that cannot be driven through
+ * `_loadData` have their own blocks: the render handover above, and the
+ * viewer-scoped config / sequence / `setTrackData` failures below.
  */
 
 /** The channels a class is expected to reach, lax and under `strict`. */

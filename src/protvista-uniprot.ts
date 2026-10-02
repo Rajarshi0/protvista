@@ -181,8 +181,10 @@ const LOADING_ANNOUNCEMENT = 'Loading protein data…';
  * `_loadData`. `adapter` is the processing outcome: the body arrived fine but
  * the decoder, the shape validator or the named adapter threw on it — a
  * malformed file, which is an authoring error and not a service one.
+ * `render` is the last step: the payload was built, and the Nightingale
+ * element rejected it when handed over (see `_assignComponentData`).
  */
-type FetchErrorKind = 'network' | 'http' | 'parse' | 'adapter';
+type FetchErrorKind = 'network' | 'http' | 'parse' | 'adapter' | 'render';
 
 /** A single track's data failure, correlated to its group/track. */
 type TrackFetchError = {
@@ -205,7 +207,14 @@ type TrackFetchError = {
    */
   fromFile?: boolean;
   groupId: string;
-  trackId: string;
+  /**
+   * The track that failed, or `null` for the row's *aggregate* — the single
+   * payload a collapsed group draws all its tracks from. Only a `render`
+   * failure can be aggregate-scoped: the aggregate is built from per-track
+   * data that already loaded, so nothing upstream of the handover can fail
+   * on it alone.
+   */
+  trackId: string | null;
 };
 
 /**
@@ -1423,6 +1432,18 @@ class ProtvistaUniprot extends LitElement {
    *
    * Contained per element, the blast radius is the one track that is actually
    * wrong, and the message names it.
+   *
+   * The failure routes like any other (`error`, scoped to the row): a `⚠`
+   * badge, the `protvista-error` event, the console line, and the panel under
+   * `strict`. It used to be console-only, which made the advice it ends with
+   * — check the shape documented for the kind — reach nobody who was not
+   * already looking at a console, while the track rendered blank.
+   *
+   * Reporting from here is safe even though the push walk runs inside
+   * `updated()`: `_report` ends in a bare `requestUpdate()`, which produces no
+   * `changedProperties`, and the walk is gated on `data` / `config` /
+   * `sequence` / `openGroups` / `_customizeMode` appearing in them. So the
+   * extra cycle draws the badge without re-entering the push — no loop.
    */
   private _assignComponentData(
     element: NightingaleTrackCanvas,
@@ -1432,14 +1453,110 @@ class ProtvistaUniprot extends LitElement {
     try {
       element.data = payload as never;
     } catch (error) {
-      console.error(
-        `[protvista] track '${key}' could not render the data it was given ` +
-          `(${(error as Error)?.message ?? error}). The other tracks are ` +
-          `unaffected. If this track's data came from setTrackData(), check ` +
-          `it matches the record shape documented for its kind.`,
-        error
+      this._reportRenderFailure(key, error);
+    }
+  }
+
+  /**
+   * Record and route a Nightingale element rejecting its payload.
+   *
+   * The push walk hands over two shapes of key — a bare row id for a group's
+   * collapsed aggregate, and `${rowId}-${trackId}` for a track — so the origin
+   * is resolved against the config rather than split on `-`, which a row or
+   * track id may itself contain.
+   *
+   * Re-entrant by design: the walk re-runs whenever a group expands or data
+   * changes, and a payload the element could not read will not read any better
+   * the second time. So a failure already recorded for this key is left alone
+   * — the badge is up, and re-firing the event on every expand would be noise.
+   * A fresh `_loadData()` resets `_trackErrors`, so a reload reports again.
+   */
+  private _reportRenderFailure(key: string, error: unknown): void {
+    if (this._trackErrors.get(key)?.kind === 'render') return;
+
+    const message =
+      `[protvista] track '${key}' could not render the data it was given ` +
+      `(${(error as Error)?.message ?? error}). The other tracks are ` +
+      `unaffected. If this track's data came from setTrackData(), check ` +
+      `it matches the record shape documented for its kind.`;
+
+    const origin = this._resolveRowOrigin(key);
+    // A key matching no row means the push walk and the config disagree, which
+    // should not happen. There is then no row to badge, so claiming a
+    // track-scoped route would promise a surface that cannot appear — it
+    // routes viewer-scoped instead, reaching the console and the event without
+    // a visible surface. What it must not do is go unreported.
+    if (!origin) {
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'track-fetch',
+          scope: 'viewer',
+          message,
+          consoleLevel: 'error',
+        },
+        { consoleArgs: [error] }
+      );
+      return;
+    }
+
+    this._trackErrors.set(key, {
+      url: '',
+      kind: 'render',
+      message,
+      groupId: origin.groupId,
+      trackId: origin.trackId,
+    });
+    this._recomputeErrorVisibility();
+
+    const channels = this._report(
+      {
+        severity: 'error',
+        phase: 'track-fetch',
+        scope: { trackKey: key },
+        message,
+        consoleLevel: 'error',
+      },
+      {
+        context: {
+          groupId: origin.groupId,
+          ...(origin.trackId ? { trackId: origin.trackId } : {}),
+          errorKind: 'render',
+        },
+        consoleArgs: [error],
+        deferPanel: true,
+      }
+    );
+    // The aggregated track-fetch panel is owned by `_collectTrackErrors`, which
+    // is not running here — so raise it directly when routed, with the same
+    // summary shape.
+    if (channels.panel) {
+      this._setMountError(
+        'track-fetch',
+        `Track '${origin.groupId}${origin.trackId ? `/${origin.trackId}` : ''}' failed to load — ${message}`,
+        undefined,
+        false
       );
     }
+  }
+
+  /**
+   * Which row (and track, when the key names one) a data-push key belongs to.
+   * `trackId: null` means the key named a row's collapsed aggregate.
+   */
+  private _resolveRowOrigin(
+    key: string
+  ): { groupId: string; trackId: string | null } | undefined {
+    const rows = this.config?.rows ?? [];
+    for (const row of rows) {
+      if (row.id === key) return { groupId: row.id, trackId: null };
+      for (const track of row.tracks) {
+        if (`${row.id}-${track.id}` === key) {
+          return { groupId: row.id, trackId: track.id };
+        }
+      }
+    }
+    return undefined;
   }
 
   async _loadDataInComponents() {
@@ -2319,7 +2436,9 @@ class ProtvistaUniprot extends LitElement {
         {
           context: {
             groupId: err.groupId,
-            trackId: err.trackId,
+            // Omitted for an aggregate-scoped failure — there is no one track
+            // to name, and reporting `null` would read as "track null".
+            ...(err.trackId ? { trackId: err.trackId } : {}),
             // An `adapter` failure on an inline / custom source has no URL to
             // name, so the field is omitted rather than reported as `''`.
             ...(err.url ? { url: err.url } : {}),
@@ -2396,7 +2515,7 @@ class ProtvistaUniprot extends LitElement {
       const errs = [...this._trackErrors.values()];
       const summary =
         errs.length === 1
-          ? `Track '${errs[0].groupId}/${errs[0].trackId}' failed to load — ${this._describeFetchError(errs[0])}.`
+          ? `Track '${errs[0].groupId}${errs[0].trackId ? `/${errs[0].trackId}` : ''}' failed to load — ${this._describeFetchError(errs[0])}.`
           : `${errs.length} tracks failed to load.`;
       // Retryability spans the whole error set, not just this batch's share
       // of it: the panel's Retry reloads everything.
@@ -2429,6 +2548,8 @@ class ProtvistaUniprot extends LitElement {
         return `Unparseable response from ${err.url}`;
       case 'adapter':
         return err.message ?? `Couldn't process the data for ${err.url}`;
+      case 'render':
+        return err.message ?? 'This track could not draw the data it was given';
       default:
         if (err.fromFile && (err.status ?? 0) < 500) {
           return `${err.url} could not be found (HTTP ${err.status}) — check the path is relative to the page.`;
@@ -3866,9 +3987,16 @@ class ProtvistaUniprot extends LitElement {
   private _renderGroupBadge(groupId: string) {
     if (!this._visibleGroupErrors.has(groupId)) return '';
     if (this.openGroups.includes(groupId) && !!this.data[groupId]) return '';
-    const detail = this._groupErrors.has(groupId)
-      ? 'All tracks in this group failed to load'
-      : 'Some tracks in this group failed to load';
+    // An aggregate-scoped failure (the collapsed view rejected its payload)
+    // has a message of its own worth more than the generic count — it names
+    // what the element could not read.
+    const aggregate = this._trackErrors.get(groupId);
+    const detail =
+      aggregate?.trackId === null && aggregate.message
+        ? aggregate.message
+        : this._groupErrors.has(groupId)
+          ? 'All tracks in this group failed to load'
+          : 'Some tracks in this group failed to load';
     return this._renderErrorBadge(
       detail,
       `${CSS_PREFIX}-gerr-${this._instanceId}-${groupId}`,

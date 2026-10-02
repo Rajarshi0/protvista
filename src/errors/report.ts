@@ -56,13 +56,20 @@ export interface ErrorContext {
   url?: string;
   status?: number;
   /**
-   * For `track-fetch`, how the track failed: `network` (unreachable —
-   * blocked, offline, DNS, CORS, timeout), `http` (a 4xx/5xx response;
-   * `status` is set), `parse` (a 2xx body that failed to parse), or
-   * `adapter` (the body arrived, but the decoder / shape validator / named
-   * adapter threw on it — a malformed file). An `adapter` failure's
-   * `message` is the thrown error's own text, which names the author's file
-   * and the offending row.
+   * For `track-fetch`, how the track failed, in pipeline order:
+   *
+   *   - `network` — unreachable (blocked, offline, DNS, CORS, timeout);
+   *   - `http`    — a 4xx/5xx response (`status` is set);
+   *   - `parse`   — a 2xx body that failed to parse;
+   *   - `adapter` — the body arrived, but the decoder / shape validator /
+   *                 named adapter threw on it (a malformed file);
+   *   - `render`  — the payload was built, and the Nightingale element
+   *                 rejected it when handed over. `trackId` is absent when
+   *                 the rejected payload was a group's collapsed aggregate
+   *                 rather than one track's.
+   *
+   * An `adapter` or `render` failure's message is the thrown error's own
+   * text, which names the author's file and the offending row.
    */
-  errorKind?: 'network' | 'http' | 'parse' | 'adapter';
+  errorKind?: 'network' | 'http' | 'parse' | 'adapter' | 'render';
 }
