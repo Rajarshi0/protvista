@@ -21,8 +21,10 @@
  *   3b. Record a track whose decode / adapter step threw in
  *      `trackFailures` (keyed `${groupId}-${trackId}`) and leave its slot
  *      empty, so one bad file degrades one track rather than the batch —
- *      and so the caller can surface it instead of losing it to the
- *      console.
+ *      and so the caller can route it instead of losing it to the console.
+ *      This module reports nothing itself: it has no surfaces, and a
+ *      `console` call here would be a channel outside the routing table
+ *      (`src/errors/router.ts`).
  *   4. Assign a group-level aggregate at `data[group]`, built from the
  *      tracks that are neither `detailOnly` nor hidden
  *      (`aggregatePayload`) — which is their `.flat()` for most
@@ -30,7 +32,7 @@
  *      colored-sequence groups. The element rebuilds it from the
  *      per-track keys whenever the layout changes which tracks it draws.
  *
- * Intentionally kept side-effect-free: no `this`, no DOM. Tracks that
+ * Intentionally kept side-effect-free: no `this`, no DOM, no `console`. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
  * adapted payload mirrored under a second key,
  * `${groupId}-${trackId}${UNFILTERED_SUFFIX}`, so the component's filter
@@ -132,27 +134,34 @@ type LoadResult = {
    */
   trackUrls: Record<string, string[]>;
   /**
-   * Tracks whose *processing* threw, keyed by `${groupId}-${trackId}` —
-   * a decode/validate failure (`./hits.csv (parsed as CSV): row 3, column
-   * "start": expected a number, got "abc"`), an adapter that rejected the
-   * body it was handed, or an unregistered `adapter:` name.
+   * Per-track outcomes that are not fetch failures, keyed by
+   * `${groupId}-${trackId}`: a decode/validate failure (`./hits.csv (parsed
+   * as CSV): row 3, column "start": expected a number, got "abc"`), an
+   * adapter that rejected the body it was handed, an unregistered `adapter:`
+   * name, or a `from: custom` track nobody injected data into.
    *
-   * These are the failures that used to reach nothing but `console.warn`,
-   * so a malformed data file looked exactly like an absent one. Returned
-   * rather than surfaced here because the loader renders nothing: the
-   * component correlates them to rows and raises the badge / event (see
-   * `_collectTrackErrors`). `message` is the thrown `Error`'s own text,
-   * which already names the author's file and the offending row.
+   * Returned rather than reported here, because this module renders nothing
+   * and logs nothing: every failure in the viewer is routed in one place
+   * (`src/errors/router.ts`), and a loader that wrote to the console would be
+   * a second, unrouted channel. The caller correlates these to rows and
+   * routes them (see `_collectTrackErrors`).
    */
   trackFailures: Record<string, TrackProcessingFailure>;
 };
 
-/** One track's processing failure. See `LoadResult.trackFailures`. */
+/** One track's non-fetch outcome. See `LoadResult.trackFailures`. */
 export type TrackProcessingFailure = {
-  /** The thrown error's message, verbatim — it names the file and the row. */
+  /**
+   * How bad it is, in the routing table's terms (`src/errors/router.ts`).
+   * `error` is a track that cannot render what it was asked to — a malformed
+   * file, an adapter that threw. `info` is an expected absence: a
+   * `from: custom` track nobody injected data into.
+   */
+  severity: 'error' | 'info';
+  /** The message, verbatim — a thrown error's text names the file and the row. */
   message: string;
-  /** The thrown value itself, for the developer channel. */
-  cause: unknown;
+  /** The thrown value itself, for the developer channel. Absent for `info`. */
+  cause?: unknown;
 };
 
 /**
@@ -574,9 +583,10 @@ export async function loadProtvistaData(
           // tracks.
           if (first.from === 'custom') {
             if (!(trackKey in customTrackData)) {
-              console.info(
-                `Track ${groupId}/${trackId} is 'from: custom' but no data was provided via setTrackData().`
-              );
+              trackFailures[trackKey] = {
+                severity: 'info',
+                message: `Track ${groupId}/${trackId} is 'from: custom' but no data was provided via setTrackData().`,
+              };
               return;
             }
             return filterResolveAndAssign(
@@ -648,18 +658,15 @@ export async function loadProtvistaData(
           assignTrackData(trackKey, annotated, track);
           return annotated;
         } catch (err) {
-          // Record rather than log: a malformed file is an authoring error
-          // the author has to be able to *see*, and the console is the one
-          // place they are not looking. The caller turns this into a badge
-          // and a `protvista-error` event.
+          // Record rather than log: a malformed file is an authoring error the
+          // author has to be able to *see*, and the console is the one place
+          // they are not looking. The caller routes this to a badge, an event,
+          // and the console line that used to be all of it.
           trackFailures[trackKey] = {
+            severity: 'error',
             message: err instanceof Error ? err.message : String(err),
             cause: err,
           };
-          console.warn(
-            `[protvista-uniprot] track ${groupId}/${trackId} failed to process; rendering it empty.`,
-            err
-          );
           return undefined;
         }
       })

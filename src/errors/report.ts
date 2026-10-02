@@ -1,13 +1,13 @@
 /**
  * Shared vocabulary for the user-facing error surfaces.
  *
- * `<protvista-uniprot>` reports every error through a single seam
- * (`reportError` on the element). That seam keeps the existing
- * developer-facing `console.*` output *and* adds three user-facing
- * channels on top: a mount-level alert panel, per-track badges, and a
- * bubbling `protvista-error` CustomEvent for embedders. This module
- * holds the two types that vocabulary is built on — kept type-only so
- * it adds nothing to the runtime bundle.
+ * `<protvista-uniprot>` reports every failure through a single seam
+ * (`_report` on the element), which asks the routing table in
+ * `./router.ts` which channels it reaches: the developer-facing
+ * `console.*` line, a mount-level alert panel, a per-track badge, and the
+ * bubbling `protvista-error` CustomEvent for embedders. This module holds
+ * the two types that vocabulary is built on — kept type-only so it adds
+ * nothing to the runtime bundle.
  */
 
 /**
@@ -27,7 +27,7 @@
  *
  * Two are reserved for surfaces that don't exist in the codebase yet;
  * they are declared here so the vocabulary is stable and so that when
- * those features land they emit through the same `reportError` seam
+ * those features land they emit through the same `_report` seam
  * (one listener covers every flavour):
  *   - `transform-calculate` — a `calculate` expression threw for some
  *                             items (see specs/transform-engine.md)

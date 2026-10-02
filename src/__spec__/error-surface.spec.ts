@@ -184,18 +184,35 @@ function renderTarget(el: El): HTMLElement {
  */
 function stubFetch(
   routes: Array<
-    [match: string, res: { ok: boolean; status: number; body?: unknown }]
+    [
+      match: string,
+      res: {
+        ok: boolean;
+        status: number;
+        body?: unknown;
+        /** Fail the body read, producing a `parse` classification. */
+        unreadable?: boolean;
+      },
+    ]
   >
 ) {
   const fn = vi.fn(async (input: unknown) => {
     const url = String(input);
     const hit = routes.find(([m]) => url.includes(m));
-    const { ok, status, body } = hit ? hit[1] : { ok: true, status: 200, body: undefined };
+    const res = hit ? hit[1] : { ok: true, status: 200 };
+    const { ok, status, body, unreadable } = res;
+    const read = async () => {
+      if (unreadable) throw new SyntaxError('Unexpected token < in JSON');
+      return body;
+    };
     return {
       ok,
       status,
-      json: async () => body ?? {},
-      text: async () => (typeof body === 'string' ? body : ''),
+      json: async () => (await read()) ?? {},
+      text: async () => {
+        const v = await read();
+        return typeof v === 'string' ? v : '';
+      },
     } as unknown as Response;
   });
   vi.stubGlobal('fetch', fn);
@@ -637,9 +654,11 @@ describe('per-track error badge', () => {
     expect(tf!.detail.context.status).toBe(500);
     expect(tf!.detail.context.trackId).toBe('bad');
 
-    // console.warn fired once (closure), not doubled by reportError.
+    // The developer channel still carries it, exactly once — the router makes
+    // the only console call, so there is no second line from the fetch
+    // closure to double it.
     const httpWarns = warnSpy.mock.calls.filter((c) =>
-      String(c[0]).includes('HTTP error status: 500')
+      String(c[0]).includes('HTTP 500')
     );
     expect(httpWarns.length).toBe(1);
   });
@@ -1763,6 +1782,353 @@ describe('setTrackData misuse', () => {
     el.setTrackData('g', 'ok', 42);
 
     expect(events.some((e) => e.detail.phase === 'set-track-data')).toBe(true);
+  });
+});
+
+// ── routing matrix ────────────────────────────────────────────────
+
+/**
+ * Every failure class the viewer has, and the channels each one reaches.
+ *
+ * This is the test the old ad-hoc routing could not have: routing lived as a
+ * conditional at each failure site, so "which failures reach a user" was only
+ * answerable by reading eight call sites and hoping. Several of them answered
+ * "none" — a 4xx reaching nothing, an adapter throw reaching only the console,
+ * a badge appearing on grouped rows but not standalone ones. Now one table in
+ * `src/errors/router.ts` decides, and this walks every class through it.
+ *
+ * `src/errors/__spec__/router.spec.ts` pins the table itself (totality, the
+ * published documentation, the one place `strict` is read). This pins that the
+ * failures actually get there.
+ */
+
+/** The channels a class is expected to reach, lax and under `strict`. */
+type Expected = {
+  /** `protvista-error` phase, or `null` for a class that deliberately fires none. */
+  phase: string | null;
+  /** The `⚠` badge, when there is a viewer to draw it in (see below). */
+  badge: boolean;
+  retry: boolean;
+  /** Panel without `strict`, and with it. */
+  panel: [lax: boolean, strict: boolean];
+  consoleLevel: 'error' | 'warn' | 'info';
+  /** The routed console line, which must appear exactly once at that level. */
+  consoleMatch: RegExp;
+};
+
+describe('routing matrix — track-scoped failures', () => {
+  const BAD_CSV = 'type,start,end,description\nDOMAIN,abc,25,Kinase domain';
+
+  const cases: Array<{
+    name: string;
+    config: (strict: boolean) => NormalizedConfig;
+    routes: Parameters<typeof stubFetch>[0];
+    expected: Expected;
+  }> = [
+    {
+      name: 'network error (unreachable, blocked, CORS)',
+      config: (strict) =>
+        normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
+      // No route matches, so the stub resolves 200 — overridden below.
+      routes: [],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /Couldn't reach https:\/\/example\.org\/x\.json/,
+      },
+    },
+    {
+      name: 'HTTP 5xx (server failing)',
+      config: (strict) =>
+        normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
+      routes: [['/x.json', { ok: false, status: 503 }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /HTTP 503 — https:\/\/example\.org\/x\.json/,
+      },
+    },
+    {
+      name: 'HTTP 4xx from a provider endpoint (missing, not broken)',
+      config: (strict) =>
+        normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
+      routes: [['/x.json', { ok: false, status: 404 }]],
+      expected: {
+        phase: null,
+        badge: false,
+        retry: false,
+        panel: [false, false],
+        consoleLevel: 'info',
+        consoleMatch: /track g\/t: no data \(HTTP 404\)/,
+      },
+    },
+    {
+      name: 'HTTP 4xx from a from: file path (broken path)',
+      config: (strict) =>
+        normConfig([fileTrack('t', './hits.csv')], { strict }),
+      routes: [['/hits.csv', { ok: false, status: 404 }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: false,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /\.\/hits\.csv could not be found \(HTTP 404\)/,
+      },
+    },
+    {
+      name: 'unparseable body',
+      config: (strict) =>
+        normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
+      routes: [['/x.json', { ok: true, status: 200, unreadable: true }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: false,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /Unparseable response from https:\/\/example\.org\/x\.json/,
+      },
+    },
+    {
+      name: 'malformed file the decoder rejected',
+      config: (strict) =>
+        normConfig([fileTrack('t', './hits.csv')], { strict }),
+      routes: [['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: false,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /row 2, column "start": expected a number, got "abc"/,
+      },
+    },
+    {
+      name: 'unregistered adapter name',
+      config: (strict) => {
+        const config = normConfig(
+          [urlTrack('t', 'https://example.org/x.json')],
+          { strict }
+        );
+        config.rows[0].tracks[0].data[0].adapter = 'nope-not-registered';
+        return config;
+      },
+      routes: [['/x.json', { ok: true, status: 200, body: { features: [] } }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: false,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch: /No adapter registered for 'nope-not-registered'/,
+      },
+    },
+    {
+      name: 'from: custom with nothing injected',
+      config: (strict) => normConfig([customTrack('t')], { strict }),
+      routes: [],
+      expected: {
+        phase: null,
+        badge: false,
+        retry: false,
+        panel: [false, false],
+        consoleLevel: 'info',
+        consoleMatch: /Track g\/t is 'from: custom' but no data was provided/,
+      },
+    },
+  ];
+
+  for (const { name, config, routes, expected } of cases) {
+    for (const strict of [false, true]) {
+      const label = strict ? `${name} [strict]` : name;
+      it(`routes ${label}`, async () => {
+        const spies = {
+          error: vi.spyOn(console, 'error').mockImplementation(() => undefined),
+          warn: vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+          info: vi.spyOn(console, 'info').mockImplementation(() => undefined),
+        };
+        if (name.startsWith('network')) {
+          vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => {
+              throw new TypeError('Failed to fetch');
+            })
+          );
+        } else {
+          stubFetch(routes);
+        }
+        const events: ErrorEvent[] = [];
+
+        const el = buildLoaded(config(strict), { openGroups: ['g'] });
+        el.addEventListener('protvista-error', (e) =>
+          events.push(e as ErrorEvent)
+        );
+
+        await el._loadData();
+        const target = renderTarget(el);
+
+        // Event channel.
+        const fired = events.filter((e) => e.detail.phase === 'track-fetch');
+        if (expected.phase === null) {
+          expect(fired, 'should fire no event').toHaveLength(0);
+        } else {
+          expect(fired, 'should fire one event').toHaveLength(1);
+          expect(fired[0].detail.context.trackId).toBe('t');
+        }
+
+        // Panel channel — the only one `strict` moves.
+        const panelUp = expected.panel[strict ? 1 : 0];
+        expect(el._mountError?.phase === 'track-fetch', 'panel').toBe(panelUp);
+
+        // Badge + Retry channels. The panel *replaces* the viewer, so when
+        // one is up there is no row to carry a badge — that is the panel's
+        // whole job. Assert the badge where the viewer renders, and the
+        // viewer's absence where it does not.
+        if (panelUp) {
+          expect(target.querySelector(BADGE), 'panel replaces the row').toBeNull();
+          expect(target.querySelector(PANEL)).not.toBeNull();
+        } else {
+          expect(!!target.querySelector(BADGE), 'badge').toBe(expected.badge);
+          expect(
+            !!target.querySelector(`.${CSS_PREFIX}-error-retry`),
+            'retry'
+          ).toBe(expected.retry);
+        }
+
+        // Developer channel: the routed line appears exactly once, at the
+        // routed level, and at no other level. Two copies would mean a site
+        // still reporting for itself beside the router.
+        //
+        // Counting *all* console calls would be wrong here: the generic-format
+        // decoders emit their own per-body diagnostics on the way to returning
+        // empty (`specs/generic-format-adapters.md` — "diagnostic
+        // console.warns, not exceptions"). Those degrade a row rather than
+        // failing a track and are not part of this pipeline, so the assertion
+        // is about the routed line specifically.
+        const atLevel = (level: 'error' | 'warn' | 'info') =>
+          spies[level].mock.calls.filter((c) =>
+            expected.consoleMatch.test(String(c[0]))
+          );
+        for (const level of ['error', 'warn', 'info'] as const) {
+          expect(atLevel(level), `routed line at console.${level}`).toHaveLength(
+            level === expected.consoleLevel ? 1 : 0
+          );
+        }
+      });
+    }
+  }
+});
+
+describe('routing matrix — viewer-scoped failures', () => {
+  /** Mount, wait for the first `protvista-error`, and report what happened. */
+  async function observe(props: Partial<El>): Promise<{
+    el: El;
+    events: ErrorEvent[];
+  }> {
+    const el = mountEl(props);
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+    await vi.waitFor(() => {
+      if (events.length === 0) throw new Error('no event yet');
+    });
+    return { el, events };
+  }
+
+  it('routes a config validation failure to the panel (always, strict or not)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, events } = await observe({
+      viewerConfig: INVALID_CONFIG,
+      accession: 'P05067',
+    });
+    expect(events[0].detail.phase).toBe('config');
+    await vi.waitFor(() => {
+      if (!el.querySelector(PANEL)) throw new Error('panel not ready');
+    });
+  });
+
+  it('routes a config warning to the event only, never the panel', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const raise = vi.spyOn(
+      customElements.get('protvista-uniprot')!.prototype as {
+        _setMountError(phase: string): void;
+      },
+      '_setMountError'
+    );
+    const { events } = await observe({
+      viewerConfig: {
+        strict: true,
+        rows: [
+          {
+            id: 'g',
+            tracks: [
+              {
+                id: 'y',
+                kind: 'features',
+                data: { from: 'file', url: './hits.tsv', format: 'csv' },
+              },
+            ],
+          },
+        ],
+      },
+      accession: 'P05067',
+    });
+    expect(events[0].detail.phase).toBe('config');
+    expect(events[0].detail.issues.map((i) => i.severity)).toEqual(['warning']);
+    expect(raise.mock.calls.map(([phase]) => phase)).not.toContain('config');
+  });
+
+  it('routes an unresolvable theme field to the event only', async () => {
+    // Previously console-only, which made it the one config problem an
+    // embedder's single listener could not see.
+    const warn = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    const { events } = await observe({
+      viewerConfig: {
+        theme: { accentColor: 'not-a-colour' },
+        rows: [
+          {
+            id: 'g',
+            tracks: [
+              { id: 'y', kind: 'features', data: 'https://example.org/x.json' },
+            ],
+          },
+        ],
+      },
+      accession: 'P05067',
+    });
+    const cfg = events.find((e) => e.detail.phase === 'config')!;
+    expect(cfg).toBeDefined();
+    expect(
+      warn.mock.calls.some((c) =>
+        String(c[0]).includes('Ignoring theme.accentColor')
+      )
+    ).toBe(true);
+  });
+
+  it('routes a setTrackData misuse to the event only, never the panel', async () => {
+    // A misused escape hatch is the embedder's bug, not a broken config: the
+    // viewer still renders everything it was given, so `strict` has nothing
+    // to promote. The event names the track so the embedder can act on it.
+    const warn = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')], { strict: true }));
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el.setTrackData('g', 'nope', [{ type: 'DOMAIN' }]);
+
+    expect(events.map((e) => e.detail.phase)).toEqual(['set-track-data']);
+    expect(el._mountError).toBeNull();
+    expect(warn.mock.calls.length).toBe(1);
   });
 });
 

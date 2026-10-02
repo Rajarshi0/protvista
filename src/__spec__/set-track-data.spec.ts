@@ -166,9 +166,12 @@ describe('loadProtvistaData — from: custom / setTrackData()', () => {
     expect(item.tooltipContent).toBe('<h5>Desc</h5><p>hello</p>');
   });
 
-  it('emits the spec-mandated console.info when from: custom has no injected data, and leaves the slot unset', async () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-
+  it('records the spec-mandated no-data notice when from: custom was never injected, and leaves the slot unset', async () => {
+    // The notice itself is unchanged and still reaches `console.info` — the
+    // component emits it, routed as `info` severity (console only, no badge,
+    // no event), because a `from: custom` track nobody filled is an expected
+    // absence rather than a failure. See `src/errors/router.ts` and the
+    // component-level test in `error-surface.spec.ts`.
     const config = makeConfig({
       id: 'mine',
       label: 'mine',
@@ -177,7 +180,7 @@ describe('loadProtvistaData — from: custom / setTrackData()', () => {
       data: [{ from: 'custom' }],
     });
 
-    const { data } = await loadProtvistaData(
+    const { data, trackFailures } = await loadProtvistaData(
       ACCESSION,
       config,
       fetchOne,
@@ -185,10 +188,10 @@ describe('loadProtvistaData — from: custom / setTrackData()', () => {
       {} // no customTrackData
     );
 
-    expect(info).toHaveBeenCalledTimes(1);
-    expect(info).toHaveBeenCalledWith(
-      `Track GROUP/mine is 'from: custom' but no data was provided via setTrackData().`
-    );
+    expect(trackFailures['GROUP-mine']).toEqual({
+      severity: 'info',
+      message: `Track GROUP/mine is 'from: custom' but no data was provided via setTrackData().`,
+    });
     expect('GROUP-mine' in data).toBe(false);
     // Group aggregate is `.flat()` of the per-track return values, with the
     // `undefined` slots a missing/failed track leaves behind filtered out.

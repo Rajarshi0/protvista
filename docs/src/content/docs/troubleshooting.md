@@ -39,6 +39,44 @@ viewer.addEventListener('protvista-error', (event) => {
 | `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, or a `from: file` path that 404'd. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
 
+### Where a failure shows up
+
+Every failure in the viewer — a config that won't validate, a sequence that
+won't load, a file that won't parse — is described by two facts and routed by
+them: how **severe** it is, and whether it is scoped to the whole **viewer** or
+to one **track**. The table below is the whole rule. It lives as data in
+`src/errors/router.ts` and is drift-tested against this page, so the two cannot
+disagree.
+
+| Severity | Scope | Console | `protvista-error` | Alert panel | Row badge |
+| --- | --- | --- | --- | --- | --- |
+| `error` | viewer | yes | yes | always | — |
+| `error` | track | yes | yes | under `strict` | yes |
+| `warning` | viewer | yes | yes | never | — |
+| `warning` | track | yes | yes | under `strict` | yes |
+| `info` | viewer | yes | no | never | — |
+| `info` | track | yes | no | never | no |
+
+Reading it:
+
+- A **viewer-scoped error** leaves nothing to render past it — no config, or no
+  sequence — so the panel replaces the viewer whether or not `strict` is set.
+- A **track-scoped** failure leaves the rest of the viewer working, so the row
+  carries it as a `⚠` badge. `strict` promotes the batch to a single aggregated
+  panel; without `strict` the badges stand alone.
+- A **viewer-scoped warning** names something legal that loaded as written (a
+  config warning, a misused `setTrackData()` call). It never raises the panel,
+  even under `strict` — hiding a working viewer behind a notice about something
+  that worked is not a louder failure, just a less useful one.
+- **`info`** is an expected absence, not a failure: a provider endpoint
+  answering 404 for an entity with no data of this kind, or a `from: custom`
+  track nobody injected data into. It gets a console line and no user surface.
+
+A **Retry** control appears on whichever surface carried the failure, and only
+when retrying could change the answer: a network error or a 5xx may be
+transient, while a 4xx, a malformed file and an adapter that threw will fail
+the same way again.
+
 ### The `context` object
 
 Every field is optional; the reporter fills in what's relevant to the phase.
