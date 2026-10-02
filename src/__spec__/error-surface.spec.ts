@@ -1424,7 +1424,9 @@ describe('track-data coordinate warning', () => {
   const EXPECTED =
     "./hits.csv (parsed as CSV): 2 of 3 rows fall outside P05067 (770 residues); first: row 3, end 812. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.";
   const CONFIG = {
-    rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data: './hits.csv' }] }],
+    rows: [
+      { id: 'g', tracks: [{ id: 'y', kind: 'features', data: './hits.csv' }] },
+    ],
   };
 
   type Res = { ok: boolean; status: number; json?: () => Promise<unknown> };
@@ -1434,9 +1436,7 @@ describe('track-data coordinate warning', () => {
    * `entry` overrides it; `hits.csv` returns `csv`; everything else is an
    * empty 200.
    */
-  function stubRoutes(
-    opts: { csv?: string; entry?: () => Promise<Res> } = {}
-  ) {
+  function stubRoutes(opts: { csv?: string; entry?: () => Promise<Res> } = {}) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: unknown) => {
@@ -1451,9 +1451,17 @@ describe('track-data coordinate warning', () => {
         }
         if (url.includes('hits.csv')) {
           const csv = opts.csv ?? HITS_CSV;
-          return { ok: true, status: 200, text: async () => csv } as unknown as Response;
+          return {
+            ok: true,
+            status: 200,
+            text: async () => csv,
+          } as unknown as Response;
         }
-        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        } as unknown as Response;
       })
     );
   }
@@ -1463,7 +1471,8 @@ describe('track-data coordinate warning', () => {
     const el = mountEl({ accession: 'P05067', ...props });
     const events: ErrorEvent[] = [];
     el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
-    const trackData = () => events.filter((e) => e.detail.phase === 'track-data');
+    const trackData = () =>
+      events.filter((e) => e.detail.phase === 'track-data');
     return { el, events, trackData, warn };
   }
 
@@ -1531,7 +1540,9 @@ describe('track-data coordinate warning', () => {
   it('uses the bare track id as the path for a standalone row', async () => {
     stubRoutes();
     const { trackData } = mountCollecting({
-      viewerConfig: { rows: [{ id: 'solo', kind: 'features', data: './hits.csv' }] },
+      viewerConfig: {
+        rows: [{ id: 'solo', kind: 'features', data: './hits.csv' }],
+      },
     });
 
     await vi.waitFor(() => expect(trackData()).toHaveLength(1));
@@ -1581,7 +1592,12 @@ describe('track-data coordinate warning', () => {
     stubRoutes();
     const { el, trackData } = mountCollecting({
       viewerConfig: {
-        rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data: { from: 'custom' } }] }],
+        rows: [
+          {
+            id: 'g',
+            tracks: [{ id: 'y', kind: 'features', data: { from: 'custom' } }],
+          },
+        ],
       },
       customTrackData: { 'g-y': [{ type: 'DOMAIN', start: 0, end: 900 }] },
     });
