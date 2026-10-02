@@ -25,7 +25,7 @@
       ]
     },
     "accession": {
-      "description": "Primary accession (e.g. \"P05067\"). Used to interpolate {accession} placeholders.",
+      "description": "Primary accession (e.g. \"P05067\"). Used to interpolate {accession} placeholders. The element's accession attribute takes precedence.",
       "type": "string",
       "minLength": 1
     },
@@ -33,6 +33,11 @@
       "description": "Map of named URL templates. Tracks reference these by key.",
       "type": "object",
       "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "variables": {
+      "description": "Baseline values for {token} template variables in data URLs (sources values and descriptor url:). Merged with the host element's data-* attributes and its accession attribute; precedence, lowest first: variables < data-* < accession. Token names match [A-Za-z][A-Za-z0-9_]* and are case-sensitive; data-dataset-id supplies {datasetId}. Every token a data URL uses must resolve against one of the three sources.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
     },
     "defaults": { "$ref": "#/$defs/ConfigDefaults" },
     "strict": {

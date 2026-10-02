@@ -52,6 +52,11 @@ import filterConfig, { colorConfig } from './filter-config.js';
 // who pass a parsed `viewerConfig` object never pull in the parser.
 import defaultConfigYaml from './default-config.yaml?raw';
 import { loadConfigWithSource, type LoadedConfig } from './schema/load.js';
+import {
+  mergeVariables,
+  referencedTokens,
+  type Variables,
+} from './schema/variables.js';
 import { type Registry, createRegistry } from './schema/registry.js';
 import type {
   KnownComponentName,
@@ -390,6 +395,30 @@ class ProtvistaUniprot extends LitElement {
     controller: AbortController;
     only?: Set<string>;
   }> = [];
+
+  /**
+   * Watches the host's attributes for `data-*` changes, which feed URL
+   * template variables. Installed in `connectedCallback`, disconnected in
+   * `disconnectedCallback`. No `attributeFilter`: `data-*` names are
+   * open-ended. The named `accession` attribute is *not* handled here —
+   * it is a Lit reactive property with its own `updated()` → `_init()`
+   * path, and reacting here too would double-load.
+   */
+  private _variablesObserver?: MutationObserver;
+
+  /**
+   * Pending `requestAnimationFrame` handle for a variables-driven reload,
+   * so a burst of `data-*` writes in one tick coalesces to one load.
+   */
+  private _variablesFrame?: number;
+
+  /**
+   * The URL-relevant variable values the most recent full `_loadData()`
+   * requested (see `_variablesKey`). A `data-*` change reloads only when
+   * this differs — so `data-testid`, a same-value write, or a
+   * `data-accession` shadowed by the named attribute costs nothing.
+   */
+  private _lastLoadVariables?: string;
 
   /**
    * Mount-level error state. When set, `render()` shows the alert panel
@@ -1056,10 +1085,25 @@ class ProtvistaUniprot extends LitElement {
       return;
     }
 
+    // A targeted retry while a full load is in flight would abort that load
+    // (a full batch intersects everything) and reload only its own tracks,
+    // leaving the rest on the previous accession's or variables' data, and
+    // `_lastLoadVariables` would already claim values never committed, so
+    // no later `data-*` write would repair it. Promote it to a full load.
+    if (only && this._loadBatches.some((batch) => !batch.only)) {
+      only = undefined;
+    }
+
     // A full (re)load means a new protein or config, so the plain-text label
     // cache (keyed by accession+source) is stale — drop it, bounding growth to
     // the current view. A targeted retry (`only`) leaves labels unchanged.
     if (!only) this._labelTextCache.clear();
+
+    // Read the template variables now, at fetch time, so a `data-*` set
+    // while the config was still loading is honoured, and record what this
+    // load requested for `_onVariablesChanged` to compare against.
+    const variables = this._variables();
+    if (!only) this._lastLoadVariables = this._variablesKey(variables);
 
     // Abort and forget every in-flight batch this call supersedes: one
     // whose key-set intersects ours (a full load — no `only` — intersects
@@ -1098,7 +1142,7 @@ class ProtvistaUniprot extends LitElement {
     >();
 
     const { rawData, data, hasData, trackUrls } = await loadProtvistaData(
-      accession,
+      variables,
       this.config,
       // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
       // errors are swallowed with a warning, leaving a null in the
@@ -1260,6 +1304,66 @@ class ProtvistaUniprot extends LitElement {
     // `this.data` reassignment above *is* tracked, but we issue the
     // explicit update anyway to keep a single notify site.
     this.requestUpdate();
+  }
+
+  /**
+   * The merged template-variables dictionary every data-URL `{token}`
+   * resolves against. Precedence, lowest first: the config's `variables:`
+   * block < the host's `data-*` attributes < the named `accession`
+   * attribute (an alias for `data-accession` that wins on conflict).
+   * `this.accession` is always set by the time this is read (`_loadData`
+   * won't run without it), so `data-accession` never reaches a URL here.
+   */
+  private _variables(): Variables {
+    return mergeVariables({
+      configVariables: this.config?.variables,
+      dataset: this.dataset,
+      accession: this.accession,
+    });
+  }
+
+  /**
+   * A comparable key for the values of the variables the config's data
+   * URLs actually reference — the only ones whose change can alter a
+   * fetch. Absent values are kept distinct from empty ones.
+   */
+  private _variablesKey(variables: Variables): string {
+    if (!this.config) return '';
+    const tokens = [...referencedTokens(this.config)].sort();
+    return JSON.stringify(
+      tokens.map((name) =>
+        Object.prototype.hasOwnProperty.call(variables, name)
+          ? [name, variables[name]]
+          : [name]
+      )
+    );
+  }
+
+  /**
+   * `MutationObserver` callback: schedule one reload per animation frame
+   * when any `data-*` attribute changes.
+   */
+  private _onAttributesMutated = (records: MutationRecord[]): void => {
+    if (this._variablesFrame !== undefined) return;
+    if (!records.some((r) => r.attributeName?.startsWith('data-'))) return;
+    this._variablesFrame = requestAnimationFrame(() => {
+      this._variablesFrame = undefined;
+      this._onVariablesChanged();
+    });
+  };
+
+  /**
+   * Re-run the full track-data load if a `data-*` change altered a
+   * variable the config's URLs use. Before the config has loaded there
+   * is nothing to do — the pending first `_loadData()` reads `dataset`
+   * at fetch time. The superseded batch is aborted by `_loadData()`.
+   */
+  private _onVariablesChanged(): void {
+    if (!this.config || this.suspend || !this.accession) return;
+    if (this._variablesKey(this._variables()) === this._lastLoadVariables) {
+      return;
+    }
+    this._loadData();
   }
 
   /**
@@ -1756,10 +1860,17 @@ class ProtvistaUniprot extends LitElement {
    * the validator's `missing-accession` rule accepts template
    * configs (like the bundled default YAML) whose URLs carry
    * `{accession}` placeholders. `loadConfig` will ignore this when
-   * the config already declares its own accession.
+   * the config already declares its own accession. Likewise the host's
+   * `data-*` attributes, so `missing-variable` accepts their tokens.
    */
   private async resolveViewerConfig(): Promise<LoadedConfig> {
-    const loadOpts = { accession: this.accession, registry: this.registry };
+    // `data-*` names go along so `missing-variable` accepts the tokens this
+    // host supplies; values are read later, at fetch time.
+    const loadOpts = {
+      accession: this.accession,
+      registry: this.registry,
+      variables: { ...this.dataset },
+    };
     if (this.viewerConfig !== undefined) {
       return loadConfigWithSource(this.viewerConfig, loadOpts);
     }
@@ -2343,10 +2454,20 @@ class ProtvistaUniprot extends LitElement {
       enabled: () => !this.notooltip,
     });
 
+    // `data-*` attributes feed URL template variables; re-load when one
+    // changes. See `_onAttributesMutated`.
+    this._variablesObserver = new MutationObserver(this._onAttributesMutated);
+    this._variablesObserver.observe(this, { attributes: true });
   }
 
   disconnectedCallback() {
     clearTimeout(this._movedTimer);
+    this._variablesObserver?.disconnect();
+    this._variablesObserver = undefined;
+    if (this._variablesFrame !== undefined) {
+      cancelAnimationFrame(this._variablesFrame);
+      this._variablesFrame = undefined;
+    }
     this._tooltipController?.dispose();
     this._tooltipController = undefined;
     // Cancel every still-running fetch batch so the detached element

@@ -104,6 +104,66 @@ describe('mergeExtends — basic merge', () => {
     expect(out.sources?.variation).toBe('https://example.org/variation');
   });
 
+  it('child variables override same-key base variables', async () => {
+    const withVariables: ProtvistaViewerConfig = {
+      ...base(),
+      variables: { species: 'human', build: 'v2024.12' },
+    };
+    const child: ProtvistaViewerConfig = {
+      extends: '@base',
+      variables: { species: 'mouse' },
+      rows: [],
+    };
+    const out = await mergeExtends(child, {
+      resolver: { '@base': withVariables },
+    });
+    expect(out.variables).toEqual({ species: 'mouse', build: 'v2024.12' });
+  });
+
+  it('inherits base variables when the child declares none', async () => {
+    const withVariables: ProtvistaViewerConfig = {
+      ...base(),
+      variables: { species: 'human' },
+    };
+    const out = await mergeExtends(
+      { extends: '@base', rows: [] },
+      { resolver: { '@base': withVariables } }
+    );
+    expect(out.variables).toEqual({ species: 'human' });
+  });
+
+  it('leaves variables absent when neither side declares them', async () => {
+    const out = await mergeExtends(
+      { extends: '@base', rows: [] },
+      { resolver: { '@base': base() } }
+    );
+    expect('variables' in out).toBe(false);
+  });
+
+  // A malformed dictionary must reach the schema pass as authored. Spreading
+  // it first would coerce `'mouse'` into `{0:'m',…}` — a valid-looking
+  // map — so the same mistake that fails without `extends` would pass with it.
+  describe.each(['variables', 'sources', 'theme'] as const)(
+    'a malformed child %s block is passed through unmerged',
+    (field) => {
+      const withField = (): ProtvistaViewerConfig =>
+        ({ ...base(), [field]: { a: 'x' } }) as ProtvistaViewerConfig;
+
+      it.each([
+        ['a string', 'mouse'],
+        ['an array', ['a']],
+        ['null', null],
+        ['a number', 42],
+      ])('%s', async (_, value) => {
+        const child = { extends: '@base', [field]: value, rows: [] };
+        const out = await mergeExtends(child as ProtvistaViewerConfig, {
+          resolver: { '@base': withField() },
+        });
+        expect(out[field]).toEqual(value);
+      });
+    }
+  );
+
   it('child defaults override base defaults field-wise', async () => {
     const child: ProtvistaViewerConfig = {
       extends: '@base',
@@ -538,6 +598,25 @@ sources:
     expect(normalized.sources.extra).toBe('https://extra');
     expect(normalized.sources.sources).toBe('https://base/src');
   });
+
+  it.each(['variables', 'sources'] as const)(
+    'rejects a non-object child %s block, as it would without extends',
+    async (field) => {
+      await expect(
+        loadConfig(
+          { extends: '@base', [field]: 'species=human' } as unknown as ProtvistaViewerConfig,
+          {
+            extendsResolver: {
+              '@base': {
+                rows: [],
+                [field]: { species: 'https://base/x' },
+              } as ProtvistaViewerConfig,
+            },
+          }
+        )
+      ).rejects.toThrow(ConfigValidationError);
+    }
+  );
 
   it('propagates ConfigValidationError when merged result still fails semantic checks', async () => {
     await expect(

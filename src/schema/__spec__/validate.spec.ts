@@ -1286,3 +1286,256 @@ describe('validateConfig — detailOnly', () => {
     expect(issueByCode(result.issues, 'schema')).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Template variables — `missing-variable`
+//
+// Every `{token}` in a data URL must resolve against config
+// `variables:`, a host `data-*` attribute, or the named `accession`.
+// `data-*` values are runtime state the validator can't see in
+// isolation, so the rule is a *warning* (the config still loads) and the
+// element passes the names it knows about via `runtimeVariables`.
+// ─────────────────────────────────────────────────────────────
+
+describe('validateConfig — missing-variable', () => {
+  const MULTI = 'https://api.example.org/{species}/{build}/features/{accession}';
+
+  const withSource = (
+    url: string,
+    extra: Partial<ProtvistaViewerConfig> = {}
+  ): ProtvistaViewerConfig => ({
+    accession: 'P05067',
+    sources: { features: url },
+    rows: [
+      {
+        id: 'DOMAINS',
+        tracks: [{ id: 'domain', kind: 'features', data: 'features' }],
+      },
+    ],
+    ...extra,
+  });
+
+  const missing = (issues: ValidationIssue[]) =>
+    issues.filter((i) => i.code === 'missing-variable');
+
+  it('warns on a sources URL token defined nowhere, naming source and token', () => {
+    const result = validateConfig(
+      withSource('https://api.example.org/{species}/features'),
+      freshRegistry()
+    );
+    const [issue, ...rest] = missing(result.issues);
+    expect(rest).toEqual([]);
+    expect(issue).toEqual({
+      path: '/sources/features',
+      severity: 'warning',
+      code: 'missing-variable',
+      message:
+        "Source 'features' references undefined variable '{species}'. Define it in top-level 'variables:' or pass it as a data-species attribute at runtime.",
+    });
+  });
+
+  it('names the kebab-case attribute for a camelCase token', () => {
+    // HTML lowercases attribute names, so `data-datasetId` would reach
+    // `dataset` as `datasetid`; only `data-dataset-id` supplies `{datasetId}`.
+    const result = validateConfig(
+      withSource('https://api.example.org/{datasetId}/features'),
+      freshRegistry()
+    );
+    const [issue] = missing(result.issues);
+    expect(issue.message).toBe(
+      "Source 'features' references undefined variable '{datasetId}'. Define it in top-level 'variables:' or pass it as a data-dataset-id attribute at runtime."
+    );
+  });
+
+  it('is a warning: the config stays valid', () => {
+    const result = validateConfig(withSource(MULTI), freshRegistry());
+    expect(result.valid).toBe(true);
+    expect(missing(result.issues).every((i) => i.severity === 'warning')).toBe(
+      true
+    );
+  });
+
+  it('emits one issue per undefined token, in URL order', () => {
+    const result = validateConfig(withSource(MULTI), freshRegistry());
+    expect(missing(result.issues).map((i) => i.message)).toEqual([
+      expect.stringContaining("'{species}'"),
+      expect.stringContaining("'{build}'"),
+    ]);
+  });
+
+  it('reports a repeated token once per source', () => {
+    const result = validateConfig(
+      withSource('https://e.org/{species}/x/{species}'),
+      freshRegistry()
+    );
+    expect(missing(result.issues)).toHaveLength(1);
+  });
+
+  it('accepts tokens defined in top-level variables:', () => {
+    const result = validateConfig(
+      withSource(MULTI, { variables: { species: 'human', build: 'v2024.12' } }),
+      freshRegistry()
+    );
+    expect(missing(result.issues)).toEqual([]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('never flags {accession} (handled by missing-accession)', () => {
+    const result = validateConfig(
+      withSource('https://e.org/features/{accession}'),
+      freshRegistry()
+    );
+    expect(missing(result.issues)).toEqual([]);
+  });
+
+  it('accepts tokens the caller declares as runtime variables (data-*)', () => {
+    const result = validateConfig(withSource(MULTI), freshRegistry(), {
+      runtimeVariables: ['species', 'build'],
+    });
+    expect(missing(result.issues)).toEqual([]);
+  });
+
+  it('a runtime variable covers only the names it declares', () => {
+    const result = validateConfig(withSource(MULTI), freshRegistry(), {
+      runtimeVariables: new Set(['species']),
+    });
+    expect(missing(result.issues).map((i) => i.message)).toEqual([
+      expect.stringContaining("'{build}'"),
+    ]);
+  });
+
+  it('ignores braces that are not valid tokens', () => {
+    const result = validateConfig(
+      withSource('https://e.org/{foo-bar}/{1x}/{}'),
+      freshRegistry()
+    );
+    expect(missing(result.issues)).toEqual([]);
+  });
+
+  it('does not resolve a token through Object.prototype', () => {
+    const result = validateConfig(
+      withSource('https://e.org/{constructor}', { variables: {} }),
+      freshRegistry()
+    );
+    expect(missing(result.issues)).toHaveLength(1);
+  });
+
+  it('checks an inline descriptor url:, with a track path', () => {
+    const cfg: ProtvistaViewerConfig = {
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'X',
+          tracks: [
+            {
+              id: 'y',
+              kind: 'features',
+              data: { url: 'https://e.org/{species}/features' },
+            },
+          ],
+        },
+      ],
+    };
+    const [issue] = missing(validateConfig(cfg, freshRegistry()).issues);
+    expect(issue).toMatchObject({
+      path: 'X/y',
+      severity: 'warning',
+      message:
+        "Track 'X/y' references undefined variable '{species}'. Define it in top-level 'variables:' or pass it as a data-species attribute at runtime.",
+    });
+  });
+
+  it('checks every URL of a multi-URL descriptor', () => {
+    const cfg: ProtvistaViewerConfig = {
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'X',
+          tracks: [
+            {
+              id: 'y',
+              kind: 'features',
+              data: {
+                url: ['https://e.org/{species}', 'https://e.org/{build}'],
+                adapter: 'uniprot-features-json',
+              },
+            },
+          ],
+        },
+      ],
+    };
+    expect(
+      missing(validateConfig(cfg, freshRegistry()).issues).map((i) => i.message)
+    ).toEqual([
+      expect.stringContaining("'{species}'"),
+      expect.stringContaining("'{build}'"),
+    ]);
+  });
+
+  it('checks a standalone track url: string shorthand', () => {
+    const cfg: ProtvistaViewerConfig = {
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'solo',
+          kind: 'features',
+          data: 'https://e.org/{species}/features',
+        },
+      ],
+    };
+    const [issue] = missing(validateConfig(cfg, freshRegistry()).issues);
+    // Standalone tracks are addressed by their bare id, like every other
+    // per-track issue.
+    expect(issue).toMatchObject({
+      path: 'solo',
+      message: expect.stringMatching(/^Track 'solo' references undefined variable '\{species\}'/),
+    });
+  });
+
+  it('does not double-report a source reached through a track', () => {
+    // The source is reported once at its own path; the track that
+    // references it by key carries no URL of its own to check.
+    const result = validateConfig(
+      withSource('https://e.org/{species}'),
+      freshRegistry()
+    );
+    expect(missing(result.issues).map((i) => i.path)).toEqual([
+      '/sources/features',
+    ]);
+  });
+
+  describe('schema', () => {
+    it('accepts a variables: map of strings', () => {
+      const result = validateConfig(
+        { ...minimalValid(), variables: { species: 'human' } },
+        freshRegistry()
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects a non-string variable value', () => {
+      const result = validateConfig(
+        {
+          ...minimalValid(),
+          variables: { build: 2024 },
+        } as unknown as ProtvistaViewerConfig,
+        freshRegistry()
+      );
+      expect(result.valid).toBe(false);
+      expect(issueByCode(result.issues, 'schema')).toMatchObject({
+        path: '/variables/build',
+      });
+    });
+
+    it('rejects a non-object variables: block', () => {
+      const result = validateConfig(
+        {
+          ...minimalValid(),
+          variables: 'species=human',
+        } as unknown as ProtvistaViewerConfig,
+        freshRegistry()
+      );
+      expect(result.valid).toBe(false);
+    });
+  });
+});

@@ -1276,6 +1276,21 @@ describe('normalizeConfig — top-level fields', () => {
     expect(out.accession).toBe('P05067');
   });
 
+  it('preserves variables when set', () => {
+    const out = normalizeConfig({
+      variables: { species: 'human', build: 'v2024.12' },
+      rows: [{ id: 'C', tracks: [] }],
+    });
+    expect(out.variables).toEqual({ species: 'human', build: 'v2024.12' });
+  });
+
+  it('omits variables when the config has none', () => {
+    const out = normalizeConfig({
+      rows: [{ id: 'C', tracks: [] }],
+    });
+    expect('variables' in out).toBe(false);
+  });
+
   it('always produces a sources object (empty when omitted)', () => {
     const out = normalizeConfig({
       rows: [{ id: 'C', tracks: [] }],
