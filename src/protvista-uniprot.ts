@@ -1891,7 +1891,18 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    if (!this.accession) return;
+    // No accession means nothing to fetch, and `_loadData()` — the only other
+    // place `loading` is cleared — is below this return, so leaving the flag
+    // set spun the loader forever. Harmless while the readiness gate hid it;
+    // now that the spinner covers the whole initial load, a misconfigured
+    // element would sit under a permanent spinner, which reads as "working on
+    // it" rather than "nothing was asked for". Clear it and render the empty
+    // element the gate below produces.
+    if (!this.accession) {
+      this.loading = false;
+      this.requestUpdate();
+      return;
+    }
     this.loadEntry(this.accession)
       .then((result) => {
         const seq = result.entry?.sequence?.sequence;
@@ -2195,6 +2206,17 @@ class ProtvistaUniprot extends LitElement {
         new CustomEvent('protvista-error', {
           detail: {
             phase: report.phase,
+            // The same one-liner the console and the visible surface get.
+            // Without it the event was the one channel that could not say
+            // *what* went wrong: a malformed file reported `errorKind:
+            // 'adapter'` and a URL, while the text naming the file and the
+            // offending row — the whole reason the failure is worth
+            // surfacing — reached only the badge. An embedder listening once
+            // for every flavour now gets the wording too.
+            message: report.message,
+            ...(report.source !== undefined
+              ? { source: report.source }
+              : {}),
             issues: opts.issues ?? [],
             context: { accession: this.accession, ...opts.context },
           },

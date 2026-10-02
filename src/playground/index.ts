@@ -134,7 +134,7 @@ function renderPreview(configText: string, accession: string): void {
 }
 
 // Runtime/data failures (bad URL, unreachable service) bubble here as
-// `protvista-error` with detail `{ phase, issues, context }` (see
+// `protvista-error` with detail `{ phase, message, source, issues, context }` (see
 // `_report` in protvista-uniprot.ts). Surface them alongside config
 // diagnostics — they can arrive after a config that itself validated cleanly.
 previewHost.addEventListener('protvista-error', (event) => {

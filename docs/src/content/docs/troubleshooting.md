@@ -15,20 +15,30 @@ single listener covers all of them. Switch on `detail.phase`:
 const viewer = document.querySelector('protvista-uniprot');
 
 viewer.addEventListener('protvista-error', (event) => {
-  const { phase, issues, context } = event.detail;
+  const { phase, message, source, issues, context } = event.detail;
+
+  // `message` is the same one-liner the badge or panel shows, so the simplest
+  // useful listener is one line and needs no `switch` at all.
+  console.warn(`[protvista] ${phase}: ${message}`, source ?? '');
 
   if (phase === 'config') {
     const errors = issues.filter((i) => i.severity !== 'warning');
     if (errors.length) console.error('Config problem:', errors);
-    else console.warn('Config loaded with warnings:', issues);
   } else if (phase === 'track-fetch') {
-    console.warn(
-      `Track ${context.groupId}/${context.trackId} failed`,
-      context.status ? `(HTTP ${context.status})` : `(${context.errorKind})`,
-    );
+    console.warn(`Track ${context.groupId}/${context.trackId} failed`);
   }
 });
 ```
+
+### `detail`
+
+| Field | What it holds |
+| --- | --- |
+| `phase` | Which part of the pipeline failed — see the table below. |
+| `message` | One line, the same text the `⚠` badge or the alert panel shows. For a malformed file or a track that could not draw its data, this is what the decoder or the component threw, naming your file and the offending row. |
+| `source` | The URL or path the failure came from, when it had one. Absent for an inline, `custom` or `setTrackData()` source. |
+| `issues` | For `config`, the `ValidationIssue[]`; `[]` otherwise. |
+| `context` | Identifiers for the failure — see [The `context` object](#the-context-object). |
 
 ### Phases
 

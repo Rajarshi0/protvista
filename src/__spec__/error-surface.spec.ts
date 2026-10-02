@@ -34,6 +34,10 @@ const ISSUES = `.${CSS_PREFIX}-error-issues`;
 
 type ErrorEvent = CustomEvent<{
   phase: string;
+  /** The same one-liner the console and the visible surface carry. */
+  message: string;
+  /** The URL or path the failure came from, when it had one. */
+  source?: string;
   issues: ValidationIssue[];
   context: Record<string, unknown>;
 }>;
@@ -762,9 +766,13 @@ describe('parse / adapter failures on screen', () => {
     expect(detail).toContain('./hits.csv');
 
     // The event carries the identical text, so an embedder's listener sees
-    // exactly what the badge says.
+    // exactly what the badge says. Asserting the *event* matters: the internal
+    // map holding the same string is not a channel anyone outside can read.
     const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
     expect(tf).toBeDefined();
+    expect(tf.detail.message).toBe(detail);
+    expect(tf.detail.message).toMatch(BAD_ROW);
+    expect(tf.detail.source).toBe('./hits.csv');
     expect(tf.detail.context.errorKind).toBe('adapter');
     expect(tf.detail.context.trackId).toBe('hits');
     expect(el._trackErrors.get('g-hits')!.message).toBe(detail);
@@ -1929,6 +1937,69 @@ describe('a component rejecting its payload', () => {
     expect(events).toHaveLength(1);
     expect(el._trackErrors.has('nonexistent')).toBe(false);
     expect(el._mountError).toBeNull();
+  });
+});
+
+// ── what the event itself carries ─────────────────────────────────
+
+describe('the protvista-error payload', () => {
+  it('carries the message on every phase, matching the visible surface', async () => {
+    // One listener covers every flavour — so every flavour has to say what
+    // happened, not just which bucket it fell into. The badge, the panel, the
+    // console line and this field all come from one string.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad.json', { ok: false, status: 503 }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(
+      normConfig([urlTrack('bad', 'https://example.org/bad.json')]),
+      { openGroups: ['g'] }
+    );
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    const descId = target
+      .querySelector(BADGE)!
+      .getAttribute('aria-describedby')!;
+    expect(tf.detail.message).toBe(
+      target.querySelector(`[id="${descId}"]`)!.textContent
+    );
+    expect(tf.detail.source).toBe('https://example.org/bad.json');
+  });
+
+  it('carries the sequence-panel wording an embedder would otherwise re-invent', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/proteins/api/proteins/', { ok: false, status: 404 }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067X' });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await vi.waitFor(() => {
+      if (!events.some((e) => e.detail.phase === 'sequence')) {
+        throw new Error('no sequence event yet');
+      }
+    });
+
+    const seq = events.find((e) => e.detail.phase === 'sequence')!;
+    expect(seq.detail.message).toContain('P05067X');
+    expect(typeof seq.detail.message).toBe('string');
+  });
+
+  it('omits source when the failure had no URL or path to name', async () => {
+    // An adapter failure on an inline / custom source has nowhere to point.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const events: ErrorEvent[] = [];
+    const el = buildLoaded(normConfig([customTrack('t')]));
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    el.setTrackData('g', 'nope', [{ type: 'DOMAIN' }]);
+
+    expect(events[0].detail.message).toContain('setTrackData');
+    expect('source' in events[0].detail).toBe(false);
   });
 });
 

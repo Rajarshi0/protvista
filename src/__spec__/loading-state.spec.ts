@@ -179,6 +179,27 @@ describe('initial loading state', () => {
     expect(el.querySelector(LOADER)).toBeNull();
   });
 
+  it('does not spin forever for an element with no accession', async () => {
+    // Nothing was asked for, so there is nothing to wait on. `_init()` returns
+    // before `_loadData()` here, and `_loadData()` is the only other place
+    // `loading` is cleared — so the spinner that now covers the whole initial
+    // load would otherwise run forever on a misconfigured element, which reads
+    // as "working on it" rather than "no accession set".
+    stubHungFetch();
+    const el = mountEl({
+      viewerConfig: VALID_CONFIG,
+      // no `accession`
+    });
+
+    await settle(el);
+
+    expect(el.querySelector(LOADER)).toBeNull();
+    expect(el.querySelector('nightingale-manager')).toBeNull();
+    // Blank, which is what the troubleshooting page tells the reader a missing
+    // `accession` looks like. A spinner would contradict it.
+    expect(el.textContent?.trim()).toBe('');
+  });
+
   it('renders nothing while suspended, spinner included', async () => {
     stubHungFetch();
     const el = mountEl({
