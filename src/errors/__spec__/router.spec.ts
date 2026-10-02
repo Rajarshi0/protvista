@@ -248,21 +248,19 @@ describe('failure sites report rather than route', () => {
     expect(consoleCalls(sources['src/load-data.ts'])).toEqual([]);
   });
 
-  it('makes one routed console call in the component, plus the two render-time diagnostics', () => {
+  it('makes one routed console call in the component, plus the one render-time diagnostic', () => {
     const calls = consoleCalls(sources['src/protvista-uniprot.ts']);
     // The routed one, indexed by the channel the router returned…
     expect(calls).toContain('console[channels.console](');
     expect(sources['src/protvista-uniprot.ts']).toContain(
       'console[channels.console](report.message'
     );
-    // …and exactly two others, both of which fire from inside a render pass
-    // rather than from the load pipeline: a Nightingale component rejecting
-    // the payload it was handed (`_pushData`), and a registered-but-undrawn
-    // component. Routing those needs a badge that can be raised mid-render
-    // without re-entering the update cycle, which this refactor does not add —
-    // so they stay console-only, on purpose, and this count is the ratchet
-    // that stops a *new* unrouted site slipping in beside them.
-    expect(calls).toHaveLength(3);
+    // …and exactly one other: a Nightingale component rejecting the payload
+    // it was handed (`_assignComponentData`). That one fires from the data
+    // push inside `updated()`, and routing it needs a badge keyed by an
+    // origin the push walk does not resolve yet. The count is the ratchet
+    // that stops a *new* unrouted site slipping in beside it.
+    expect(calls).toHaveLength(2);
   });
 
   it('dispatches protvista-error from the seam only', () => {

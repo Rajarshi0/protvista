@@ -130,6 +130,7 @@ import {
 // `await import('./errors/format.js')` only when a config error actually
 // occurs, so the happy path never downloads it.
 import { ConfigValidationError, type ValidationIssue } from './schema/errors.js';
+import { RENDERABLE_COMPONENT_NAMES } from './schema/components.js';
 import type { ErrorPhase, ErrorContext } from './errors/report.js';
 import {
   routeFailure,
@@ -1092,20 +1093,56 @@ class ProtvistaUniprot extends LitElement {
    * `loadComponent` (which no-ops for already-defined tags). This is the
    * seam that lets a consumer-registered component reach
    * `customElements.define()` without the embedder calling it directly.
+   *
+   * Also the place a component the renderer cannot *draw* is reported.
+   * `getTrack()` can only emit the five tags `RENDERABLE_COMPONENT_NAMES`
+   * lists — lit-html has no dynamic tag names, so each one is a literal
+   * `case` — and a consumer component passes validation without gaining one
+   * (see "Register + load + render" in docs/architecture.md). That used to be
+   * a `console.warn` from inside the `switch`, which is the wrong place twice
+   * over: it fired once per render rather than once per config, and nothing
+   * reported from inside `render()` can route (raising a surface there
+   * re-enters the update cycle it is already in). The set is static, so the
+   * answer is known here, before anything draws.
    */
   private registerConfigComponents(config: NormalizedConfig) {
-    const names = new Set<string>();
+    // Name → the rows that reference it, so the report can say where to look.
+    const names = new Map<string, string[]>();
+    const note = (name: string, rowId: string) => {
+      const rows = names.get(name);
+      if (rows) rows.push(rowId);
+      else names.set(name, [rowId]);
+    };
     for (const row of config.rows) {
-      names.add(row.component);
-      for (const track of row.tracks) names.add(track.component);
+      note(row.component, row.id);
+      for (const track of row.tracks) note(track.component, row.id);
     }
-    for (const name of names) {
+    for (const [name, rows] of names) {
       const ctor = this.registry.getComponent(name);
       if (ctor) loadComponent(name, ctor);
       // A missing ctor means a config referenced a component name with no
       // registered constructor. Validation (unknown-component) catches
       // this before mount, so reaching here is unexpected — leave the tag
       // undefined rather than throwing mid-render.
+
+      if (RENDERABLE_COMPONENT_NAMES.has(name as KnownComponentName)) continue;
+      // A config-phase warning: the config is legal and loads, but these rows
+      // will draw nothing, which is not something an author can see.
+      // A row that names the component on both itself and its tracks is still
+      // one row — dedupe before counting, or the wording says "rows 'MINE'".
+      const rowIds = [...new Set(rows)];
+      const where = rowIds.map((r) => `'${r}'`).join(', ');
+      this._report({
+        severity: 'warning',
+        phase: 'config',
+        scope: 'viewer',
+        consoleLevel: 'warn',
+        message:
+          `[protvista-uniprot] No renderer for component '${name}' ` +
+          `(row${rowIds.length === 1 ? '' : 's'} ${where}). Custom components ` +
+          `are defined and validated but not yet drawn — ` +
+          `${rowIds.length === 1 ? 'the row renders' : 'those rows render'} empty.`,
+      });
     }
   }
 
@@ -4089,17 +4126,13 @@ class ProtvistaUniprot extends LitElement {
           </nightingale-sequence-heatmap>
         `;
       default:
-        // Reached when a component is registered and validated but has
-        // no `case` here — the current gap for consumer components (see
-        // "Register + load + render" in docs/architecture.md). Name the
-        // component and the row: validation deliberately accepts these
-        // now, so this warning is the only signal the author gets that
-        // the row rendered empty.
-        console.warn(
-          `[protvista-uniprot] No renderer for component '${component}'` +
-            `${id ? ` (row '${id}')` : ''}. Custom components are defined ` +
-            `and validated but not yet drawn — the row renders empty.`
-        );
+        // Reached when a component is registered and validated but has no
+        // `case` here — the current gap for consumer components (see
+        // "Register + load + render" in docs/architecture.md). Draw nothing,
+        // and say nothing from here: `registerConfigComponents` has already
+        // reported it once for the whole config, through the router. A report
+        // from inside `render()` could only reach the console anyway, and
+        // would repeat on every pass.
         break;
     }
   }
