@@ -260,10 +260,14 @@ originally sketched here:
   file wrapped as `{ "features": [...] }` then rendered as a track that
   loaded and was empty, with no badge; it now reaches the track's `⚠` badge
   like any other malformed file (#282).
-- Each element is validated and pared down to the canonical
-  `FeatureRecord` shape. The start coordinate is read from `start` **or**
-  `begin` (UniProt convention) and normalised to `start`; `start` wins
-  when both are present. `description` / `score` are optional.
+- Each element's canonical fields are validated; every other key is
+  preserved (#283), except the blocked names (`tooltipContent`,
+  `locations`, `residuesToHighlight`, `Object.prototype` names), which are
+  dropped with a `track-data` warning. `color` / `shape` / `fill` /
+  `opacity` are type-checked render fields. The start coordinate is read
+  from `start` **or** `begin` (UniProt convention) and normalised to
+  `start`; `start` wins when both are present, and `begin` is not copied.
+  `description` / `score` are optional.
 - Any malformed record **throws** an `Error` naming the 0-based array
   index and the field, e.g.
   `features-json: record 2, field "start": expected a number, got "abc"`.

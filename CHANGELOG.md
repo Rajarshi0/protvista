@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Added: per-feature colour, shape and custom tooltip fields from your own files
+
+Feature records from your own CSV, TSV or JSON file now keep every column
+(or key) beyond `type`, `start`, `end`, `description` and `score`, just as
+records written inline always did. A file and the same records written
+inline now render the same way.
+
+- A `color`, `shape`, `fill` or `opacity` column styles that one feature,
+  ahead of the track's `rendering:`, so `DOMAIN` rows can be blue and
+  `BINDING` rows red in one track. A blank cell falls back to the track's
+  setting. `opacity` must be a number from 0 to 1.
+- Any other column (`pmid`, `gene`, `url`, …) is kept as written, so a
+  `dataTooltip` can show it as `{% $pmid %}` or `path: pmid`.
+- A new Markdoc tag, `{% link href=$url %}text{% /link %}` (or
+  `{% link href=$url /%}`), turns a URL field into a tooltip link. Only
+  `http(s):`, `mailto:` and root-relative URLs become links; anything else
+  renders as plain text.
+- `tooltipContent`, `locations`, `residuesToHighlight` and names JavaScript
+  reserves (`toString`, `__proto__`, …) cannot come from a file (or from
+  inline text read with `format:`) and are dropped. Structured inline
+  records and `setTrackData()` arrays may still set them.
+- Two new `track-data` warnings on the `protvista-error` event, with
+  `detail.issues[0].code` `data-field-ignored` (a dropped column) or
+  `unpaintable-color` (a `color` / `fill` the canvas cannot paint, which
+  would otherwise draw that feature in the previous feature's colour). Like
+  the coordinate warning, they reach the event, the console and the
+  playground, never the row's `⚠` badge or the panel.
+- BED files are unchanged: their columns are positional.
+
+Behaviour changes for tracks with no `kind` (which use the automatic
+tooltip): extra scalar columns from a file now appear in it, as they already
+did for inline records; and `fill` / `opacity` no longer appear as tooltip
+rows for any source, joining `color` / `shape`.
+
+See [Load your own data](https://ebi-webcomponents.github.io/protvista/your-data#style-and-annotate-each-feature-from-your-file)
+and [`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled).
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

@@ -371,7 +371,8 @@ interface TrackConfig {
    *         label: Description
    *
    *   // Markdoc template — plain Markdoc syntax with `{% $field %}`
-   *   // variable interpolation. No domain-specific tags; rich /
+   *   // variable interpolation, plus a `{% link href=$field %}…{% /link %}`
+   *   // tag for field-valued links. No domain-specific tags; rich /
    *   // interactive / stateful tooltips are a consumer concern (listen
    *   // for the Nightingale `change` event, mount your own UI, set
    *   // `notooltip` on the element to suppress the built-in popover).
@@ -902,8 +903,28 @@ silently breaks author-authored tooltips — an author who adds a `gene` column
 to see it on hover is doing the expected thing, not an unexpected one. A
 delimited cell is preserved as the **string** it was: unknown columns are
 carried through uncoerced, which keeps them useful without guessing a type.
-This was a behaviour change for the JSON feature decoder, which previously
-kept exactly its five documented fields and dropped the rest.
+This was a behaviour change for the feature decoders (JSON and CSV/TSV),
+which previously kept exactly their five documented fields and dropped the
+rest; feature records now conform (#283). Two groups of names are the
+exception for feature records:
+
+- **Render fields** — `color`, `shape`, `fill` (strings) and `opacity` (a
+  number from 0 to 1). Nightingale reads them per record ahead of the track's
+  `rendering:`, so they are trimmed and type-checked rather than preserved as
+  written: a blank cell or JSON `null` leaves the field off (the track's
+  `rendering:` still applies), a delimited `opacity` is coerced, and a wrong
+  type or out-of-range `opacity` is a row/field error. A `color` / `fill` a
+  browser will not paint is kept but reported as a `track-data` warning
+  (`unpaintable-color`).
+- **Blocked names** — `tooltipContent`, `locations`, `residuesToHighlight`
+  and every name on `Object.prototype` (`__proto__`, `toString`, …) are
+  dropped from decoded data (a file, or inline text read with `format:`) and
+  reported as a `track-data` warning (`data-field-ignored`). Structured inline
+  records and `setTrackData()` arrays bypass the decoder and may still set
+  them. An empty header name is dropped silently.
+
+Point and variation records still ignore extra fields (see the `point`
+rules above): a known gap, left for a follow-up.
 
 Preserved fields are therefore *not* warned about — that would fire on every
 correct config. What is worth reporting is a **near miss**: an unrecognised
@@ -1574,6 +1595,7 @@ The `features` track fetches `https://api.example.org/mouse/v2024.12/features/P0
 | A bring-your-own **CSV/TSV** file has a malformed header or row (a missing/duplicate required column, a non-numeric coordinate, or a ragged row) | The decoder throws a descriptive error naming the author's own file, the reading applied to it, the offending row (by 1-based line number, header = line 1) and — where meaningful — the column: e.g. `./hits.csv (parsed as CSV): row 3, column "start": expected a number, got "abc"`, `./hits.csv (parsed as CSV): missing required header column "end"`, or `./hits.csv (parsed as CSV): row 4 is ragged — expected 4 columns, got 3`. The loader's per-track `try/catch` catches the throw, emits a developer `console.warn` (so the author can find and fix the file), and renders **that one track empty**; the rest of the viewer renders normally. Because a semantically-malformed file still fetches as valid *text*, this does **not** currently raise the fetch-level ⚠ badge / `protvista-error` surface — promoting adapter throws to track errors is a follow-up. |
 | A bring-your-own **JSON** file has a malformed record (not an array, an element that isn't an object, a missing/non-string `type`, a non-numeric `start`/`begin`/`end`, or a present-but-wrong-typed `description`/`score`) | The decoder throws a descriptive error naming the file, the offending 0-based array index and — where meaningful — the field: e.g. `./hits.json (parsed as JSON): record 2, field "start": expected a number, got string`, `./hits.json (parsed as JSON): record 0, field "type": expected a string, got number`, or `./hits.json (parsed as JSON): record 1 is not an object (got string)`. A top-level body that isn't an array is treated more leniently — a `console.warn` and an empty track, not a throw. Otherwise the same per-track `try/catch` / `console.warn` / empty-track / no-⚠-badge behavior as CSV/TSV applies. |
 | A bring-your-own **BED** file has a malformed line (fewer than 3 tab-separated columns, a non-numeric coordinate/score, or an inverted `chromEnd < chromStart` interval) | The `bed` adapter throws a descriptive error naming the offending line by 1-based physical line number and the BED column: e.g. `./regions.bed (parsed as BED): line 3: non-numeric start coordinate "abc" (BED column 2).`, `./regions.bed (parsed as BED): line 1: expected at least 3 tab-separated columns (chrom, start, end), got 2.`, or `./regions.bed (parsed as BED): line 1: end (4) is before start (5) (BED columns 2–3).`. Blank lines and `track` / `browser` / `#` comment lines are skipped, not errors; a legal **zero-length** feature (`chromStart == chromEnd`, an insertion point) is kept and rendered as a single-base point (`start == end`) rather than treated as inverted. Handled exactly like the CSV/TSV case above: the loader's per-track `try/catch` logs a `console.warn` and renders **that one track empty** while the rest of the viewer renders normally; it does not (yet) raise the fetch-level ⚠ badge / `protvista-error` surface. |
+| A bring-your-own **CSV/TSV/JSON** feature file carries extra columns — `color`, a `pmid`, or a `tooltipContent` column | Every extra column is kept on the record for `dataTooltip` (a delimited cell as the string it was; `''` when blank). `color` / `shape` / `fill` / `opacity` style that one feature ahead of the track's `rendering:` (left off when blank; a bad `opacity` fails the track). `tooltipContent`, `locations`, `residuesToHighlight` and `Object.prototype` names are dropped; that, and any `color` / `fill` a browser will not paint (kept), is reported once per track per load as a `protvista-error` with `phase: 'track-data'`, `severity: 'warning'` and issue code `data-field-ignored` / `unpaintable-color`, plus a `[protvista] …` console line. No ⚠ badge and no panel, even under `strict`: the track renders as written. |
 | A `data:` string shorthand is a file path with an **unrecognised extension** (e.g. `./notes.gff`)                                   | Not a known generic format, so it falls through to the sources-key rule: config validation fails with `"Unknown source key: './notes.gff' in track <groupId>/<trackId>. Known sources: ..."`. Use a hosted URL, a supported extension (`.csv` / `.tsv` / `.json` / `.bed`), or the object form with an explicit `format:`.                                                                                                                                                                                    |
 | `kind` (semantic) value is not in the semantic-kind vocabulary and is not registered                                              | Config validation fails: `"Unknown semantic kind: '<value>' in track <groupId>/<trackId>. Valid values: .... Register custom kinds with registerSemanticKind()."`.                                                                                                                                                                                                                                                                                                                      |
 | A track has no `kind`, no `component`, and the parent group has no `component`                                                    | Config validation fails: `"Track <groupId>/<trackId> has no 'kind' or 'component'. Set a semantic 'kind' (e.g. 'features') or provide 'component' explicitly."`.                                                                                                                                                                                                                                                                                                                        |

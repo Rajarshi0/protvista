@@ -34,6 +34,14 @@ A `features` track draws a list of **feature records**. Each record has:
 | `end` | yes | 1-based end position (inclusive), a whole number no less than `start`. |
 | `description` | no | Free text shown on hover/click. |
 | `score` | no | A number, typically 0–1, for quality or confidence. |
+| `color` | no | This feature's colour — any CSS colour (`#1f77b4`, `steelblue`, `rgb(…)`). Wins over the track's `rendering.color`. |
+| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. |
+| `fill` | no | This feature's fill colour, when it should differ from `color`. |
+| `opacity` | no | A number from 0 to 1 (default 0.9). |
+
+Any other column is kept on the record for `dataTooltip` — see
+[Style and annotate each feature from your file](#style-and-annotate-each-feature-from-your-file).
+BED files carry only the first five fields.
 
 A machine-readable version is published as
 [`feature-record.schema.json`](https://ebi-webcomponents.github.io/protvista/schema/v1/feature-record.schema.json).
@@ -141,6 +149,80 @@ BED has no type column, so every record gets `type: BED`. That isn't one of
 the [recognised types](/protvista/type-and-shape-vocabulary), so without the
 `rendering` block above every region draws as a black rectangle.
 
+## Style and annotate each feature from your file
+
+Add a `color` column and each feature is painted on its own, so `DOMAIN` rows
+can be blue and `BINDING` rows red in the same track. Add any other column —
+a reference, a gene name, a link — and a [`dataTooltip`](/protvista/data-tooltip)
+can show it:
+
+```yaml
+accession: P05067
+rows:
+  - id: MY_LAB
+    label: My lab
+    tracks:
+      - id: hits
+        label: Styled hits
+        kind: features
+        data: ./hits.csv
+        rendering:
+          color: '#7f7f7f'
+        dataTooltip:
+          kind: markdown
+          template: |
+            **{% $description %}** ({% $type %}, {% $start %}–{% $end %})
+
+            PMID {% $pmid %} · {% link href=$url %}PubMed{% /link %}
+```
+
+```csv
+type,start,end,description,color,pmid,url
+DOMAIN,18,189,E1 domain,#1f77b4,12345678,https://pubmed.ncbi.nlm.nih.gov/12345678/
+BINDING,132,140,Predicted heparin-binding site,#d62728,23456789,https://pubmed.ncbi.nlm.nih.gov/23456789/
+REGION,290,340,Acidic-rich linker region,,,
+```
+
+(The PubMed IDs are placeholders.) [`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled)
+is a runnable version.
+
+How it works:
+
+- **Which colour wins.** A feature's own `color` / `shape` wins over the
+  track's `rendering:`, which wins over the default for its `type`. A blank
+  cell leaves the field off, so the `REGION` row above is drawn in the track's
+  grey. The same goes for `fill` and `opacity`.
+- **Colours must be valid CSS colours.** The canvas cannot paint a typo like
+  `bleu` or `#catFace`, and draws that feature in the *previous* feature's
+  colour instead. The viewer keeps the value but reports a `track-data`
+  warning naming it (in the console, on the
+  [`protvista-error` event](/protvista/troubleshooting), and in the
+  playground). The check doesn't know every modern CSS colour, so `oklch(…)`
+  also warns, though it paints fine.
+- **`opacity` must be a number from 0 to 1.** Anything else fails the track,
+  naming the row.
+- **Every other column is kept as written**, as text — a blank cell is an
+  empty string — so a template can use it as `{% $pmid %}` and a `fields` list
+  as `path: pmid`. `{% link href=$url %}…{% /link %}` turns a URL column into a
+  link; a row whose URL is empty, or not an `http(s):` / `mailto:` / `/…` URL,
+  shows the text without one. Name columns like identifiers (`gene_name`,
+  `p-value`): a template cannot reference a name with a space in it, a
+  `fields` path cannot reach one with a dot, and `$ctx` is reserved for the
+  tooltip context.
+- **A few names cannot come from a file.** `tooltipContent`, `locations`,
+  `residuesToHighlight`, and names JavaScript reserves (`toString`,
+  `constructor`, `__proto__`, …) are dropped from CSV/TSV/JSON files and from
+  inline text read with `format:`, with a `track-data` warning naming them.
+  Records written straight into the config with `from: inline` (and
+  `setTrackData()` arrays) are trusted and may still set them.
+- **JSON files work the same way**: `color`, `shape` and `fill` must be
+  strings and `opacity` a number, and any other key is kept as it is, nested
+  objects included.
+- **BED files can't carry any of this.** Their columns are positional; use the
+  track's `rendering:` instead.
+
+Column names are matched exactly: `Color` is just another column, not a colour.
+
 ## Your data next to public data
 
 Files and URLs mix freely. Here a live UniProt track sits above your own file:
@@ -192,7 +274,9 @@ rows:
 every feature in the `binding_sites` track — see
 [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
 the full set, and for how this replaces `BINDING`'s own default colour and
-shape.
+shape. A record's own `color` / `shape` (say `{ type: BINDING, start: 45, end:
+52, color: '#2e86c1' }`) wins over `rendering` for that one feature, exactly as
+a `color` column does in a file.
 
 ## A line graph of your own values
 
@@ -252,7 +336,7 @@ position,value
 60,905
 ```
 
-Columns may be in either order, extra columns are ignored, and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind` — a bare `data: ./x.csv` on a track with no `kind` means feature records instead.
+Columns may be in either order, extra columns are ignored (graph points have no per-point tooltip to show them in, unlike feature records), and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind` — a bare `data: ./x.csv` on a track with no `kind` means feature records instead.
 
 `kind: variant-counts` and `kind: rna-editing-counts` read the same
 `position,value` records, so a count you computed yourself renders on the same

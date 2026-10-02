@@ -41,6 +41,7 @@ here surfaces immediately rather than silently:
 | [`linegraph/`](./linegraph) | `kind: linegraph` — a bring-your-own line graph from inline `{ position, value }` records, y-axis fitted to the data |
 | [`linegraph-csv/`](./linegraph-csv) | The same line graph from a CSV file — the `.csv` extension supplies the encoding, `kind: linegraph` the records |
 | [`csv/`](./csv) | Bring-your-own CSV file as a **single standalone track** (one `rows:` entry, no group wrapper) — feature records, read as CSV from the extension |
+| [`csv-styled/`](./csv-styled) | Per-feature colours and custom tooltip columns from your own CSV — a `color` column overrides the track's `rendering.color`, and a `dataTooltip` shows the extra `ref` / `url` columns with a `{% link %}` |
 | [`tsv/`](./tsv) | Bring-your-own TSV file — the same records as `csv/`, tab-separated |
 | [`json/`](./json) | A live **UniProt** API track next to a bring-your-own JSON file — same kind on both, different sources |
 | [`bed/`](./bed) | Bring-your-own BED file — the one format that fixes its own records (feature records only) |

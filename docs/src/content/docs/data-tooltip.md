@@ -4,7 +4,7 @@ title: Authoring dataTooltip
 
 `dataTooltip` controls the per-datapoint tooltip shown when a user clicks a feature on a track. It has three authoring forms, listed here from least to most expressive. Pick the simplest one that works — the rendering pipeline is the same for all three.
 
-All three forms run through the same renderer: every field value is HTML-escaped at the leaf, link `href`s are routed through a scheme allowlist (`http:`, `https:`, `mailto:`, and relative URL forms; `javascript:` and `data:` are dropped), and rich / interactive tooltips are not a config concern. If you need a custom React panel, evidence badges, taxonomy lookups, or any other stateful UI, listen for the Nightingale `change` event on the element and mount your own overlay, setting the `notooltip` attribute on `<protvista-uniprot>` to suppress the built-in popover.
+All three forms run through the same renderer: every field value is HTML-escaped at the leaf, link `href`s are routed through a scheme allowlist (`http:`, `https:`, `mailto:`, and root-relative forms such as `/…`, `#…` and `?…`; `javascript:`, `data:` and bare relative paths are dropped), and rich / interactive tooltips are not a config concern. If you need a custom React panel, evidence badges, taxonomy lookups, or any other stateful UI, listen for the Nightingale `change` event on the element and mount your own overlay, setting the `notooltip` attribute on `<protvista-uniprot>` to suppress the built-in popover.
 
 When a track has no `dataTooltip` at all, the resolver falls back to a per-kind default if one exists, and otherwise synthesizes a compact Markdoc tooltip from adapted payload fields such as `type`, `description`, position, variant details, significance, score, xrefs, evidences, and remaining scalar fields. Configs that don't author a tooltip therefore still get a useful safety-net tooltip out of the box.
 
@@ -62,6 +62,23 @@ tracks:
         **Position:** {% $begin %}–{% $end %}
         {% if $score %}**Score:** {% $score %}{% /if %}
 ```
+
+## Links from a field
+
+Markdoc cannot put a variable into an ordinary link's destination, so a field that holds a URL — a `url` column in your own file, say — becomes a link with the `{% link %}` tag:
+
+```yaml
+dataTooltip:
+  kind: markdown
+  template: |
+    PMID {% $pmid %}: {% link href=$url %}read on PubMed{% /link %}
+```
+
+The self-closing form, `{% link href=$url /%}`, uses the URL itself as the link text. The URL goes through the same allowlist as every other link: only an absolute `http:` / `https:` / `mailto:` URL or a root-relative one (`/…`, `#…`, `?…`) becomes a link. Anything else — `javascript:`, a bare relative path like `docs/x.html`, or a feature whose `url` is empty or missing — renders the text alone, with no link. Links open in the same tab.
+
+## Fields from your own file
+
+Any column of your own CSV or TSV file, or any key of your JSON records, is in scope as `$column` in a template and as a `path` in a `fields` list — not only the five documented feature fields. See [Style and annotate each feature from your file](/protvista/your-data#style-and-annotate-each-feature-from-your-file). Name columns like identifiers (`gene_name`, `p-value`): a template cannot reference a name with a space in it, a `fields` path cannot reach one with a dot in it, and `$ctx` always means the tooltip context, never a column called `ctx`.
 
 ## When to leave `dataTooltip` off
 
