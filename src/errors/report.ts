@@ -14,13 +14,17 @@
  * The stable set of error phases carried on the `protvista-error`
  * event's `detail.phase`. Embedders listen once and `switch` on this.
  *
- * Four phases emit today:
+ * Five phases emit today:
  *   - `config`          — config validation / parse failure (mount panel),
  *                         or a config that loaded with warnings (event only;
  *                         each issue carries `severity: 'warning'`)
  *   - `sequence`        — no usable sequence for the accession (mount panel)
  *   - `track-fetch`     — a track's URL returned HTTP 4xx/5xx (opt-in badge)
  *   - `set-track-data`  — misuse of the `setTrackData()` escape hatch
+ *   - `track-data`      — an authored track's coordinates fall outside the
+ *                         loaded sequence (event only; the issue carries
+ *                         `code: 'coordinate-out-of-range'` and
+ *                         `severity: 'warning'`)
  *
  * Two are reserved for surfaces that don't exist in the codebase yet;
  * they are declared here so the vocabulary is stable and so that when
@@ -36,6 +40,7 @@ export type ErrorPhase =
   | 'sequence'
   | 'track-fetch'
   | 'set-track-data'
+  | 'track-data'
   | 'transform-calculate'
   | 'tooltip-field-miss';
 
