@@ -26,6 +26,10 @@ bench/results/
 # Evidence written by `pnpm screenshots:check` when an image has drifted
 screenshot-drift/
 
+# Notes for the GitHub release, written per release and passed to
+# `gh release create --notes-file` (see RELEASING.md); CHANGELOG.md is the record
+/RELEASE_NOTES.md
+
 # Python bytecode caches (scripts/)
 __pycache__/
 *.py[cod]
