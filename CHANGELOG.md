@@ -46,6 +46,28 @@ rows for any source, joining `color` / `shape`.
 See [Load your own data](https://ebi-webcomponents.github.io/protvista/your-data#style-and-annotate-each-feature-from-your-file)
 and [`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled).
 
+### Added: a warning for `dataTooltip` fields no record carries
+
+A field a tooltip names that a record lacks still renders as nothing, but
+when **no** record on a track carries it — usually a typo or a column your
+file names differently — the viewer now says so, once per track each time
+the data loads:
+
+```
+[protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
+```
+
+The same finding fires a `protvista-error` event with
+`phase: 'tooltip-field-miss'` (no longer reserved), `severity: 'warning'`,
+one issue with `code: 'tooltip-field-miss'`, and the names in
+`context.fields`; the playground lists it as a warning. It never puts a `⚠`
+badge on the row or raises the alert panel, even under `strict`: the track
+renders as written. Only a `dataTooltip` you author is checked — per-kind
+defaults, the automatic tooltip and graph tracks never warn — and a field
+that is present but empty is not missing. Correctly authored configs see no
+change, and tooltip HTML is unchanged. See
+[When a field is missing](https://ebi-webcomponents.github.io/protvista/data-tooltip#when-a-field-is-missing).
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

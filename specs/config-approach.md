@@ -391,7 +391,9 @@ interface TrackConfig {
    *
    * Interpolated field values are HTML-escaped before they enter the
    * Markdoc render, so a malicious adapter payload cannot smuggle
-   * raw HTML into a tooltip. Missing fields render as empty strings.
+   * raw HTML into a tooltip. Missing fields render as empty strings;
+   * a field no record on the track carries is reported once per track
+   * per load as a `tooltip-field-miss` warning.
    */
   dataTooltip?: string | AuthoredTooltipSpec;
 
@@ -1170,7 +1172,7 @@ type ProtvistaErrorPhase =
   | 'track-fetch'         // a track's URL failed (network / HTTP 5xx / unparseable)
   | 'set-track-data'      // misuse of the setTrackData() escape hatch
   | 'transform-calculate' // a `calculate` expression threw (see transform-engine.md)
-  | 'tooltip-field-miss'; // a dataTooltip template referenced a missing field
+  | 'tooltip-field-miss'; // an authored dataTooltip names a field no record on the track carries
 
 interface ProtvistaErrorDetail {
   phase: ProtvistaErrorPhase;
@@ -1184,6 +1186,7 @@ interface ProtvistaErrorDetail {
     url?: string;
     status?: number;                            // http failures only
     errorKind?: 'network' | 'http' | 'parse';   // track-fetch: how it failed
+    fields?: string[];                          // tooltip-field-miss: the unknown fields, in template order
   };
 }
 
@@ -1199,10 +1202,13 @@ element.addEventListener('protvista-error', (e: CustomEvent<ProtvistaErrorDetail
 
 The `phase` vocabulary intentionally aligns with the
 `ValidationIssueCode` taxonomy where the two overlap, so consumers switch
-on one stable set of strings. `transform-calculate` and
-`tooltip-field-miss` are reserved for the transform engine and the
-tooltip field-miss warning respectively; when those features land they
-emit through the same event seam.
+on one stable set of strings. `transform-calculate` is reserved for the
+transform engine; when it lands it emits through the same event seam.
+`tooltip-field-miss` is emitted: an authored `dataTooltip` references a
+field no record on the track carries. It is a warning (event and console,
+never a badge or the panel, even under `strict`), and its single issue
+carries `code: 'tooltip-field-miss'`, `severity: 'warning'` and the track as
+its `path`.
 
 A track's data fetch can fail three ways. The viewer draws one line —
 **broken** (surface it) vs **missing** (hide it) — because the goal is to
@@ -1603,7 +1609,7 @@ The `features` track fetches `https://api.example.org/mouse/v2024.12/features/P0
 | A `data:` string shorthand is a file path with an **unrecognised extension** (e.g. `./notes.gff`)                                   | Not a known generic format, so it falls through to the sources-key rule: config validation fails with `"Unknown source key: './notes.gff' in track <groupId>/<trackId>. Known sources: ..."`. Use a hosted URL, a supported extension (`.csv` / `.tsv` / `.json` / `.bed`), or the object form with an explicit `format:`.                                                                                                                                                                                    |
 | `kind` (semantic) value is not in the semantic-kind vocabulary and is not registered                                              | Config validation fails: `"Unknown semantic kind: '<value>' in track <groupId>/<trackId>. Valid values: .... Register custom kinds with registerSemanticKind()."`.                                                                                                                                                                                                                                                                                                                      |
 | A track has no `kind`, no `component`, and the parent group has no `component`                                                    | Config validation fails: `"Track <groupId>/<trackId> has no 'kind' or 'component'. Set a semantic 'kind' (e.g. 'features') or provide 'component' explicitly."`.                                                                                                                                                                                                                                                                                                                        |
-| A `dataTooltip` template references a field that does not exist on the adapter's output                                           | That placeholder renders as an empty string. The viewer does not fail.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| A `dataTooltip` template references a field that does not exist on the adapter's output                                           | That placeholder renders as an empty string (a `fields` row drops out). After the track's data loads, a single summary `console.warn` (`[protvista-uniprot] Track <groupId>/<trackId>: dataTooltip references unknown fields: …`) lists every field absent from all of the track's records, and a `tooltip-field-miss` `protvista-error` (`severity: 'warning'`) fires. Never per data point; the viewer does not fail. |
 | A `dataTooltip` template contains `<script>` or other dangerous HTML                                                              | For `kind: fields` and `kind: markdown`: all interpolated data from `{% $field %}` placeholders is HTML-escaped before rendering. Scripts and other raw markup are dropped. URL allowlist: absolute `http:`, `https:` and `mailto:` URLs and URLs starting with `/`, `#` or `?` are allowed (a protocol-relative `//host/…` one is an off-site link); `javascript:`, `data:` and bare relative paths are refused. A refused URL in a Markdown link collapses to `href=""`, and `{% link href=$field %}` renders its text with no `<a>`. Consumer-owned tooltips (`change`-event pattern + `notooltip` on the element) are outside this trust envelope — the consumer is responsible for its own escaping.                                                                                                                                                         |
 | `colorScale.theme` references a name that is not built-in or registered                                                           | Config validation fails: `"Unknown colorScale theme: '<name>'. Registered themes: ..."`.                                                                                                                                                                                                                                                                                                                                                                                                |
 | `colorScale` has neither `theme` nor `stops`                                                                                      | Config validation fails: `"colorScale must specify either 'theme' or 'stops' ..."`.                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -1704,6 +1710,7 @@ The grant deliverable (P1 — the config schema) has no external cross-project d
 - [x] Explicit `component` on a track or `adapter` on a data source override the semantic-kind resolution.
 - [x] `filterUI: "nightingale-filter"` attaches the variant filter widget.
 - [x] `dataTooltip` accepts the three authoring forms — shorthand string, `kind: fields`, and `kind: markdown` — and renders correctly for each data point on the track. Markdown is rendered via `@markdoc/markdoc`; `{% $field %}` placeholders reference fields on the adapter's output and are HTML-escaped before substitution.
+- [x] Missing field references in `dataTooltip` render as empty strings and emit one summary warning per track, not per data point (`resolve.spec.ts`, `pipeline.spec.ts`, `error-surface.spec.ts`).
 - [x] YAML configs load and validate equivalently to JSON configs. A round-trip (JSON → YAML → JSON) on the default config is lossless.
 - [x] Adapter names follow the `<source>-<format>` convention. A config author can tell at a glance which adapter is tied to which API. Every remaining adapter is a provider transform; bring-your-own-data files need none.
 - [x] Built-in themes `alphafold-ramp` and `alphamissense-ramp` are defined once, used by default in `alphafold-confidence` / `alphamissense-pathogenicity` semantic kinds, and available to any track via `colorScale.theme`.
