@@ -130,6 +130,11 @@ import {
 // occurs, so the happy path never downloads it.
 import { ConfigValidationError, type ValidationIssue } from './schema/errors.js';
 import type { ErrorPhase, ErrorContext } from './errors/report.js';
+import {
+  findOutOfRange,
+  formatOutOfRangeWarning,
+  type TrackCoordinates,
+} from './schema/adapters/coordinates.js';
 import type { FormattedError } from './errors/format.js';
 
 // Performance marks emitted at three lifecycle transitions:
@@ -428,6 +433,25 @@ class ProtvistaUniprot extends LitElement {
 
   /** Group ids whose *every* track failed (drives badge wording). */
   private _groupErrors: Set<string> = new Set();
+
+  /**
+   * The accession `this.sequence` was fetched for. An accession change
+   * re-runs `_init()` without clearing `sequence`, so the new protein's
+   * track data can land while the old protein's sequence is still stored;
+   * the coordinate check must not run against it.
+   */
+  private _sequenceAccession: string | undefined;
+
+  /**
+   * Authored tracks' decoded coordinates still waiting for the
+   * sequence-bounds check, keyed by `${groupId}-${trackId}`, with the
+   * accession their batch loaded. Filled by `_loadData` and drained by
+   * `_checkCoordinates`, so each track is checked once per data load.
+   */
+  private _pendingCoordinateChecks: Map<
+    string,
+    { accession: string; coordinates: TrackCoordinates }
+  > = new Map();
 
   /**
    * Derived error sets, recomputed once per render (in
@@ -1097,64 +1121,69 @@ class ProtvistaUniprot extends LitElement {
       Omit<TrackFetchError, 'groupId' | 'trackId'>
     >();
 
-    const { rawData, data, hasData, trackUrls } = await loadProtvistaData(
-      accession,
-      this.config,
-      // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
-      // errors are swallowed with a warning, leaving a null in the
-      // per-URL slot. `AbortError` thrown by a later `_loadData()`
-      // re-entry is recognised and silently returned as `null` so it
-      // doesn't pollute the console.
-      async (url, responseType) => {
-        // Three distinct failure modes are recorded so the badge / event
-        // can tell "couldn't reach the server" from "server said 500"
-        // from "unparseable body". Each still returns `null` into the
-        // per-URL slot (legacy swallow-and-continue). `AbortError` from a
-        // superseding `_loadData()` re-entry is silently ignored.
-        let response: Response;
-        try {
-          response = await fetch(url, { signal });
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          console.warn(`Failed to fetch from ${url}:`, error);
-          fetchErrors.set(url, { url, kind: 'network' });
-          return null;
-        }
-        if (!response.ok) {
-          console.warn(`HTTP error status: ${response.status} at ${url}`);
-          fetchErrors.set(url, { url, kind: 'http', status: response.status });
-          return null;
-        }
-        // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
-        // everything else — JSON files included — is parsed as JSON.
-        // `response.text()` does not reject on content, so the parse-failure
-        // branch below only guards the JSON path.
-        if (responseType === 'text') {
+    const { rawData, data, hasData, trackUrls, trackCoordinates } =
+      await loadProtvistaData(
+        accession,
+        this.config,
+        // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
+        // errors are swallowed with a warning, leaving a null in the
+        // per-URL slot. `AbortError` thrown by a later `_loadData()`
+        // re-entry is recognised and silently returned as `null` so it
+        // doesn't pollute the console.
+        async (url, responseType) => {
+          // Three distinct failure modes are recorded so the badge / event
+          // can tell "couldn't reach the server" from "server said 500"
+          // from "unparseable body". Each still returns `null` into the
+          // per-URL slot (legacy swallow-and-continue). `AbortError` from a
+          // superseding `_loadData()` re-entry is silently ignored.
+          let response: Response;
           try {
-            return await response.text();
+            response = await fetch(url, { signal });
           } catch (error) {
             if (isAbortError(error)) return null;
-            console.warn(`Failed to read text from ${url}:`, error);
+            console.warn(`Failed to fetch from ${url}:`, error);
+            fetchErrors.set(url, { url, kind: 'network' });
+            return null;
+          }
+          if (!response.ok) {
+            console.warn(`HTTP error status: ${response.status} at ${url}`);
+            fetchErrors.set(url, {
+              url,
+              kind: 'http',
+              status: response.status,
+            });
+            return null;
+          }
+          // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
+          // everything else — JSON files included — is parsed as JSON.
+          // `response.text()` does not reject on content, so the parse-failure
+          // branch below only guards the JSON path.
+          if (responseType === 'text') {
+            try {
+              return await response.text();
+            } catch (error) {
+              if (isAbortError(error)) return null;
+              console.warn(`Failed to read text from ${url}:`, error);
+              fetchErrors.set(url, { url, kind: 'parse' });
+              return null;
+            }
+          }
+          try {
+            return await response.json();
+          } catch (error) {
+            if (isAbortError(error)) return null;
+            console.warn(`Failed to parse JSON from ${url}:`, error);
             fetchErrors.set(url, { url, kind: 'parse' });
             return null;
           }
-        }
-        try {
-          return await response.json();
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          console.warn(`Failed to parse JSON from ${url}:`, error);
-          fetchErrors.set(url, { url, kind: 'parse' });
-          return null;
-        }
-      },
-      // Resolve adapter functions by name through the registry — the same
-      // source of truth config validation consults, so a consumer's
-      // `registerAdapter()` adapter both validates and runs.
-      (name) => this.registry.getAdapter(name),
-      this.customTrackData,
-      only ? { only, previousData: this.data } : undefined
-    );
+        },
+        // Resolve adapter functions by name through the registry — the same
+        // source of truth config validation consults, so a consumer's
+        // `registerAdapter()` adapter both validates and runs.
+        (name) => this.registry.getAdapter(name),
+        this.customTrackData,
+        only ? { only, previousData: this.data } : undefined
+      );
 
     // If a newer load started while we were awaiting, drop the result
     // on the floor — the newer call owns subsequent state writes.
@@ -1215,6 +1244,13 @@ class ProtvistaUniprot extends LitElement {
       if (!(key in data)) delete merged[key];
     }
 
+    // Queue this batch's authored tracks for the sequence-bounds check,
+    // replacing any unchecked entry a reloaded track left behind.
+    for (const key of reloadedKeys) this._pendingCoordinateChecks.delete(key);
+    for (const [key, coordinates] of Object.entries(trackCoordinates)) {
+      this._pendingCoordinateChecks.set(key, { accession, coordinates });
+    }
+
     // Recompute each reloaded group's aggregate from the LIVE merged
     // per-track values rather than the loader's snapshot-derived
     // `data[groupId]`. Two concurrent targeted retries on different tracks
@@ -1236,6 +1272,7 @@ class ProtvistaUniprot extends LitElement {
       );
     }
     this.data = merged;
+    this._checkCoordinates();
 
     // The variation filter's pristine baseline now rides along in
     // `data` under `${groupId}-${trackId}${UNFILTERED_SUFFIX}` for any
@@ -1301,6 +1338,68 @@ class ProtvistaUniprot extends LitElement {
       if (!Array.isArray(p.variants)) continue;
       if (typeof p.sequence === 'string' && p.sequence !== '') continue;
       p.sequence = this.sequence;
+    }
+  }
+
+  /**
+   * Run the sequence-bounds check for every authored track that is waiting
+   * for one, and report a `track-data` warning for each track with rows
+   * below 1 or past the last residue.
+   *
+   * The sequence and a track's data come from independent fetches and can
+   * land in either order, so this runs after each: a track is checked only
+   * once both are present for the current accession. If no usable sequence
+   * loads, nothing runs — the `sequence` phase already reports that. Each
+   * pending entry is drained when checked, so a re-render never re-emits;
+   * a reload queues the track again.
+   *
+   * The warning never touches rendering: the track already holds its data
+   * as authored. It stays off the mount panel even under `strict`, as
+   * config warnings do.
+   */
+  private _checkCoordinates() {
+    const sequence = this.sequence;
+    if (!sequence || !this.config) return;
+    for (const group of this.config.rows) {
+      for (const track of group.tracks) {
+        const key = `${group.id}-${track.id}`;
+        const pending = this._pendingCoordinateChecks.get(key);
+        if (!pending) continue;
+        if (
+          pending.accession !== this._sequenceAccession ||
+          pending.accession !== this.accession
+        ) {
+          continue;
+        }
+        this._pendingCoordinateChecks.delete(key);
+        const { coordinates } = pending;
+        const found = findOutOfRange(coordinates.rows, sequence.length);
+        if (!found) continue;
+        const message = formatOutOfRangeWarning(
+          coordinates,
+          pending.accession,
+          sequence.length,
+          found
+        );
+        this.reportError('track-data', {
+          consoleLevel: 'warn',
+          message: `[protvista-uniprot] ${message}`,
+          issues: [
+            {
+              path: group.standalone ? track.id : `${group.id}/${track.id}`,
+              message,
+              code: 'coordinate-out-of-range',
+              severity: 'warning',
+            },
+          ],
+          context: {
+            groupId: group.id,
+            trackId: track.id,
+            ...(coordinates.url !== undefined ? { url: coordinates.url } : {}),
+          },
+          skipPanel: true,
+        });
+      }
     }
   }
 
@@ -1640,12 +1739,15 @@ class ProtvistaUniprot extends LitElement {
     }
 
     if (!this.accession) return;
-    this.loadEntry(this.accession)
+    const requested = this.accession;
+    this.loadEntry(requested)
       .then((result) => {
         const seq = result.entry?.sequence?.sequence;
         if (typeof seq === 'string' && seq.length > 0) {
           this.sequence = seq;
+          this._sequenceAccession = requested;
           this.displayCoordinates = { start: 1, end: this.sequence.length };
+          this._checkCoordinates();
           // A now-valid accession clears any stale sequence-level panel
           // left over from a previous (bad-accession) attempt.
           if (this._mountError?.phase === 'sequence') {

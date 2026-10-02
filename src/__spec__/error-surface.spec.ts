@@ -55,6 +55,7 @@ type El = HTMLElement & {
   _loadData(only?: Set<string>): Promise<void>;
   setTrackData(groupId: string, trackId: string, data: unknown): void;
   render(): unknown;
+  requestUpdate(): void;
   updateComplete: Promise<boolean>;
 };
 
@@ -1412,6 +1413,184 @@ describe('setTrackData misuse', () => {
     el.setTrackData('g', 'ok', 42);
 
     expect(events.some((e) => e.detail.phase === 'set-track-data')).toBe(true);
+  });
+});
+
+// ── track-data coordinate warning ─────────────────────────────────
+
+describe('track-data coordinate warning', () => {
+  const HITS_CSV =
+    'type,start,end,description\nDOMAIN,1,10,a\nDOMAIN,5,812,b\nDOMAIN,0,20,c\n';
+  const EXPECTED =
+    "./hits.csv (parsed as CSV): 2 of 3 rows fall outside P05067 (770 residues); first: row 3, end 812. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.";
+  const CONFIG = {
+    rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data: './hits.csv' }] }],
+  };
+
+  type Res = { ok: boolean; status: number; json?: () => Promise<unknown> };
+
+  /**
+   * The entry (sequence) route returns a 770-residue protein unless
+   * `entry` overrides it; `hits.csv` returns `csv`; everything else is an
+   * empty 200.
+   */
+  function stubRoutes(
+    opts: { csv?: string; entry?: () => Promise<Res> } = {}
+  ) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.includes('/proteins/api/proteins/')) {
+          if (opts.entry) return (await opts.entry()) as unknown as Response;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ sequence: { sequence: 'A'.repeat(770) } }),
+          } as unknown as Response;
+        }
+        if (url.includes('hits.csv')) {
+          const csv = opts.csv ?? HITS_CSV;
+          return { ok: true, status: 200, text: async () => csv } as unknown as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      })
+    );
+  }
+
+  function mountCollecting(props: Partial<El>) {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const el = mountEl({ accession: 'P05067', ...props });
+    const events: ErrorEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+    const trackData = () => events.filter((e) => e.detail.phase === 'track-data');
+    return { el, events, trackData, warn };
+  }
+
+  it('fires phase:track-data with a coordinate-out-of-range warning for a CSV file', async () => {
+    stubRoutes();
+    const { el, trackData, warn } = mountCollecting({ viewerConfig: CONFIG });
+
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    const [ev] = trackData();
+    expect(ev.detail.issues).toEqual([
+      {
+        path: 'g/y',
+        code: 'coordinate-out-of-range',
+        severity: 'warning',
+        message: EXPECTED,
+      },
+    ]);
+    expect(ev.detail.context).toEqual({
+      accession: 'P05067',
+      groupId: 'g',
+      trackId: 'y',
+      url: './hits.csv',
+    });
+    expect(warn).toHaveBeenCalledWith(`[protvista-uniprot] ${EXPECTED}`);
+    expect(el._mountError).toBeNull();
+    // The track still renders every row as authored.
+    expect(el.data['g-y']).toHaveLength(3);
+  });
+
+  it('checks when the data arrives before the sequence', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    stubRoutes({
+      entry: async () => {
+        await gate;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sequence: { sequence: 'A'.repeat(770) } }),
+        };
+      },
+    });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+    await vi.waitFor(() => expect(el.data['g-y']).toBeDefined());
+    expect(el.sequence).toBeUndefined();
+    expect(trackData()).toHaveLength(0);
+
+    release();
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+  });
+
+  it('stays off the mount panel under strict', async () => {
+    stubRoutes();
+    const { el, trackData } = mountCollecting({
+      viewerConfig: { ...CONFIG, strict: true },
+    });
+
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    await el.updateComplete;
+    expect(el._mountError).toBeNull();
+    expect(el.querySelector(PANEL)).toBeNull();
+  });
+
+  it('uses the bare track id as the path for a standalone row', async () => {
+    stubRoutes();
+    const { trackData } = mountCollecting({
+      viewerConfig: { rows: [{ id: 'solo', kind: 'features', data: './hits.csv' }] },
+    });
+
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    const [ev] = trackData();
+    expect(ev.detail.issues[0].path).toBe('solo');
+    expect(ev.detail.context.trackId).toBe('solo');
+  });
+
+  it('fires once per data load: not on re-render, again on reload', async () => {
+    stubRoutes();
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+    await vi.waitFor(() => expect(trackData()).toHaveLength(1));
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(trackData()).toHaveLength(1);
+
+    await el._loadData();
+    expect(trackData()).toHaveLength(2);
+  });
+
+  it('fires nothing when every row is within the sequence', async () => {
+    stubRoutes({ csv: 'type,start,end,description\nDOMAIN,1,10,a\n' });
+    const { el, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+    await vi.waitFor(() => {
+      expect(el.data['g-y']).toBeDefined();
+      expect(el.sequence).toBeDefined();
+    });
+    expect(trackData()).toHaveLength(0);
+  });
+
+  it('fires nothing when no sequence loads', async () => {
+    stubRoutes({
+      entry: async () => ({ ok: false, status: 404, json: async () => ({}) }),
+    });
+    const { el, events, trackData } = mountCollecting({ viewerConfig: CONFIG });
+
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.detail.phase === 'sequence')).toBe(true);
+      expect(el.data['g-y']).toBeDefined();
+    });
+    expect(trackData()).toHaveLength(0);
+  });
+
+  it('fires nothing for setTrackData() payloads', async () => {
+    stubRoutes();
+    const { el, trackData } = mountCollecting({
+      viewerConfig: {
+        rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data: { from: 'custom' } }] }],
+      },
+      customTrackData: { 'g-y': [{ type: 'DOMAIN', start: 0, end: 900 }] },
+    });
+
+    await vi.waitFor(() => {
+      expect(el.data['g-y']).toBeDefined();
+      expect(el.sequence).toBeDefined();
+    });
+    expect(trackData()).toHaveLength(0);
   });
 });
 
