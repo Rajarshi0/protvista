@@ -446,7 +446,10 @@ class ProtvistaUniprot extends LitElement {
    * Authored tracks' decoded coordinates still waiting for the
    * sequence-bounds check, keyed by `${groupId}-${trackId}`, with the
    * accession their batch loaded. Filled by `_loadData` and drained by
-   * `_checkCoordinates`, so each track is checked once per data load.
+   * `_checkCoordinates`, so each track is checked once per data load. A
+   * load drops the entries it supersedes when it starts — so a sequence
+   * landing mid-load can't check the data being replaced — and queues its
+   * own when it commits.
    */
   private _pendingCoordinateChecks: Map<
     string,
@@ -1073,6 +1076,13 @@ class ProtvistaUniprot extends LitElement {
    * path. Without it, every track is loaded.
    */
   async _loadData(only?: Set<string>) {
+    // Drop the coordinate checks this load supersedes (see
+    // `_pendingCoordinateChecks`).
+    if (only) {
+      for (const key of only) this._pendingCoordinateChecks.delete(key);
+    } else {
+      this._pendingCoordinateChecks.clear();
+    }
     const accession = this.accession;
     if (!accession || !this.config) {
       this.loading = false;
@@ -1844,6 +1854,7 @@ class ProtvistaUniprot extends LitElement {
     this._authoredConfig = undefined;
     this.data = Object.create(null);
     this.rawData = {};
+    this._pendingCoordinateChecks.clear();
     this.loading = true;
     await this._init();
   }
