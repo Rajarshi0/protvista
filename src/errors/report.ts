@@ -19,7 +19,10 @@
  *                         or a config that loaded with warnings (event only;
  *                         each issue carries `severity: 'warning'`)
  *   - `sequence`        — no usable sequence for the accession (mount panel)
- *   - `track-fetch`     — a track's URL returned HTTP 4xx/5xx (opt-in badge)
+ *   - `track-fetch`     — a track's data failed: its URL was unreachable
+ *                         or answered 5xx, a `from: file` path 404'd, its
+ *                         body was unparseable, or its decoder / adapter
+ *                         threw on the records (badge + event)
  *   - `set-track-data`  — misuse of the `setTrackData()` escape hatch
  *
  * Two are reserved for surfaces that don't exist in the codebase yet;
@@ -53,9 +56,13 @@ export interface ErrorContext {
   url?: string;
   status?: number;
   /**
-   * For `track-fetch`, how the fetch failed: `network` (unreachable —
+   * For `track-fetch`, how the track failed: `network` (unreachable —
    * blocked, offline, DNS, CORS, timeout), `http` (a 4xx/5xx response;
-   * `status` is set), or `parse` (a 2xx body that failed to parse).
+   * `status` is set), `parse` (a 2xx body that failed to parse), or
+   * `adapter` (the body arrived, but the decoder / shape validator / named
+   * adapter threw on it — a malformed file). An `adapter` failure's
+   * `message` is the thrown error's own text, which names the author's file
+   * and the offending row.
    */
-  errorKind?: 'network' | 'http' | 'parse';
+  errorKind?: 'network' | 'http' | 'parse' | 'adapter';
 }

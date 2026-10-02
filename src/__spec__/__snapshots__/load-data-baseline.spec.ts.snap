@@ -2998,6 +2998,7 @@ exports[`loadProtvistaData baseline (schema-driven default config) > produces a 
       "url": "https://www.ebi.ac.uk/proteins/api/variation/P05067",
     },
   },
+  "trackFailures": {},
   "trackUrls": {
     "ALPHAFOLD_CONFIDENCE-alphafold_confidence": [
       "https://alphafold.ebi.ac.uk/api/prediction/P05067",

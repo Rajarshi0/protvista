@@ -18,6 +18,11 @@
  *      looks up in the registry) and run it, apply the single-type filter
  *      if the track has one, and assign the result to
  *      `data[`${group}-${track}`]`.
+ *   3b. Record a track whose decode / adapter step threw in
+ *      `trackFailures` (keyed `${groupId}-${trackId}`) and leave its slot
+ *      empty, so one bad file degrades one track rather than the batch —
+ *      and so the caller can surface it instead of losing it to the
+ *      console.
  *   4. Assign a group-level aggregate at `data[group]`, built from the
  *      tracks that are neither `detailOnly` nor hidden
  *      (`aggregatePayload`) — which is their `.flat()` for most
@@ -126,6 +131,28 @@ type LoadResult = {
    * against it instead of re-deriving the substitution.
    */
   trackUrls: Record<string, string[]>;
+  /**
+   * Tracks whose *processing* threw, keyed by `${groupId}-${trackId}` —
+   * a decode/validate failure (`./hits.csv (parsed as CSV): row 3, column
+   * "start": expected a number, got "abc"`), an adapter that rejected the
+   * body it was handed, or an unregistered `adapter:` name.
+   *
+   * These are the failures that used to reach nothing but `console.warn`,
+   * so a malformed data file looked exactly like an absent one. Returned
+   * rather than surfaced here because the loader renders nothing: the
+   * component correlates them to rows and raises the badge / event (see
+   * `_collectTrackErrors`). `message` is the thrown `Error`'s own text,
+   * which already names the author's file and the offending row.
+   */
+  trackFailures: Record<string, TrackProcessingFailure>;
+};
+
+/** One track's processing failure. See `LoadResult.trackFailures`. */
+export type TrackProcessingFailure = {
+  /** The thrown error's message, verbatim — it names the file and the row. */
+  message: string;
+  /** The thrown value itself, for the developer channel. */
+  cause: unknown;
 };
 
 /**
@@ -435,6 +462,7 @@ export async function loadProtvistaData(
   );
 
   const data: Record<string, unknown> = {};
+  const trackFailures: Record<string, TrackProcessingFailure> = {};
 
   // Resolve an adapter by name through the injected registry resolver — the
   // loader itself holds no adapter map and knows no adapter names. A
@@ -620,6 +648,14 @@ export async function loadProtvistaData(
           assignTrackData(trackKey, annotated, track);
           return annotated;
         } catch (err) {
+          // Record rather than log: a malformed file is an authoring error
+          // the author has to be able to *see*, and the console is the one
+          // place they are not looking. The caller turns this into a badge
+          // and a `protvista-error` event.
+          trackFailures[trackKey] = {
+            message: err instanceof Error ? err.message : String(err),
+            cause: err,
+          };
           console.warn(
             `[protvista-uniprot] track ${groupId}/${trackId} failed to process; rendering it empty.`,
             err
@@ -638,5 +674,5 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
-  return { rawData, data, hasData, trackUrls };
+  return { rawData, data, hasData, trackUrls, trackFailures };
 }

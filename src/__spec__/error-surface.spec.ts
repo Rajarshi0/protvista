@@ -49,7 +49,7 @@ type El = HTMLElement & {
   hasData: boolean;
   openGroups: string[];
   _mountError: { phase: string; summary: string } | null;
-  _trackErrors: Map<string, { status: number; url: string }>;
+  _trackErrors: Map<string, { status: number; url: string; message?: string }>;
   _groupErrors: Set<string>;
   _init(): Promise<void>;
   _loadData(only?: Set<string>): Promise<void>;
@@ -79,6 +79,20 @@ const urlTrack = (id: string, url: string): NormalizedTrack => ({
   component: 'nightingale-track-canvas',
   rendering: {},
   data: [{ from: 'url', url, adapter: 'uniprot-features-json' }],
+});
+
+/**
+ * A `from: file` CSV track — what `data: "./hits.csv"` normalises to. The
+ * author wrote that path themselves and the extension states the encoding, so
+ * the loader runs the computed decode → validate pipeline over the body.
+ */
+const fileTrack = (id: string, url: string): NormalizedTrack => ({
+  id,
+  label: id,
+  kind: 'features',
+  component: 'nightingale-track-canvas',
+  rendering: {},
+  data: [{ from: 'file', url, format: 'csv', shape: 'feature' }],
 });
 
 const customTrack = (id: string): NormalizedTrack => ({
@@ -163,15 +177,26 @@ function renderTarget(el: El): HTMLElement {
   return target;
 }
 
-/** Route fetch by URL substring; default 200 with an empty body. */
+/**
+ * Route fetch by URL substring; default 200 with an empty body. `body` is
+ * served from both `.json()` and `.text()`, so one route covers a provider
+ * endpoint and a delimited `from: file` source alike.
+ */
 function stubFetch(
-  routes: Array<[match: string, res: { ok: boolean; status: number }]>
+  routes: Array<
+    [match: string, res: { ok: boolean; status: number; body?: unknown }]
+  >
 ) {
   const fn = vi.fn(async (input: unknown) => {
     const url = String(input);
     const hit = routes.find(([m]) => url.includes(m));
-    const { ok, status } = hit ? hit[1] : { ok: true, status: 200 };
-    return { ok, status, json: async () => ({}) } as unknown as Response;
+    const { ok, status, body } = hit ? hit[1] : { ok: true, status: 200, body: undefined };
+    return {
+      ok,
+      status,
+      json: async () => body ?? {},
+      text: async () => (typeof body === 'string' ? body : ''),
+    } as unknown as Response;
   });
   vi.stubGlobal('fetch', fn);
   return fn;
@@ -682,6 +707,207 @@ describe('per-track error badge', () => {
     expect(descId).not.toMatch(/\s/); // no whitespace → valid HTML id / token
     // The referenced description element actually exists under that id.
     expect(target.querySelector(`[id="${descId}"]`)).not.toBeNull();
+  });
+});
+
+// ── malformed data files and wrong file paths ─────────────────────
+
+describe('parse / adapter failures on screen', () => {
+  // A CSV whose `start` cell is not a number. The decoder names the author's
+  // own path and the offending row, which is the whole value of surfacing it.
+  const BAD_CSV = 'type,start,end,description\nDOMAIN,abc,25,Kinase domain';
+  const BAD_ROW = /row 2, column "start": expected a number, got "abc"/;
+
+  it('shows the row-named parse message as badge text and on the event', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    const detail = target.querySelector(`[id="${descId}"]`)!.textContent!;
+    expect(detail).toMatch(BAD_ROW);
+    expect(detail).toContain('./hits.csv');
+
+    // The event carries the identical text, so an embedder's listener sees
+    // exactly what the badge says.
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf).toBeDefined();
+    expect(tf.detail.context.errorKind).toBe('adapter');
+    expect(tf.detail.context.trackId).toBe('hits');
+    expect(el._trackErrors.get('g-hits')!.message).toBe(detail);
+  });
+
+  it('offers no Retry for a parse failure (re-running is deterministic)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(target.querySelector(BADGE)).not.toBeNull();
+    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
+  });
+
+  it('surfaces a parse failure on a standalone row too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);
+
+    const el = buildLoaded(standaloneConfig(fileTrack('hits', './hits.csv')));
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toMatch(
+      BAD_ROW
+    );
+  });
+
+  it('promotes a parse failure to the panel under strict', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);
+
+    const el = buildLoaded(
+      normConfig([fileTrack('hits', './hits.csv')], { strict: true })
+    );
+    await el._loadData();
+
+    expect(el._mountError?.phase).toBe('track-fetch');
+    expect(el._mountError?.summary).toMatch(BAD_ROW);
+  });
+
+  it('reads an empty file as no data, not as an error', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // A served-but-empty file parses to zero records. That is "nothing to
+    // draw", which the viewer already has a surface for — not a failure.
+    stubFetch([['/hits.csv', { ok: true, status: 200, body: '' }]]);
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(el._trackErrors.size).toBe(0);
+    expect(target.querySelector(BADGE)).toBeNull();
+    expect(target.querySelector('.protvista-no-results')).not.toBeNull();
+  });
+
+  it('lets a failed fetch explain itself rather than the adapter throw it caused', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // A 404 on a provider endpoint is deliberately silent. The empty body it
+    // leaves behind can make the adapter throw, and that throw must not
+    // resurrect the failure the classification just decided to swallow.
+    stubFetch([['/bad.json', { ok: false, status: 404 }]]);
+    const events: ErrorEvent[] = [];
+
+    const config = normConfig([urlTrack('bad', 'https://example.org/bad.json')]);
+    config.rows[0].tracks[0].data[0].adapter = 'nope-not-registered';
+    const el = buildLoaded(config, { openGroups: ['g'] });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+
+    expect(el._trackErrors.size).toBe(0);
+    expect(events.some((e) => e.detail.phase === 'track-fetch')).toBe(false);
+  });
+});
+
+describe('file-source 404s on screen', () => {
+  const PATH_HINT = /could not be found \(HTTP 404\) — check the path is relative to the page/;
+
+  it('names the path and the gotcha for a from: file 404', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: false, status: 404 }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    const detail = target.querySelector(`[id="${descId}"]`)!.textContent!;
+    expect(detail).toContain('./hits.csv');
+    expect(detail).toMatch(PATH_HINT);
+
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf.detail.context.status).toBe(404);
+    expect(tf.detail.context.errorKind).toBe('http');
+    // Deterministic: the path is wrong, and refetching it stays wrong.
+    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
+  });
+
+  it('keeps an API-source 404 silent (missing, not broken)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad.json', { ok: false, status: 404 }]]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(
+      normConfig([urlTrack('bad', 'https://example.org/bad.json')]),
+      { openGroups: ['g'] }
+    );
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(target.querySelector(BADGE)).toBeNull();
+    expect(events.some((e) => e.detail.phase === 'track-fetch')).toBe(false);
+  });
+
+  it('surfaces a from: file 404 on a standalone row too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: false, status: 404 }]]);
+
+    const el = buildLoaded(standaloneConfig(fileTrack('hits', './hits.csv')));
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toMatch(
+      PATH_HINT
+    );
+  });
+
+  it('still reports a from: file 5xx as a server failure, with Retry', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/hits.csv', { ok: false, status: 503 }]]);
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const descId = target
+      .querySelector(BADGE)!
+      .getAttribute('aria-describedby')!;
+    const detail = target.querySelector(`[id="${descId}"]`)!.textContent!;
+    expect(detail).toMatch(/HTTP 503/);
+    expect(detail).not.toMatch(PATH_HINT);
+    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).not.toBeNull();
   });
 });
 

@@ -30,6 +30,7 @@ import {
   loadProtvistaData,
   UNFILTERED_SUFFIX,
   type CustomTrackData,
+  type TrackProcessingFailure,
 } from './load-data.js';
 import {
   installClickTooltip,
@@ -160,15 +161,36 @@ const measureOnce = (name: string, start: string, end: string) => {
   }
 };
 
-/** How a track's data fetch failed. See `_trackErrors`. */
-type FetchErrorKind = 'network' | 'http' | 'parse';
+/**
+ * How a track's data failed. See `_trackErrors`.
+ *
+ * The first three are transport outcomes, classified by the fetch closure in
+ * `_loadData`. `adapter` is the processing outcome: the body arrived fine but
+ * the decoder, the shape validator or the named adapter threw on it — a
+ * malformed file, which is an authoring error and not a service one.
+ */
+type FetchErrorKind = 'network' | 'http' | 'parse' | 'adapter';
 
-/** A single track's fetch failure, correlated to its group/track. */
+/** A single track's data failure, correlated to its group/track. */
 type TrackFetchError = {
+  /** The URL that failed. Empty for an `adapter` failure on a non-URL source. */
   url: string;
   kind: FetchErrorKind;
   /** Present only for `kind: 'http'`. */
   status?: number;
+  /**
+   * The thrown error's own text, for `kind: 'adapter'` — it already names the
+   * author's file and the offending row, which is exactly what the badge
+   * should say. Absent for the transport kinds, whose wording is derived.
+   */
+  message?: string;
+  /**
+   * Whether the source was `from: file` — an author's own path rather than a
+   * provider endpoint. It is what makes a 404 *broken* (a wrong path) instead
+   * of *missing* (this entity has no data of this kind), and it selects the
+   * path-specific wording. See `_describeFetchError`.
+   */
+  fromFile?: boolean;
   groupId: string;
   trackId: string;
 };
@@ -1097,7 +1119,8 @@ class ProtvistaUniprot extends LitElement {
       Omit<TrackFetchError, 'groupId' | 'trackId'>
     >();
 
-    const { rawData, data, hasData, trackUrls } = await loadProtvistaData(
+    const { rawData, data, hasData, trackUrls, trackFailures } =
+      await loadProtvistaData(
       accession,
       this.config,
       // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
@@ -1162,10 +1185,11 @@ class ProtvistaUniprot extends LitElement {
 
     // Correlate the "broken" fetch failures back to the tracks/groups
     // that own them (4xx is skipped as "missing" — see
-    // `_collectTrackErrors`). Done after the abort guard so a stale batch
-    // can't clobber a newer batch's error maps. A targeted retry passes
-    // `only` so it updates just those tracks' error state.
-    this._collectTrackErrors(trackUrls, fetchErrors, only);
+    // `_collectTrackErrors`), and surface the tracks whose *processing*
+    // threw. Done after the abort guard so a stale batch can't clobber a
+    // newer batch's error maps. A targeted retry passes `only` so it updates
+    // just those tracks' error state.
+    this._collectTrackErrors(trackUrls, fetchErrors, trackFailures, only);
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.
@@ -2036,6 +2060,7 @@ class ProtvistaUniprot extends LitElement {
   private _collectTrackErrors(
     trackUrls: Record<string, string[]>,
     fetchErrors: Map<string, Omit<TrackFetchError, 'groupId' | 'trackId'>>,
+    trackFailures: Record<string, TrackProcessingFailure>,
     only?: Set<string>
   ): void {
     if (!this.config) {
@@ -2058,21 +2083,48 @@ class ProtvistaUniprot extends LitElement {
     // reload, so their errors (cleared above only for the reloaded set)
     // are left intact.
     //
-    // An HTTP 4xx is NOT a track error: for a per-entity endpoint it means
-    // "this accession has no data of this kind" (a 404 is the common
-    // case). We want the viewer to flag things that are *broken*, not
-    // *missing* — so a 4xx is treated exactly like an empty response: the
-    // track simply has no data and is hidden, with no badge, event, or
-    // panel. Only `network`, `parse`, and HTTP `5xx` are recorded.
+    // An HTTP 4xx from a *provider endpoint* is NOT a track error: it means
+    // "this accession has no data of this kind" (a 404 is the common case).
+    // We want the viewer to flag things that are *broken*, not *missing* — so
+    // that 4xx is treated exactly like an empty response: the track simply
+    // has no data and is hidden, with no badge, event, or panel.
+    //
+    // A `from: file` source is the opposite case. The author wrote that path
+    // themselves, and nothing publishes data at it conditionally — a 404 can
+    // only mean the path is wrong, which is the single most common authoring
+    // mistake (the path resolves against the *hosting page*, not the config
+    // file). The loader already knows which kind of source it is, so the
+    // classification reads it rather than discarding it.
     for (const group of this.config.rows) {
       for (const track of group.tracks) {
         const key = `${group.id}-${track.id}`;
+        const fromFile = track.data[0]?.from === 'file';
         const hit = (trackUrls[key] ?? []).find((u) => fetchErrors.has(u));
-        if (!hit) continue;
-        const err = fetchErrors.get(hit)!;
-        if (err.kind === 'http' && (err.status ?? 0) < 500) continue; // missing, not broken
+        if (hit) {
+          const err = fetchErrors.get(hit)!;
+          // missing, not broken — provider endpoints only
+          if (err.kind === 'http' && (err.status ?? 0) < 500 && !fromFile) {
+            continue;
+          }
+          this._trackErrors.set(key, {
+            ...err,
+            ...(fromFile ? { fromFile } : {}),
+            groupId: group.id,
+            trackId: track.id,
+          });
+          continue;
+        }
+        // A track whose *processing* threw: a malformed file, a body the
+        // adapter rejected, or an unregistered adapter name. Only reached
+        // when none of the track's fetches failed — when one did, that
+        // outcome is the explanation, and an adapter choking on the empty
+        // body left behind must not resurrect a deliberately-silent 4xx.
+        const failure = trackFailures[key];
+        if (!failure) continue;
         this._trackErrors.set(key, {
-          ...err,
+          url: trackUrls[key]?.[0] ?? '',
+          kind: 'adapter',
+          message: failure.message,
           groupId: group.id,
           trackId: track.id,
         });
@@ -2105,7 +2157,9 @@ class ProtvistaUniprot extends LitElement {
         context: {
           groupId: err.groupId,
           trackId: err.trackId,
-          url: err.url,
+          // An `adapter` failure on an inline / custom source has no URL to
+          // name, so the field is omitted rather than reported as `''`.
+          ...(err.url ? { url: err.url } : {}),
           errorKind: err.kind,
           ...(err.status !== undefined ? { status: err.status } : {}),
         },
@@ -2139,14 +2193,30 @@ class ProtvistaUniprot extends LitElement {
     this.requestUpdate();
   }
 
-  /** Human-readable one-liner for a track fetch failure. */
+  /**
+   * Human-readable one-liner for a track data failure — the badge's detail
+   * text, the `protvista-error` message, and the strict panel's summary, all
+   * from one place.
+   *
+   * An `adapter` failure says exactly what was thrown: the decoders already
+   * name the author's file and the offending row ("./hits.csv (parsed as
+   * CSV): row 3, column \"start\": expected a number, got \"abc\""), which is
+   * better than anything this method could synthesise. A `from: file` 4xx
+   * names the path and the gotcha behind it, because a wrong relative path is
+   * what it almost always is.
+   */
   private _describeFetchError(err: TrackFetchError): string {
     switch (err.kind) {
       case 'network':
         return `Couldn't reach ${err.url}`;
       case 'parse':
         return `Unparseable response from ${err.url}`;
+      case 'adapter':
+        return err.message ?? `Couldn't process the data for ${err.url}`;
       default:
+        if (err.fromFile && (err.status ?? 0) < 500) {
+          return `${err.url} could not be found (HTTP ${err.status}) — check the path is relative to the page.`;
+        }
         return `HTTP ${err.status} — ${err.url}`;
     }
   }
@@ -3528,11 +3598,12 @@ class ProtvistaUniprot extends LitElement {
   }
 
   /**
-   * Whether a fetch failure is worth retrying: transport problems
-   * (`network` — connectivity may return) and server errors (`http` 5xx —
-   * may be transient). A 4xx is deterministic (a 404 means the entity has
-   * no data of this kind) and a `parse` failure re-parses the same body,
-   * so neither offers a Retry.
+   * Whether a failure is worth retrying: transport problems (`network` —
+   * connectivity may return) and server errors (`http` 5xx — may be
+   * transient). Everything else is deterministic and gets no Retry: a 4xx
+   * (whether "no data of this kind" or a wrong `from: file` path), a `parse`
+   * failure that would re-parse the same body, and an `adapter` failure that
+   * would re-run the same code over the same records.
    */
   private _isRecoverable(err: TrackFetchError): boolean {
     return (
