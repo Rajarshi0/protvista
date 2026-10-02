@@ -50,6 +50,12 @@ type ProtvistaUniprotLike = HTMLElement & {
   hasData: boolean;
   setTrackData(groupId: string, trackId: string, data: unknown): void;
   _loadData(): Promise<void>;
+  _applyConfig(loaded: {
+    config: NormalizedConfig;
+    authored: unknown;
+    issues: unknown[];
+  }): void;
+  _mountError: { phase: string } | null;
   updateComplete: Promise<boolean>;
 };
 
@@ -204,21 +210,63 @@ describe('<protvista-uniprot>.setTrackData() — component-level integration', (
     );
   });
 
-  it('pre-mount calls (no config yet) accumulate without warning', () => {
+  it('pre-mount calls (no config yet) queue without warning, then apply', () => {
     // Skip the `config` assignment — emulates a consumer calling
     // `setTrackData` before `connectedCallback` fires `_init()`.
-    const el = document.createElement(
-      'protvista-uniprot'
-    ) as unknown as ProtvistaUniprotLike;
-    el.data = {};
-    el.customTrackData = {};
+    const el = unmountedElement();
 
     const injected = [{ type: 'X' }];
     el.setTrackData('GROUP', 'custom-track', injected);
 
-    // No warning was emitted; the map holds the injected value ready
-    // for the first `_loadData()` run.
+    // Nothing to validate against yet, so nothing is reported — or stored.
+    expect(warn).not.toHaveBeenCalled();
+    expect('GROUP-custom-track' in el.customTrackData).toBe(false);
+
+    // The config arrives: the call is validated and its data is ready for
+    // the first `_loadData()` run.
+    el._applyConfig({ config: buildConfig(), authored: {}, issues: [] });
     expect(warn).not.toHaveBeenCalled();
     expect(el.customTrackData['GROUP-custom-track']).toBe(injected);
   });
+
+  it('reports a pre-mount call naming a missing track once the config arrives', () => {
+    // Stashed blindly, a typo'd key used to be ignored by the loader with no
+    // report on any channel.
+    const el = unmountedElement();
+    const events: CustomEvent[] = [];
+    el.addEventListener('protvista-error', (e) => events.push(e as CustomEvent));
+
+    el.setTrackData('GROUP', 'custm-track', [{ type: 'X' }]);
+    el._applyConfig({ config: buildConfig(), authored: {}, issues: [] });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/'GROUP\/custm-track' not found in config/)
+    );
+    expect(events.map((e) => e.detail.phase)).toEqual(['set-track-data']);
+    expect('GROUP-custm-track' in el.customTrackData).toBe(false);
+  });
+
+  it('promotes a rejected pre-mount call under strict, as after mount', () => {
+    // `strict` lives on the config, so a rejection routed before the config
+    // loaded was always routed lax.
+    const el = unmountedElement();
+    el.setTrackData('GROUP', 'custom-track', null);
+    el._applyConfig({
+      config: { ...buildConfig(), strict: true },
+      authored: {},
+      issues: [],
+    });
+
+    expect(el._mountError?.phase).toBe('set-track-data');
+  });
 });
+
+/** An element with no config yet — the pre-mount state. */
+function unmountedElement(): ProtvistaUniprotLike {
+  const el = document.createElement(
+    'protvista-uniprot'
+  ) as unknown as ProtvistaUniprotLike;
+  el.data = {};
+  el.customTrackData = {};
+  return el;
+}

@@ -30,6 +30,7 @@ import {
   loadProtvistaData,
   UNFILTERED_SUFFIX,
   type CustomTrackData,
+  type TrackProcessingFailure,
 } from './load-data.js';
 import {
   installClickTooltip,
@@ -133,8 +134,17 @@ import {
 // formatter is *not* imported here — it is pulled in lazily via
 // `await import('./errors/format.js')` only when a config error actually
 // occurs, so the happy path never downloads it.
-import { ConfigValidationError, type ValidationIssue } from './schema/errors.js';
+import {
+  ConfigValidationError,
+  type ValidationIssue,
+} from './schema/errors.js';
+import { RENDERABLE_COMPONENT_NAMES } from './schema/components.js';
 import type { ErrorPhase, ErrorContext } from './errors/report.js';
+import {
+  routeFailure,
+  type FailureChannels,
+  type FailureReport,
+} from './errors/router.js';
 import type { FormattedError } from './errors/format.js';
 
 // Performance marks emitted at three lifecycle transitions:
@@ -165,18 +175,109 @@ const measureOnce = (name: string, start: string, end: string) => {
   }
 };
 
-/** How a track's data fetch failed. See `_trackErrors`. */
-type FetchErrorKind = 'network' | 'http' | 'parse';
+/**
+ * What the polite live region says while the element is loading. A named
+ * constant because `updated()` both sets it and tests for it when clearing —
+ * a literal in two places would silently stop clearing if one was reworded.
+ */
+const LOADING_ANNOUNCEMENT = 'Loading protein data…';
 
-/** A single track's fetch failure, correlated to its group/track. */
+/**
+ * How long the loading text waits after the live region is mounted. Assistive
+ * technology reads the accessibility tree once per rendered frame, so text set
+ * in the same task as the region's insertion arrives *with* the region and is
+ * usually not announced. A frame is not enough margin across engines and
+ * screen readers; a short delay is the common remedy, and well under the
+ * point where a quick load would never announce at all.
+ */
+const LIVE_REGION_SETTLE_MS = 100;
+
+/**
+ * How a track's data failed. See `_trackErrors`.
+ *
+ * The first three are transport outcomes, classified by the fetch closure in
+ * `_loadData`. `adapter` is the processing outcome: the body arrived fine but
+ * the decoder, the shape validator or the named adapter threw on it — a
+ * malformed file, which is an authoring error and not a service one.
+ * `render` is the last step: the payload was built, and the Nightingale
+ * element rejected it when handed over (see `_assignComponentData`).
+ */
+type FetchErrorKind = 'network' | 'http' | 'parse' | 'adapter' | 'render';
+
+/** A single track's data failure, correlated to its group/track. */
 type TrackFetchError = {
+  /** The URL that failed. Empty for an `adapter` failure on a non-URL source. */
   url: string;
   kind: FetchErrorKind;
   /** Present only for `kind: 'http'`. */
   status?: number;
+  /**
+   * The thrown error's own text. For `kind: 'adapter'` it already names the
+   * author's file and the offending row, which is exactly what the badge
+   * should say. For `kind: 'parse'` it is the parser's complaint (where in
+   * the body it gave up), appended to the derived wording. Absent for the
+   * other transport kinds, whose wording is derived.
+   */
+  message?: string;
+  /**
+   * The thrown value behind a `network` or `parse` failure, for the console
+   * line — the stack and the parser's position, which the derived wording
+   * leaves out.
+   */
+  cause?: unknown;
+  /**
+   * Whether the location is the author's own rather than a provider
+   * endpoint. For a transport failure that is any descriptor with a `format`
+   * (`isAuthoredSource`) or written as `from: file` — however it was written
+   * (`./hits.csv`, an absolute URL, `{ url: … }`, a file with an explicit
+   * `adapter:`), nothing publishes data at it conditionally, so it is what
+   * makes a 4xx *broken* (a wrong path or URL) instead of *missing* (this
+   * entity has no data of this kind). For an `adapter` failure it is only
+   * `isAuthoredSource`: it decides whether the decoder's own text, which names
+   * the file, can stand alone. See `_isRecoverable`.
+   */
+  authored?: boolean;
+  /**
+   * Whether the source was the `from: file` shorthand — a page-relative
+   * path. Selects the path-specific wording only; see `_describeFetchError`.
+   */
+  fromFile?: boolean;
+  /**
+   * For `kind: 'adapter'`: the loader's `TrackProcessingFailure.retryable` —
+   * a provider adapter's own throw, which may be transient.
+   */
+  retryable?: boolean;
   groupId: string;
-  trackId: string;
+  /**
+   * The track that failed, or `null` for the row's *aggregate* — the single
+   * payload a collapsed group draws all its tracks from. Only a `render`
+   * failure can be aggregate-scoped: the aggregate is built from per-track
+   * data that already loaded, so nothing upstream of the handover can fail
+   * on it alone.
+   */
+  trackId: string | null;
 };
+
+/** A track-less fetch failure, as the fetch closure in `_loadData` records it. */
+type UrlFetchError = Omit<TrackFetchError, 'groupId' | 'trackId'>;
+
+/** Every fetch failure among one track's URLs, in URL order. */
+const trackFetchFailures = (
+  urls: readonly string[] | undefined,
+  fetchErrors: ReadonlyMap<string, UrlFetchError>
+): UrlFetchError[] =>
+  (urls ?? []).flatMap((u) => {
+    const err = fetchErrors.get(u);
+    return err ? [err] : [];
+  });
+
+/**
+ * A provider endpoint answering 4xx: the entity has no data of this kind,
+ * which is an expected absence rather than a failure. Never true for an
+ * authored source, where the same status means the path or URL is wrong.
+ */
+const isExpectedAbsence = (err: UrlFetchError, authored: boolean): boolean =>
+  err.kind === 'http' && (err.status ?? 0) < 500 && !authored;
 
 /**
  * Outcome of the top-level sequence fetch (`loadEntry`). Either the parsed
@@ -185,8 +286,23 @@ type TrackFetchError = {
  * *broken* service (retryable) from a *missing* accession (a 4xx).
  */
 type EntryResult =
-  | { entry: { sequence?: { sequence?: string } } | undefined; error?: undefined }
-  | { entry?: undefined; error: { kind: FetchErrorKind; status?: number } };
+  | {
+      entry: { sequence?: { sequence?: string } } | undefined;
+      error?: undefined;
+    }
+  | {
+      entry?: undefined;
+      error: {
+        kind: FetchErrorKind;
+        status?: number;
+        /** The thrown value, for the reporter's console line. */
+        cause?: unknown;
+      };
+    };
+
+/** The Proteins API entry `loadEntry` reads the sequence from. */
+const entryUrl = (accession: string): string =>
+  `https://www.ebi.ac.uk/proteins/api/proteins/${accession}`;
 
 const isAbortError = (e: unknown): boolean =>
   (e as { name?: string } | null)?.name === 'AbortError';
@@ -300,6 +416,34 @@ class ProtvistaUniprot extends LitElement {
    * announcement only helps people who hear it.
    */
   private _movedKey: string | null = null;
+  /**
+   * Whether the initial-load announcement has been made for the load in
+   * flight. Latches so `updated()` — which runs for every reactive property —
+   * announces the wait once rather than on every cycle, and resets when the
+   * load settles so a later load (a `setConfig()`, a panel Retry) announces
+   * again.
+   */
+  private _loadAnnounced = false;
+  /** The pending loading announcement (see `LIVE_REGION_SETTLE_MS`). */
+  private _announceTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Whether `_init()`'s `loadEntry()` and its first `_loadData()` are still
+   * in flight. The sequence and the track data are fetched side by side, and
+   * the spinner must cover whichever finishes last — see `_settleLoading`.
+   */
+  private _sequencePending = false;
+  private _tracksPending = false;
+  /**
+   * `setTrackData()` calls made before the config loaded, in call order,
+   * waiting for `_applyConfig` to validate them (see `setTrackData`).
+   */
+  private _pendingTrackData: Array<{
+    groupId: string;
+    trackId: string;
+    data: unknown;
+  }> = [];
+  /** Bumped per `_init()` call; an older call's `loadEntry()` result is dropped. */
+  private _entryGeneration = 0;
   /** Timer clearing `_movedKey`; re-armed on each move. */
   private _movedTimer?: ReturnType<typeof setTimeout>;
   /**
@@ -454,6 +598,14 @@ class ProtvistaUniprot extends LitElement {
    * `_collectTrackErrors`). `status` is present only for `http`.
    */
   private _trackErrors: Map<string, TrackFetchError> = new Map();
+
+  /**
+   * The substituted URL(s) each track last fetched, keyed like
+   * `_trackErrors` — the loader's own `trackUrls`, kept so a failure found
+   * after the load (a component rejecting its payload) can still say where
+   * the data came from. A full load replaces it; a targeted one merges in.
+   */
+  private _trackUrls: Record<string, string[]> = {};
 
   /** Group ids whose *every* track failed (drives badge wording). */
   private _groupErrors: Set<string> = new Set();
@@ -949,12 +1101,15 @@ class ProtvistaUniprot extends LitElement {
     // though it had not been written.
     //
     // A dropped colour is announced rather than swallowed: `theme` is not
-    // schema-validated beyond "a non-empty string", so this warning is the
-    // only signal a typo (or a syntax this browser cannot parse) gets.
+    // schema-validated beyond "a non-empty string", so this report is the
+    // only signal a typo (or a syntax this browser cannot parse) gets. It
+    // routes as a config warning — the viewer loaded as written, minus one
+    // field — so it reaches the console and the `protvista-error` event, and
+    // never the panel. Same wording as before; one more channel.
     const resolve = (field: string, value: string): Rgb | null => {
       const resolved = resolveColor(value, this.ownerDocument);
       if (!resolved) {
-        console.warn(
+        this._reportThemeFieldIgnored(
           `Ignoring theme.${field}: "${value}" is not a colour that resolves in this browser.`
         );
       }
@@ -992,11 +1147,26 @@ class ProtvistaUniprot extends LitElement {
           theme.accentColor.trim()
         );
       } else {
-        console.warn(
+        this._reportThemeFieldIgnored(
           `Ignoring theme.accentColor: "${theme.accentColor}" is not a colour this browser accepts.`
         );
       }
     }
+  }
+
+  /**
+   * Report a `theme:` field dropped for being unresolvable. A config-phase
+   * warning scoped to the viewer: the config loaded, one field of it did not
+   * take effect, and there is nothing to retry.
+   */
+  private _reportThemeFieldIgnored(message: string): void {
+    this._report({
+      severity: 'warning',
+      phase: 'config',
+      scope: 'viewer',
+      consoleLevel: 'warn',
+      message,
+    });
   }
 
   /**
@@ -1054,20 +1224,56 @@ class ProtvistaUniprot extends LitElement {
    * `loadComponent` (which no-ops for already-defined tags). This is the
    * seam that lets a consumer-registered component reach
    * `customElements.define()` without the embedder calling it directly.
+   *
+   * Also the place a component the renderer cannot *draw* is reported.
+   * `getTrack()` can only emit the five tags `RENDERABLE_COMPONENT_NAMES`
+   * lists — lit-html has no dynamic tag names, so each one is a literal
+   * `case` — and a consumer component passes validation without gaining one
+   * (see "Register + load + render" in docs/architecture.md). That used to be
+   * a `console.warn` from inside the `switch`, which is the wrong place twice
+   * over: it fired once per render rather than once per config, and nothing
+   * reported from inside `render()` can route (raising a surface there
+   * re-enters the update cycle it is already in). The set is static, so the
+   * answer is known here, before anything draws.
    */
   private registerConfigComponents(config: NormalizedConfig) {
-    const names = new Set<string>();
+    // Name → the rows that reference it, so the report can say where to look.
+    const names = new Map<string, string[]>();
+    const note = (name: string, rowId: string) => {
+      const rows = names.get(name);
+      if (rows) rows.push(rowId);
+      else names.set(name, [rowId]);
+    };
     for (const row of config.rows) {
-      names.add(row.component);
-      for (const track of row.tracks) names.add(track.component);
+      note(row.component, row.id);
+      for (const track of row.tracks) note(track.component, row.id);
     }
-    for (const name of names) {
+    for (const [name, rows] of names) {
       const ctor = this.registry.getComponent(name);
       if (ctor) loadComponent(name, ctor);
       // A missing ctor means a config referenced a component name with no
       // registered constructor. Validation (unknown-component) catches
       // this before mount, so reaching here is unexpected — leave the tag
       // undefined rather than throwing mid-render.
+
+      if (RENDERABLE_COMPONENT_NAMES.has(name as KnownComponentName)) continue;
+      // A config-phase warning: the config is legal and loads, but these rows
+      // will draw nothing, which is not something an author can see.
+      // A row that names the component on both itself and its tracks is still
+      // one row — dedupe before counting, or the wording says "rows 'MINE'".
+      const rowIds = [...new Set(rows)];
+      const where = rowIds.map((r) => `'${r}'`).join(', ');
+      this._report({
+        severity: 'warning',
+        phase: 'config',
+        scope: 'viewer',
+        consoleLevel: 'warn',
+        message:
+          `[protvista-uniprot] No renderer for component '${name}' ` +
+          `(row${rowIds.length === 1 ? '' : 's'} ${where}). Custom components ` +
+          `are defined and validated but not yet drawn — ` +
+          `${rowIds.length === 1 ? 'the row renders' : 'those rows render'} empty.`,
+      });
     }
   }
 
@@ -1080,19 +1286,20 @@ class ProtvistaUniprot extends LitElement {
   async _loadData(only?: Set<string>) {
     const accession = this.accession;
     if (!accession || !this.config) {
+      this._tracksPending = false;
       this.loading = false;
       this.requestUpdate();
       return;
     }
 
-    // A targeted retry while a full load is in flight would abort that load
-    // (a full batch intersects everything) and reload only its own tracks,
-    // leaving the rest on the previous accession's or variables' data, and
-    // `_lastLoadVariables` would already claim values never committed, so
-    // no later `data-*` write would repair it. Promote it to a full load.
-    if (only && this._loadBatches.some((batch) => !batch.only)) {
-      only = undefined;
-    }
+    // A targeted Retry while a full load is in flight has nothing to add: the
+    // full load is already re-fetching those tracks and will update their
+    // badges when it lands. Superseding it instead would abort every *other*
+    // track's result with it — a `setTrackData()` payload included — leaving
+    // them stale (on the previous accession's or variables' data) until some
+    // later full load. Returning here also leaves `_lastLoadVariables` to the
+    // full load, which is the one that will commit it.
+    if (only && this._loadBatches.some((b) => !b.only)) return;
 
     // A full (re)load means a new protein or config, so the plain-text label
     // cache (keyed by accession+source) is stale — drop it, bounding growth to
@@ -1129,76 +1336,90 @@ class ProtvistaUniprot extends LitElement {
     this._loadBatches.push(batch);
     const { signal } = controller;
 
-    // Records HTTP 4xx/5xx fetch failures for this batch, keyed by the
-    // *substituted* URL the closure was handed — the same URLs the loader
-    // reports back in `trackUrls`, so `_collectTrackErrors` can correlate
-    // failures to tracks without re-deriving anything. The closure still
-    // logs to the console unconditionally (preserving legacy behaviour);
-    // this map is what feeds the user-facing badges and the
-    // `protvista-error` event.
+    // Records this batch's fetch failures, keyed by the *substituted* URL the
+    // closure was handed — the same URLs the loader reports back in
+    // `trackUrls`, so `_collectTrackErrors` can correlate failures to tracks
+    // without re-deriving anything.
+    //
+    // The closure classifies and returns; it does not log. A URL is not a
+    // failure site that knows anything worth saying: it cannot name the track
+    // that wanted the data, and whether a 404 here even *is* a failure depends
+    // on the source kind, which only the correlation pass can see. So the
+    // whole decision — including the console line — moves there, behind the
+    // routing table.
     const fetchErrors = new Map<
       string,
       Omit<TrackFetchError, 'groupId' | 'trackId'>
     >();
 
-    const { rawData, data, hasData, trackUrls } = await loadProtvistaData(
-      variables,
-      this.config,
-      // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
-      // errors are swallowed with a warning, leaving a null in the
-      // per-URL slot. `AbortError` thrown by a later `_loadData()`
-      // re-entry is recognised and silently returned as `null` so it
-      // doesn't pollute the console.
-      async (url, responseType) => {
-        // Three distinct failure modes are recorded so the badge / event
-        // can tell "couldn't reach the server" from "server said 500"
-        // from "unparseable body". Each still returns `null` into the
-        // per-URL slot (legacy swallow-and-continue). `AbortError` from a
-        // superseding `_loadData()` re-entry is silently ignored.
-        let response: Response;
-        try {
-          response = await fetch(url, { signal });
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          console.warn(`Failed to fetch from ${url}:`, error);
-          fetchErrors.set(url, { url, kind: 'network' });
-          return null;
-        }
-        if (!response.ok) {
-          console.warn(`HTTP error status: ${response.status} at ${url}`);
-          fetchErrors.set(url, { url, kind: 'http', status: response.status });
-          return null;
-        }
-        // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
-        // everything else — JSON files included — is parsed as JSON.
-        // `response.text()` does not reject on content, so the parse-failure
-        // branch below only guards the JSON path.
-        if (responseType === 'text') {
+    const { rawData, data, hasData, trackUrls, trackFailures, skipWarnings } =
+      await loadProtvistaData(
+        variables,
+        this.config,
+        // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
+        // errors are swallowed with a warning, leaving a null in the
+        // per-URL slot. `AbortError` thrown by a later `_loadData()`
+        // re-entry is recognised and silently returned as `null` so it
+        // doesn't pollute the console.
+        async (url, responseType) => {
+          // Three distinct failure modes are recorded so the badge / event
+          // can tell "couldn't reach the server" from "server said 500"
+          // from "unparseable body". Each still returns `null` into the
+          // per-URL slot (legacy swallow-and-continue). `AbortError` from a
+          // superseding `_loadData()` re-entry is silently ignored.
+          let response: Response;
           try {
-            return await response.text();
+            response = await fetch(url, { signal });
           } catch (error) {
             if (isAbortError(error)) return null;
-            console.warn(`Failed to read text from ${url}:`, error);
-            fetchErrors.set(url, { url, kind: 'parse' });
+            fetchErrors.set(url, { url, kind: 'network', cause: error });
             return null;
           }
-        }
-        try {
-          return await response.json();
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          console.warn(`Failed to parse JSON from ${url}:`, error);
-          fetchErrors.set(url, { url, kind: 'parse' });
-          return null;
-        }
-      },
-      // Resolve adapter functions by name through the registry — the same
-      // source of truth config validation consults, so a consumer's
-      // `registerAdapter()` adapter both validates and runs.
-      (name) => this.registry.getAdapter(name),
-      this.customTrackData,
-      only ? { only, previousData: this.data } : undefined
-    );
+          if (!response.ok) {
+            fetchErrors.set(url, {
+              url,
+              kind: 'http',
+              status: response.status,
+            });
+            return null;
+          }
+          // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
+          // everything else — JSON files included — is parsed as JSON.
+          // `response.text()` does not reject on content, so the parse-failure
+          // branch below only guards the JSON path.
+          if (responseType === 'text') {
+            try {
+              return await response.text();
+            } catch (error) {
+              if (isAbortError(error)) return null;
+              fetchErrors.set(url, { url, kind: 'parse', cause: error });
+              return null;
+            }
+          }
+          try {
+            return await response.json();
+          } catch (error) {
+            if (isAbortError(error)) return null;
+            // The parser's own text says where it gave up — on an author's
+            // malformed file, the one detail that makes it fixable.
+            fetchErrors.set(url, {
+              url,
+              kind: 'parse',
+              ...(error instanceof Error && error.message
+                ? { message: error.message }
+                : {}),
+              cause: error,
+            });
+            return null;
+          }
+        },
+        // Resolve adapter functions by name through the registry — the same
+        // source of truth config validation consults, so a consumer's
+        // `registerAdapter()` adapter both validates and runs.
+        (name) => this.registry.getAdapter(name),
+        this.customTrackData,
+        only ? { only, previousData: this.data } : undefined
+      );
 
     // If a newer load started while we were awaiting, drop the result
     // on the floor — the newer call owns subsequent state writes.
@@ -1206,16 +1427,34 @@ class ProtvistaUniprot extends LitElement {
 
     // Correlate the "broken" fetch failures back to the tracks/groups
     // that own them (4xx is skipped as "missing" — see
-    // `_collectTrackErrors`). Done after the abort guard so a stale batch
-    // can't clobber a newer batch's error maps. A targeted retry passes
-    // `only` so it updates just those tracks' error state.
-    this._collectTrackErrors(trackUrls, fetchErrors, only);
+    // `_collectTrackErrors`), and surface the tracks whose *processing*
+    // threw. Done after the abort guard so a stale batch can't clobber a
+    // newer batch's error maps. A targeted retry passes `only` so it updates
+    // just those tracks' error state.
+    this._trackUrls = only ? { ...this._trackUrls, ...trackUrls } : trackUrls;
+    this._collectTrackErrors(trackUrls, fetchErrors, trackFailures, only);
+
+    // A URL template left unfetched because a `{token}` had no usable value.
+    // Viewer-scoped: one template can feed several tracks, and the fix (a
+    // `variables:` entry or a `data-*` attribute) is not any one row's.
+    for (const message of skipWarnings) {
+      this._report({
+        severity: 'warning',
+        phase: 'track-fetch',
+        scope: 'viewer',
+        message,
+        consoleLevel: 'warn',
+      });
+    }
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.
     this.rawData = only ? { ...this.rawData, ...rawData } : rawData;
     const wasHasData = this.hasData;
-    this.hasData = this.hasData || hasData;
+    // A full load is a new accession or config, so it decides afresh: carried
+    // over, the previous entry's data would keep an all-missing one off the
+    // no-results message. A targeted retry only adds to what is there.
+    this.hasData = only ? this.hasData || hasData : hasData;
     // Fire the public protvista-event the moment data first becomes
     // available. (Previously this was hung off a `'load'` listener
     // that never fired.)
@@ -1251,9 +1490,7 @@ class ProtvistaUniprot extends LitElement {
     const reloadedKeys =
       only ??
       new Set(
-        this.config.rows.flatMap((g) =>
-          g.tracks.map((t) => `${g.id}-${t.id}`)
-        )
+        this.config.rows.flatMap((g) => g.tracks.map((t) => `${g.id}-${t.id}`))
       );
     for (const key of reloadedKeys) {
       if (!(key in data)) delete merged[key];
@@ -1292,7 +1529,8 @@ class ProtvistaUniprot extends LitElement {
     // reaching here means we still own our writes.
     this._loadBatches = this._loadBatches.filter((b) => b !== batch);
 
-    this.loading = false;
+    this._tracksPending = false;
+    this._settleLoading();
     markOnce('protvista:data-loaded');
     measureOnce(
       'protvista:fetch-and-parse',
@@ -1421,6 +1659,25 @@ class ProtvistaUniprot extends LitElement {
    *
    * Contained per element, the blast radius is the one track that is actually
    * wrong, and the message names it.
+   *
+   * The failure routes like any other (`error`, scoped to the row): a `⚠`
+   * badge, the `protvista-error` event, the console line, and the panel under
+   * `strict`. It used to be console-only, which made the advice it ends with
+   * — check the shape documented for the kind — reach nobody who was not
+   * already looking at a console, while the track rendered blank.
+   *
+   * Reporting from here is safe even though the push walk runs inside
+   * `updated()`: `_report` ends in a bare `requestUpdate()`, which produces no
+   * `changedProperties`, and the walk is gated on `data` / `config` /
+   * `sequence` / `openGroups` / `_customizeMode` appearing in them. So the
+   * extra cycle draws the badge without re-entering the push — no loop.
+   *
+   * A payload the element accepts clears a `render` failure recorded for the
+   * same key. The key does not always carry the same payload: a layout edit
+   * rebuilds a collapsed group's aggregate without the track that broke it,
+   * and a sibling's targeted Retry recomputes it. Without the clear, the row
+   * kept a `⚠` saying it could not draw while it drew correctly — and a
+   * `render` failure offers no Retry, so nothing else would ever lift it.
    */
   private _assignComponentData(
     element: NightingaleTrackCanvas,
@@ -1430,14 +1687,116 @@ class ProtvistaUniprot extends LitElement {
     try {
       element.data = payload as never;
     } catch (error) {
-      console.error(
-        `[protvista] track '${key}' could not render the data it was given ` +
-          `(${(error as Error)?.message ?? error}). The other tracks are ` +
-          `unaffected. If this track's data came from setTrackData(), check ` +
-          `it matches the record shape documented for its kind.`,
-        error
-      );
+      this._reportRenderFailure(key, error);
+      return;
     }
+    if (this._trackErrors.get(key)?.kind === 'render') {
+      this._trackErrors.delete(key);
+      this._recomputeErrorVisibility();
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * Record and route a Nightingale element rejecting its payload.
+   *
+   * The push walk hands over two shapes of key — a bare row id for a group's
+   * collapsed aggregate, and `${rowId}-${trackId}` for a track — so the origin
+   * is resolved against the config rather than split on `-`, which a row or
+   * track id may itself contain.
+   *
+   * Re-entrant by design: the walk re-runs whenever a group expands or data
+   * changes, and the same payload will not read any better the second time.
+   * So a failure already recorded for this key is left alone — the badge is
+   * up, and re-firing the event on every expand would be noise. A fresh
+   * `_loadData()` resets `_trackErrors`, so a reload reports again, and a
+   * different payload that reads fine clears it (`_assignComponentData`).
+   *
+   * That includes a failure recorded *upstream* of the handover. A track
+   * whose fetch failed hands its component whatever partial payload was left,
+   * and if that throws, the fetch failure is still the explanation — the
+   * same rule `_collectTrackErrors` applies to an adapter choking on an empty
+   * body. Overwriting it would swap a Retry that could fix the track for a
+   * render message that cannot.
+   */
+  private _reportRenderFailure(key: string, error: unknown): void {
+    if (this._trackErrors.has(key)) return;
+
+    // The badge and panel text; the console line adds the `[protvista]` tag
+    // the developer channel uses to say where a line came from.
+    const detail =
+      `track '${key}' could not render the data it was given ` +
+      `(${(error as Error)?.message ?? error}). The other tracks are ` +
+      `unaffected. If this track's data came from setTrackData(), check ` +
+      `it matches the record shape documented for its kind.`;
+    const message = `[protvista] ${detail}`;
+
+    const origin = this._resolveRowOrigin(key);
+    // A key matching no row means the push walk and the config disagree, which
+    // should not happen. There is then no row to badge, so claiming a
+    // track-scoped route would promise a surface that cannot appear — it
+    // routes viewer-scoped instead, reaching the console and the event without
+    // a visible surface. What it must not do is go unreported.
+    if (!origin) {
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'track-fetch',
+          scope: 'viewer',
+          message,
+          consoleLevel: 'error',
+        },
+        { consoleArgs: [error] }
+      );
+      return;
+    }
+
+    // Where the track's data came from, so the event names the file or URL
+    // whose payload could not be drawn. An aggregate key names no single
+    // track, and an inline / custom track fetched nothing — both have none.
+    const url = this._trackUrls[key]?.[0] ?? '';
+    const err: TrackFetchError = {
+      url,
+      kind: 'render',
+      message: detail,
+      groupId: origin.groupId,
+      trackId: origin.trackId,
+    };
+    this._trackErrors.set(key, err);
+    this._recomputeErrorVisibility();
+
+    const channels = this._report(this._trackFailureReport(key, err), {
+      context: {
+        groupId: origin.groupId,
+        ...(origin.trackId ? { trackId: origin.trackId } : {}),
+        ...(url ? { url } : {}),
+        errorKind: 'render',
+      },
+      consoleArgs: [error],
+      deferPanel: true,
+    });
+    // The panel is the aggregate over every failing track, not this one: a
+    // retryable 503 still outstanding elsewhere keeps its count and its Retry.
+    this._syncTrackPanel(channels.panel);
+  }
+
+  /**
+   * Which row (and track, when the key names one) a data-push key belongs to.
+   * `trackId: null` means the key named a row's collapsed aggregate.
+   */
+  private _resolveRowOrigin(
+    key: string
+  ): { groupId: string; trackId: string | null } | undefined {
+    const rows = this.config?.rows ?? [];
+    for (const row of rows) {
+      if (row.id === key) return { groupId: row.id, trackId: null };
+      for (const track of row.tracks) {
+        if (`${row.id}-${track.id}` === key) {
+          return { groupId: row.id, trackId: track.id };
+        }
+      }
+    }
+    return undefined;
   }
 
   async _loadDataInComponents() {
@@ -1558,6 +1917,9 @@ class ProtvistaUniprot extends LitElement {
     // DOM this cycle, avoiding focus landing on an unmounting node
     // (mirrors the popover controller's restore).
     const panelOpen = this._mountError !== null;
+    // Captured before `_panelWasOpen` is overwritten: the push gate below needs
+    // to know the panel closed on this cycle.
+    const panelClosed = !panelOpen && this._panelWasOpen;
     if (panelOpen && !this._panelWasOpen) {
       this.querySelector<HTMLElement>(`.${CSS_PREFIX}-error-panel`)?.focus({
         preventScroll: true,
@@ -1569,6 +1931,37 @@ class ProtvistaUniprot extends LitElement {
       this._prevFocus = null;
     }
     this._panelWasOpen = panelOpen;
+
+    // Announce the wait politely. A live region only announces a *change* to
+    // its contents, so the text cannot go in with the region — it would arrive
+    // already holding it, and most screen readers would stay silent. Nor is
+    // setting it here enough on its own: `updated()` runs in the same task as
+    // the render that inserted the (empty) region, so no frame — and no
+    // accessibility-tree update — happens in between. The text therefore goes
+    // in `LIVE_REGION_SETTLE_MS` later, as an update to a region assistive
+    // technology has already seen.
+    //
+    // The `_loadAnnounced` latch is what keeps it to once per load: `updated()`
+    // runs for every reactive property, and re-announcing on each would talk
+    // over the user. Clearing on completion leaves the region empty for the
+    // layout announcements that share it, and an empty string announces
+    // nothing.
+    //
+    // It latches only while the spinner — and so the region — is actually on
+    // screen. A `suspend`ed element or one showing the alert panel renders no
+    // region, and latching then would make the text arrive *with* the region
+    // once it mounted: the silent case above, with the latch blocking a retry.
+    const regionMounted = !this.suspend && this._mountError === null;
+    if (this.loading && regionMounted && !this._loadAnnounced) {
+      this._loadAnnounced = true;
+      this._announceTimer = setTimeout(() => {
+        if (this.loading) this._announce(LOADING_ANNOUNCEMENT);
+      }, LIVE_REGION_SETTLE_MS);
+    } else if (!this.loading && this._loadAnnounced) {
+      this._loadAnnounced = false;
+      clearTimeout(this._announceTimer);
+      if (this._announcement === LOADING_ANNOUNCEMENT) this._announce('');
+    }
 
     // First render with content — manager is in the DOM, not the loader.
     if (this.hasData && !this.loading) {
@@ -1651,12 +2044,18 @@ class ProtvistaUniprot extends LitElement {
     // stubs for rows that would otherwise not render), so Lit tears down and
     // rebuilds the row subtrees — including the Nightingale elements, which
     // come back empty unless their payload is pushed again on this tick.
+    //
+    // `panelClosed` is the same case once more: the alert panel replaces the
+    // whole viewer, so dismissing it mounts every row afresh — hidden and
+    // empty — while none of the properties above has changed. Without it a
+    // strict-mode Dismiss "revealed" a viewer with nothing in it.
     if (
       changedProperties.has('data') ||
       changedProperties.has('config') ||
       changedProperties.has('sequence') ||
       changedProperties.has('openGroups') ||
-      changedProperties.has('_customizeMode')
+      changedProperties.has('_customizeMode') ||
+      panelClosed
     ) {
       this._loadDataInComponents();
     }
@@ -1681,6 +2080,13 @@ class ProtvistaUniprot extends LitElement {
    * observe a real consumer mutating `viewerConfig` on every tick.
    */
   async _init() {
+    // A later `_init()` (an accession change, a panel Retry) supersedes this
+    // one's sequence fetch. Its result must then touch nothing: clearing
+    // `_sequencePending` would drop the spinner while the newer sequence is
+    // still on the wire, and a late failure would raise a panel naming the
+    // *new* accession, since `_reportSequenceFailure` reads `this.accession`.
+    // Taken before the first `await`, so it orders calls, not completions.
+    const generation = ++this._entryGeneration;
     if (!this.config) {
       try {
         const loaded = await this.resolveViewerConfig();
@@ -1695,13 +2101,21 @@ class ProtvistaUniprot extends LitElement {
         // each issue's `severity: 'warning'`.
         if (loaded.issues.length > 0) {
           const n = loaded.issues.length;
-          this.reportError('config', {
-            consoleLevel: 'warn',
-            message: `[protvista-uniprot] Config loaded with ${n} warning${n === 1 ? '' : 's'}.`,
-            consoleArgs: [loaded.issues.map((i) => `${i.path}: ${i.message}`)],
-            issues: loaded.issues,
-            skipPanel: true,
-          });
+          this._report(
+            {
+              severity: 'warning',
+              phase: 'config',
+              scope: 'viewer',
+              consoleLevel: 'warn',
+              message: `[protvista-uniprot] Config loaded with ${n} warning${n === 1 ? '' : 's'}.`,
+            },
+            {
+              consoleArgs: [
+                loaded.issues.map((i) => `${i.path}: ${i.message}`),
+              ],
+              issues: loaded.issues,
+            }
+          );
         }
       } catch (err) {
         // Validation / parse errors are surfaced on the console so
@@ -1710,19 +2124,20 @@ class ProtvistaUniprot extends LitElement {
         // reporter so the user-facing alert panel and the
         // `protvista-error` event fire too. A config failure is always a
         // mount-level failure — there is no config to render past.
-        const issues =
-          err instanceof ConfigValidationError ? err.issues : [];
+        const issues = err instanceof ConfigValidationError ? err.issues : [];
         const panelSummary = issues.length
           ? `Config validation failed (${issues.length} issue${issues.length === 1 ? '' : 's'})`
           : `Failed to load config: ${err instanceof Error ? err.message : String(err)}`;
-        this.reportError('config', {
-          consoleLevel: 'error',
-          message: '[protvista-uniprot] Failed to load config.',
-          consoleArgs: [err],
-          issues,
-          mountFailure: true,
-          panelSummary,
-        });
+        this._report(
+          {
+            severity: 'error',
+            phase: 'config',
+            scope: 'viewer',
+            consoleLevel: 'error',
+            message: '[protvista-uniprot] Failed to load config.',
+          },
+          { consoleArgs: [err], issues, panelSummary }
+        );
         // Upgrade the panel to the rich, path-grouped rendering. The
         // formatter is lazy so the happy path never downloads it. Guard
         // against an accession swap re-running `_init()` and replacing
@@ -1743,9 +2158,27 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    if (!this.accession) return;
+    // No accession means nothing to fetch, and `_loadData()` — the only other
+    // place `loading` is cleared — is below this return, so leaving the flag
+    // set spun the loader forever. Harmless while the readiness gate hid it;
+    // now that the spinner covers the whole initial load, a misconfigured
+    // element would sit under a permanent spinner, which reads as "working on
+    // it" rather than "nothing was asked for". Clear it and render what the
+    // gate in `render()` produces: an empty element, or — when the host
+    // supplied `sequence` itself — the no-results message.
+    if (!this.accession) {
+      this.loading = false;
+      this.requestUpdate();
+      return;
+    }
+    // Both fetches start now, side by side; the spinner stays up until the
+    // later of the two lands (`_settleLoading`).
+    this._sequencePending = true;
+    this._tracksPending = true;
     this.loadEntry(this.accession)
       .then((result) => {
+        if (generation !== this._entryGeneration) return;
+        this._sequencePending = false;
         const seq = result.entry?.sequence?.sequence;
         if (typeof seq === 'string' && seq.length > 0) {
           this.sequence = seq;
@@ -1754,8 +2187,9 @@ class ProtvistaUniprot extends LitElement {
           // left over from a previous (bad-accession) attempt.
           if (this._mountError?.phase === 'sequence') {
             this._mountError = null;
-            this.requestUpdate();
           }
+          this._settleLoading();
+          this.requestUpdate();
           return;
         }
         // No usable sequence: distinguish *broken* (the service failed —
@@ -1769,19 +2203,27 @@ class ProtvistaUniprot extends LitElement {
         this._reportSequenceFailure(result.error);
       })
       .catch((err) => {
+        if (generation !== this._entryGeneration) return;
+        this._sequencePending = false;
         // `loadEntry` classifies every expected failure itself, but an
         // unexpected throw could still escape. Without this handler the
         // rejection would surface as an unhandled promise rejection in the
         // host page's console. Treat it as a broken (retryable) failure.
-        this.reportError('sequence', {
-          consoleLevel: 'warn',
-          message: `[protvista-uniprot] Unexpected error from loadEntry for '${this.accession}':`,
-          panelSummary: `Couldn't load '${this.accession}' — the UniProt data service is unreachable or failing. This is usually temporary.`,
-          consoleArgs: [err],
-          context: { accession: this.accession },
-          mountFailure: true,
-          retry: true,
-        });
+        this._report(
+          {
+            severity: 'error',
+            phase: 'sequence',
+            scope: 'viewer',
+            consoleLevel: 'warn',
+            message: `[protvista-uniprot] Unexpected error from loadEntry for '${this.accession}': ${err instanceof Error ? err.message : String(err)}`,
+            recoverable: true,
+          },
+          {
+            panelSummary: `Couldn't load '${this.accession}' — the UniProt data service is unreachable or failing. This is usually temporary.`,
+            consoleArgs: [err],
+            context: { accession: this.accession },
+          }
+        );
         this.loading = false;
         this.requestUpdate();
       });
@@ -1823,6 +2265,12 @@ class ProtvistaUniprot extends LitElement {
     if (this._mountError?.phase === 'config') {
       this._mountError = null;
       this.requestUpdate();
+    }
+    // Replay the `setTrackData()` calls made before there was a config to
+    // check them against. Ahead of `_init()`'s first `_loadData()`, so what
+    // is accepted loads on the first pass.
+    for (const { groupId, trackId, data } of this._pendingTrackData.splice(0)) {
+      this._acceptTrackData(groupId, trackId, data);
     }
   }
 
@@ -1907,9 +2355,12 @@ class ProtvistaUniprot extends LitElement {
    *     the injected value is discarded — to swap the data source for
    *     a non-`custom` track, edit the config instead.
    *   - Calls before mount (before `_init()` has produced a
-   *     `NormalizedConfig`) are captured and applied on first load.
-   *     Validation is deferred until the config is available, so
-   *     pre-mount calls are never spuriously rejected.
+   *     `NormalizedConfig`) are queued and validated once the config
+   *     arrives, then applied on first load. Validation is deferred, not
+   *     skipped: a pre-mount call naming a missing or non-`custom` track,
+   *     or passing a value of the wrong shape, is reported exactly as the
+   *     same call after mount would be — including under `strict`, which
+   *     is not known until the config is.
    *   - Calls after mount trigger a re-run of the data pipeline so the
    *     new value flows through the track-level `filter:` sugar, the
    *     tooltip resolver, and the group aggregate. URL-sourced
@@ -1923,6 +2374,30 @@ class ProtvistaUniprot extends LitElement {
    *                     representation (already in post-adapter shape).
    */
   setTrackData(groupId: string, trackId: string, data: unknown): void {
+    // Pre-mount: queue and return. Nothing can be validated yet — not the
+    // track, and not `strict`, which decides whether a rejection raises the
+    // panel — so `_applyConfig` replays the call once both are known.
+    if (!this.config) {
+      this._pendingTrackData.push({ groupId, trackId, data });
+      return;
+    }
+    // Post-mount: re-run the pipeline so the new data propagates
+    // through filter / tooltip resolution and into the Nightingale
+    // components. `_loadData()` already handles `this.loading` and
+    // `this.requestUpdate()`.
+    if (this._acceptTrackData(groupId, trackId, data)) this._loadData();
+  }
+
+  /**
+   * Validate a `setTrackData()` call against the loaded config and, if it
+   * passes, store the data for the next load. Every rejection is reported
+   * through `_report`. Returns whether the data was accepted.
+   */
+  private _acceptTrackData(
+    groupId: string,
+    trackId: string,
+    data: unknown
+  ): boolean {
     // Shape validation. The renderer hands `data` straight to a
     // Nightingale component's `.data` setter, so a primitive or
     // `null` would either be silently ignored (number, string) or
@@ -1937,130 +2412,163 @@ class ProtvistaUniprot extends LitElement {
     const isArray = Array.isArray(data);
     const isPlainObject = data !== null && typeof data === 'object' && !isArray;
     if (!isArray && !isPlainObject) {
-      this.reportError('set-track-data', {
-        consoleLevel: 'warn',
-        message: `[protvista-uniprot] setTrackData: expected an array or plain object for '${groupId}/${trackId}', got ${data === null ? 'null' : typeof data}. Call ignored.`,
-        context: { groupId, trackId },
-      });
-      return;
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'set-track-data',
+          scope: 'viewer',
+          consoleLevel: 'warn',
+          message: `[protvista-uniprot] setTrackData: expected an array or plain object for '${groupId}/${trackId}', got ${data === null ? 'null' : typeof data}. Call ignored.`,
+        },
+        { context: { groupId, trackId } }
+      );
+      return false;
     }
 
-    const key = `${groupId}-${trackId}`;
-    // Copy-on-write so downstream `===` checks against the previous map
-    // (should any appear) see a fresh reference.
-    this.customTrackData = { ...this.customTrackData, [key]: data };
-
-    // Pre-mount: stash and return. `_loadData()` will read
-    // `this.customTrackData` on its first run, so no further work is
-    // needed here and no validation is possible yet (no config).
-    if (!this.config) return;
-
-    const group = this.config.rows.find((c) => c.id === groupId);
+    const group = this.config?.rows.find((c) => c.id === groupId);
     const track = group?.tracks.find((t) => t.id === trackId);
     if (!track) {
-      this.reportError('set-track-data', {
-        consoleLevel: 'warn',
-        message: `[protvista-uniprot] setTrackData: track '${groupId}/${trackId}' not found in config.`,
-        context: { groupId, trackId },
-      });
-      return;
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'set-track-data',
+          scope: 'viewer',
+          consoleLevel: 'warn',
+          message: `[protvista-uniprot] setTrackData: track '${groupId}/${trackId}' not found in config.`,
+        },
+        { context: { groupId, trackId } }
+      );
+      return false;
     }
     const firstSource = track.data[0];
     if (firstSource?.from !== 'custom') {
-      this.reportError('set-track-data', {
-        consoleLevel: 'warn',
-        message: `[protvista-uniprot] setTrackData: track '${groupId}/${trackId}' is not 'from: custom' (found '${firstSource?.from ?? 'undefined'}'). Injected data discarded; edit the config to change this track's data source.`,
-        context: { groupId, trackId },
-      });
-      return;
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'set-track-data',
+          scope: 'viewer',
+          consoleLevel: 'warn',
+          message: `[protvista-uniprot] setTrackData: track '${groupId}/${trackId}' is not 'from: custom' (found '${firstSource?.from ?? 'undefined'}'). Injected data discarded; edit the config to change this track's data source.`,
+        },
+        { context: { groupId, trackId } }
+      );
+      return false;
     }
 
-    // Post-mount: re-run the pipeline so the new data propagates
-    // through filter / tooltip resolution and into the Nightingale
-    // components. `_loadData()` already handles `this.loading` and
-    // `this.requestUpdate()`.
-    this._loadData();
+    // Copy-on-write so downstream `===` checks against the previous map
+    // (should any appear) see a fresh reference.
+    this.customTrackData = {
+      ...this.customTrackData,
+      [`${groupId}-${trackId}`]: data,
+    };
+    return true;
   }
 
   /**
-   * The single seam through which every error reaches a user. It keeps
-   * the developer channel intact (the same `console.warn`/`console.error`
-   * text as before, via `opts.message`) AND adds the two user channels:
-   * the bubbling `protvista-error` event (always dispatched, so an
-   * embedder wires one listener for every flavour) and — when the error
-   * is fatal to the mount (`config`/`sequence`) or `strict` is on — the
-   * visible alert panel.
+   * The single seam through which every failure reaches anyone, and the only
+   * place `console` is called or a panel is raised.
    *
-   * Per-track fetch failures pass through here too (for the event); their
-   * visible surface is the `⚠` badge rendered from `_trackErrors`, and
-   * they only raise the panel under `strict`.
+   * A failure site's job is to describe itself — how severe, how much of the
+   * viewer it takes down, whether retrying could help — and hand that
+   * {@link FailureReport} here. `routeFailure` decides which channels it
+   * reaches, from the table in `src/errors/router.ts`; this method performs
+   * them. No site decides for itself, and no site reads `strict`: that is what
+   * stops the surfaces from drifting apart as failure classes are added, which
+   * is exactly how they drifted before (a 4xx reaching nothing, an adapter
+   * throw reaching only the console, a badge appearing on grouped rows but not
+   * standalone ones).
+   *
+   * Returns the routed channels so a caller that aggregates — the per-track
+   * correlation pass, which must raise ONE panel for a whole batch rather than
+   * let each track overwrite the last — can honour the decision instead of
+   * re-deriving it. That is what `deferPanel` is for; it suppresses the panel
+   * here, never the decision.
    */
-  private reportError(
-    phase: ErrorPhase,
+  private _report(
+    report: FailureReport,
     opts: {
-      /** The exact console string used today — keeps dev + user text in lockstep. */
-      message: string;
-      consoleLevel: 'warn' | 'error';
       /** Populated for `config`; forwarded on the event as `detail.issues`. */
       issues?: ValidationIssue[];
       /** Forwarded on the event as `detail.context` (merged over `{ accession }`). */
       context?: ErrorContext;
       /** Extra args appended to the `console.*` call (e.g. the caught error). */
       consoleArgs?: unknown[];
-      /** Force the mount panel regardless of `strict` (used by `config`/`sequence`). */
-      mountFailure?: boolean;
-      /** Skip the console line (the caller already logged it — e.g. the fetch closure). */
-      skipConsole?: boolean;
       /** User-friendly panel summary when it should differ from `message`. */
       panelSummary?: string;
       /**
-       * Offer a Retry button on the promoted mount panel (broken, transient
-       * failures — see `_mountError.retry`). Ignored when the error isn't
-       * promoted to the panel.
+       * The caller raises the routed panel itself, aggregated over its batch.
+       * The routing decision is still made here and returned.
        */
-      retry?: boolean;
-      /**
-       * Suppress the mount-panel promotion even under `strict`. Used by
-       * the per-track correlation pass, which fires one event per failed
-       * track but raises a single *aggregated* panel afterwards rather
-       * than letting each track overwrite the last.
-       */
-      skipPanel?: boolean;
-    }
-  ): void {
-    if (!opts.skipConsole) {
-      console[opts.consoleLevel](opts.message, ...(opts.consoleArgs ?? []));
+      deferPanel?: boolean;
+    } = {}
+  ): FailureChannels {
+    const channels = this._route(report);
+
+    if (channels.console) {
+      console[channels.console](report.message, ...(opts.consoleArgs ?? []));
     }
 
-    this.dispatchEvent(
-      new CustomEvent('protvista-error', {
-        detail: {
-          phase,
-          issues: opts.issues ?? [],
-          context: { accession: this.accession, ...opts.context },
-        },
-        bubbles: true,
-      })
-    );
-
-    const promote =
-      !opts.skipPanel && (opts.mountFailure || (this.config?.strict ?? false));
-    if (promote) {
-      this._setMountError(
-        phase,
-        opts.panelSummary ?? opts.message.split('\n')[0],
-        opts.issues,
-        opts.retry
+    if (channels.event) {
+      this.dispatchEvent(
+        new CustomEvent('protvista-error', {
+          detail: {
+            phase: report.phase,
+            // How bad it is, so a listener can tell a warning from a failure
+            // without inferring it. A viewer-scoped warning (a theme colour
+            // that did not resolve, a component with no renderer) carries no
+            // `issues`, so the `issue.severity` check that works for config
+            // warnings has nothing to read.
+            severity: report.severity,
+            // What the visible surface says. Without it the event was the one
+            // channel that could not say *what* went wrong: a malformed file
+            // reported `errorKind: 'adapter'` and a URL, while the text naming
+            // the file and the offending row — the whole reason the failure is
+            // worth surfacing — reached only the badge. A failure that raises
+            // the panel carries the panel's own summary rather than the
+            // developer line, and the console's `[protvista…]` tag is dropped:
+            // the documented use is putting this text in front of a user.
+            message: (opts.panelSummary ?? report.message).replace(
+              /^\[protvista(?:-uniprot)?\] /,
+              ''
+            ),
+            ...(report.source !== undefined ? { source: report.source } : {}),
+            issues: opts.issues ?? [],
+            context: { accession: this.accession, ...opts.context },
+          },
+          bubbles: true,
+        })
       );
     }
+
+    if (channels.panel && !opts.deferPanel) {
+      this._setMountError(
+        report.phase,
+        opts.panelSummary ?? report.message.split('\n')[0],
+        opts.issues,
+        channels.retry
+      );
+    }
+
     this.requestUpdate();
+    return channels;
+  }
+
+  /**
+   * The channels a report would reach, without reaching them — the routing
+   * half of `_report`, and the single place `strict` is read. An aggregate
+   * that must re-ask the router about failures it already reported
+   * (`_syncTrackPanel`) calls this rather than `_report`, which would log and
+   * dispatch them again.
+   */
+  private _route(report: FailureReport): FailureChannels {
+    return routeFailure(report, { strict: this.config?.strict ?? false });
   }
 
   /**
    * Raise the mount-level alert panel, capturing the currently-focused
    * element first so the dismiss control can hand focus back (mirrors
-   * `popover.ts`). Shared by `reportError`'s promotion path and the
-   * aggregated per-track panel in `_collectTrackErrors`.
+   * `popover.ts`). Shared by `_report`'s routed promotion and the aggregated
+   * per-track panel in `_collectTrackErrors`.
    */
   private _setMountError(
     phase: ErrorPhase,
@@ -2096,6 +2604,7 @@ class ProtvistaUniprot extends LitElement {
   private _reportSequenceFailure(error?: {
     kind: FetchErrorKind;
     status?: number;
+    cause?: unknown;
   }): void {
     const broken =
       error !== undefined &&
@@ -2105,18 +2614,30 @@ class ProtvistaUniprot extends LitElement {
     const panelSummary = broken
       ? `Couldn't load '${this.accession}' — the UniProt data service is unreachable or failing. This is usually temporary.`
       : `No UniProt entry found for '${this.accession}'. Check that the accession is correct.`;
-    this.reportError('sequence', {
-      consoleLevel: 'warn',
-      message: `[protvista-uniprot] loadEntry returned no usable sequence for '${this.accession}'. Rendering empty-state.`,
-      panelSummary,
-      context: {
-        accession: this.accession,
-        ...(error?.kind ? { errorKind: error.kind } : {}),
-        ...(error?.status !== undefined ? { status: error.status } : {}),
+    this._report(
+      {
+        severity: 'error',
+        phase: 'sequence',
+        scope: 'viewer',
+        consoleLevel: 'warn',
+        message: `[protvista-uniprot] loadEntry returned no usable sequence for '${this.accession}'. Rendering empty-state.`,
+        // Where the sequence was asked for, when the fetch itself failed. A
+        // 2xx body with no sequence (`error` absent) fetched fine.
+        ...(error ? { source: entryUrl(this.accession) } : {}),
+        recoverable: broken,
       },
-      mountFailure: true,
-      retry: broken,
-    });
+      {
+        panelSummary,
+        context: {
+          accession: this.accession,
+          ...(error ? { url: entryUrl(this.accession) } : {}),
+          ...(error?.kind ? { errorKind: error.kind } : {}),
+          ...(error?.status !== undefined ? { status: error.status } : {}),
+        },
+        // The classified cause, which `loadEntry` no longer logs itself.
+        ...(error?.cause !== undefined ? { consoleArgs: [error.cause] } : {}),
+      }
+    );
     this.loading = false;
     this.requestUpdate();
   }
@@ -2135,18 +2656,42 @@ class ProtvistaUniprot extends LitElement {
   }
 
   /**
-   * Correlate the batch's fetch failures (keyed by substituted URL) back
-   * to the tracks that own them, and flag groups whose every track
-   * failed. `trackUrls` is the authoritative per-track URL map returned
-   * by `loadProtvistaData` (the loader is the single source of truth for
-   * which URL each track fetched), so the component no longer re-derives
-   * the substitution. Fires one `track-fetch` event per failed track
-   * (`skipConsole` — the fetch closure already logged the status;
-   * `skipPanel` — the panel is raised once, aggregated, below).
+   * Drop the spinner once *both* halves of the initial load have landed.
+   * `_init()` fetches the sequence and the track data side by side, and either
+   * can finish first: tracks that are all inline, or a fast-failing endpoint,
+   * settle in a few microtasks while the sequence is still on the wire.
+   * Clearing `loading` on the tracks alone fell through to the readiness gate
+   * — a blank region for the rest of the sequence fetch, the very state the
+   * spinner exists to replace.
+   *
+   * A sequence *failure* clears `loading` directly instead: it raises the
+   * panel, which `render()` puts ahead of the spinner either way.
+   */
+  private _settleLoading(): void {
+    if (!this._sequencePending && !this._tracksPending) this.loading = false;
+  }
+
+  /**
+   * Correlate the batch's per-track outcomes back to the rows that own them,
+   * then route every one of them.
+   *
+   * `trackUrls` is the authoritative per-track URL map returned by
+   * `loadProtvistaData` (the loader is the single source of truth for which
+   * URL each track fetched), so this never re-derives the substitution.
+   * `fetchErrors` is the transport outcome per URL and `trackFailures` the
+   * processing outcome per track — neither source logs or renders anything
+   * itself, so this is the only place either reaches a person.
+   *
+   * Each failure becomes a {@link FailureReport} handed to `_report`, which
+   * routes it. The panel is the one channel this method performs itself
+   * (`deferPanel`): a batch of ten broken tracks must raise ONE aggregated
+   * panel, not ten that overwrite each other. Whether there is a panel at all
+   * is still the router's answer, not a `strict` check here.
    */
   private _collectTrackErrors(
     trackUrls: Record<string, string[]>,
     fetchErrors: Map<string, Omit<TrackFetchError, 'groupId' | 'trackId'>>,
+    trackFailures: Record<string, TrackProcessingFailure>,
     only?: Set<string>
   ): void {
     if (!this.config) {
@@ -2169,21 +2714,68 @@ class ProtvistaUniprot extends LitElement {
     // reload, so their errors (cleared above only for the reloaded set)
     // are left intact.
     //
-    // An HTTP 4xx is NOT a track error: for a per-entity endpoint it means
-    // "this accession has no data of this kind" (a 404 is the common
-    // case). We want the viewer to flag things that are *broken*, not
-    // *missing* — so a 4xx is treated exactly like an empty response: the
-    // track simply has no data and is hidden, with no badge, event, or
-    // panel. Only `network`, `parse`, and HTTP `5xx` are recorded.
+    // An HTTP 4xx from a *provider endpoint* is NOT a track error: it means
+    // "this accession has no data of this kind" (a 404 is the common case).
+    // We want the viewer to flag things that are *broken*, not *missing* — so
+    // that 4xx is treated exactly like an empty response: the track simply
+    // has no data and is hidden, with no badge, event, or panel.
+    //
+    // An *authored* source — the author's own data, a descriptor with a
+    // `format` — is the opposite case, however it was written: `./hits.csv`,
+    // an absolute URL, or the `{ url: … }` object form. The author wrote that
+    // location themselves, and nothing publishes data at it conditionally — a
+    // 404 can only mean the path or URL is wrong, which is the single most
+    // common authoring mistake (a relative path resolves against the *hosting
+    // page*, not the config file). The descriptor already says which kind of
+    // source it is, so the classification reads it rather than discarding it.
+    //
+    // `from: file` is the author's location too, even when it names an
+    // explicit `adapter:` instead of a `format` — the very descriptor the
+    // validator recommends for a file it cannot sniff — so it counts here
+    // alongside `isAuthoredSource` (`ownsLocation`).
+    //
+    // A track can fetch several URLs (an AlphaFold track reads the prediction
+    // API *and* the Proteins API), so every one of its failures is weighed,
+    // not just the first: a 503 on one URL must not hide behind a provider 404
+    // on another.
     for (const group of this.config.rows) {
       for (const track of group.tracks) {
         const key = `${group.id}-${track.id}`;
-        const hit = (trackUrls[key] ?? []).find((u) => fetchErrors.has(u));
-        if (!hit) continue;
-        const err = fetchErrors.get(hit)!;
-        if (err.kind === 'http' && (err.status ?? 0) < 500) continue; // missing, not broken
+        const authored = isAuthoredSource(track.data[0]);
+        const fromFile = track.data[0]?.from === 'file';
+        const ownsLocation = authored || fromFile;
+        const failed = trackFetchFailures(trackUrls[key], fetchErrors);
+        const broken = failed.find((e) => !isExpectedAbsence(e, ownsLocation));
+        if (broken) {
+          this._trackErrors.set(key, {
+            ...broken,
+            ...(ownsLocation ? { authored: true } : {}),
+            ...(fromFile ? { fromFile } : {}),
+            groupId: group.id,
+            trackId: track.id,
+          });
+          continue;
+        }
+        // Only provider 4xxs — missing, not broken. Logged by the pass below.
+        if (failed.length > 0) continue;
+        // A track whose *processing* threw: a malformed file, a body the
+        // adapter rejected, or an unregistered adapter name. Only reached
+        // when none of the track's fetches failed — when one did, that
+        // outcome is the explanation, and an adapter choking on the empty
+        // body left behind must not resurrect a deliberately-silent 4xx.
+        //
+        // Severity gates this: an `info` outcome (a `from: custom` track
+        // nobody injected data into) is an expected absence, so it must not
+        // land in `_trackErrors` — that map is what draws badges and counts
+        // towards a group being wholly broken.
+        const failure = trackFailures[key];
+        if (failure?.severity !== 'error') continue;
         this._trackErrors.set(key, {
-          ...err,
+          url: trackUrls[key]?.[0] ?? '',
+          kind: 'adapter',
+          message: failure.message,
+          ...(authored ? { authored } : {}),
+          ...(failure.retryable ? { retryable: true } : {}),
           groupId: group.id,
           trackId: track.id,
         });
@@ -2195,69 +2787,216 @@ class ProtvistaUniprot extends LitElement {
     for (const group of this.config.rows) {
       if (
         group.tracks.length > 0 &&
-        group.tracks.every((t) =>
-          this._trackErrors.has(`${group.id}-${t.id}`)
-        )
+        group.tracks.every((t) => this._trackErrors.has(`${group.id}-${t.id}`))
       ) {
         this._groupErrors.add(group.id);
       }
     }
 
-    // Fire one event per track that (re)failed in THIS batch — for a
-    // partial reload, only the reloaded tracks that still fail.
+    // Report every track that (re)failed in THIS batch — for a partial
+    // reload, only the reloaded tracks that still fail. `deferPanel` holds
+    // back the panel channel so the aggregate below owns it; everything else
+    // (console, event) is performed per track as routed.
     const failedKeys = [...this._trackErrors.keys()].filter(
       (k) => !only || only.has(k)
     );
+    let panelWanted = false;
     for (const key of failedKeys) {
       const err = this._trackErrors.get(key)!;
-      this.reportError('track-fetch', {
-        consoleLevel: 'warn',
-        message: this._describeFetchError(err),
+      // The thrown value, so the developer channel keeps the stack (and a
+      // parser's position) the derived wording leaves out. An `adapter`
+      // failure's is the loader's; a `network` / `parse` failure carries its
+      // own. Never a downstream cause under a fetch failure: a track whose
+      // fetch failed can have one too — its adapter choking on the empty body
+      // left behind — and printing that `TypeError` under an "HTTP 503" line
+      // reads as a viewer bug rather than the outage it is.
+      const cause =
+        err.kind === 'adapter' ? trackFailures[key]?.cause : err.cause;
+      const channels = this._report(this._trackFailureReport(key, err), {
         context: {
           groupId: err.groupId,
-          trackId: err.trackId,
-          url: err.url,
+          // Omitted for an aggregate-scoped failure — there is no one track
+          // to name, and reporting `null` would read as "track null".
+          ...(err.trackId ? { trackId: err.trackId } : {}),
+          // An `adapter` failure on an inline / custom source has no URL to
+          // name, so the field is omitted rather than reported as `''`.
+          ...(err.url ? { url: err.url } : {}),
           errorKind: err.kind,
           ...(err.status !== undefined ? { status: err.status } : {}),
         },
-        skipConsole: true, // the fetch closure already logged this line
-        skipPanel: true, // the aggregated panel below replaces per-track ones
+        ...(cause !== undefined ? { consoleArgs: [cause] } : {}),
+        deferPanel: true,
       });
+      panelWanted = panelWanted || channels.panel;
     }
 
-    // Under `strict`, keep ONE aggregated panel in sync with the current
-    // error set — raised/refreshed while failures remain, cleared once a
-    // (re)load resolves them all.
-    if (this.config.strict ?? false) {
-      if (this._trackErrors.size > 0) {
-        const errs = [...this._trackErrors.values()];
-        const summary =
-          errs.length === 1
-            ? `Track '${errs[0].groupId}/${errs[0].trackId}' failed to load — ${this._describeFetchError(errs[0])}.`
-            : `${errs.length} tracks failed to load.`;
-        // Offer Retry when at least one failure is recoverable (network /
-        // HTTP 5xx) — mirrors the per-badge affordance so the strict panel
-        // isn't the one place a transient failure can't be retried in
-        // place. The panel's Retry re-runs the whole load (`_retryMount`),
-        // which is the right scope: the panel has replaced the entire
-        // viewer, so there's no partial UI to preserve.
-        const retryable = errs.some((e) => this._isRecoverable(e));
-        this._setMountError('track-fetch', summary, undefined, retryable);
-      } else if (this._mountError?.phase === 'track-fetch') {
-        this._mountError = null;
+    // A provider endpoint answering 4xx is an expected absence, not a
+    // failure — the entity simply has no data of this kind. It routes to the
+    // console and nowhere else (`info`), which is the one thing the old code
+    // got backwards: it logged from the fetch closure, where the log could
+    // not know whose track the URL belonged to, and dropped the fact
+    // entirely once the closure stopped being the reporter.
+    for (const group of this.config.rows) {
+      for (const track of group.tracks) {
+        const key = `${group.id}-${track.id}`;
+        if (this._trackErrors.has(key)) continue;
+        if (only && !only.has(key)) continue;
+        // The only fetch failures the loop above leaves unpromoted: 4xxs from
+        // provider endpoints. Spelt out rather than inferred so the two halves
+        // of the classification cannot drift apart. One line per URL, so a
+        // track reading two endpoints says which of them had nothing.
+        const ownsLocation =
+          isAuthoredSource(track.data[0]) || track.data[0]?.from === 'file';
+        const absent = trackFetchFailures(trackUrls[key], fetchErrors).filter(
+          (e) => isExpectedAbsence(e, ownsLocation)
+        );
+        for (const skipped of absent) {
+          this._report(
+            {
+              severity: 'info',
+              phase: 'track-fetch',
+              scope: { trackKey: key },
+              source: skipped.url,
+              message: `[protvista-uniprot] track ${group.id}/${track.id}: no data (HTTP ${skipped.status}) at ${skipped.url}.`,
+              consoleLevel: 'info',
+            },
+            { context: { groupId: group.id, trackId: track.id } }
+          );
+        }
+        if (absent.length > 0) continue;
+        // `from: custom` with nothing injected. Same expected absence, and the
+        // wording is the one `specs/config-approach.md` pins.
+        const failure = trackFailures[key];
+        if (failure?.severity === 'info') {
+          this._report(
+            {
+              severity: 'info',
+              phase: 'track-fetch',
+              scope: { trackKey: key },
+              message: failure.message,
+              consoleLevel: 'info',
+            },
+            { context: { groupId: group.id, trackId: track.id } }
+          );
+        }
       }
     }
+
+    this._syncTrackPanel(panelWanted);
     this.requestUpdate();
   }
 
-  /** Human-readable one-liner for a track fetch failure. */
+  /**
+   * The {@link FailureReport} a recorded track failure routes as. One builder
+   * for the correlation pass, the render walk, and `_syncTrackPanel`'s
+   * re-evaluation of the whole set, so the three cannot route the same failure
+   * differently.
+   */
+  private _trackFailureReport(
+    key: string,
+    err: TrackFetchError
+  ): FailureReport {
+    if (err.kind === 'render') {
+      return {
+        severity: 'error',
+        phase: 'track-fetch',
+        scope: { trackKey: key },
+        ...(err.url ? { source: err.url } : {}),
+        message: `[protvista] ${this._describeFetchError(err)}`,
+        consoleLevel: 'error',
+      };
+    }
+    return {
+      severity: 'error',
+      phase: 'track-fetch',
+      scope: { trackKey: key },
+      source: err.url || undefined,
+      message: this._describeFetchError(err),
+      recoverable: this._isRecoverable(err),
+      consoleLevel: 'warn',
+    };
+  }
+
+  /**
+   * Keep the ONE aggregated track-fetch panel in step with the whole error
+   * set — not with whichever batch or render walk happened to run last.
+   *
+   * Whether there should be a panel, and whether it offers Retry, is asked of
+   * the router for every failure still in `_trackErrors`. Two concurrent
+   * targeted Retries are separate batches, so the batch that *succeeds* must
+   * not clear a panel the other's still-failing track keeps wanting; and a
+   * render failure must not replace an aggregate that counts a retryable 503
+   * with a one-track summary that offers nothing.
+   *
+   * `raise` is the caller's own routing answer: a new failure that wants the
+   * panel raises (or re-raises) it. Without one, an open panel is refreshed
+   * to the current set or cleared once nothing wants it, and a panel the user
+   * dismissed stays dismissed — no new failure arrived to justify putting it
+   * back. The summary names the single failure when there is one and counts
+   * them otherwise. Its Retry re-runs the whole load (`_retryMount`), the
+   * right scope for a notice that has replaced the entire viewer.
+   */
+  private _syncTrackPanel(raise: boolean): void {
+    const entries = [...this._trackErrors.entries()];
+    const routed = entries.map(([key, err]) =>
+      this._route(this._trackFailureReport(key, err))
+    );
+    const wanted = routed.some((c) => c.panel);
+    const isOpen = this._mountError?.phase === 'track-fetch';
+    if (wanted && (raise || isOpen)) {
+      const errs = entries.map(([, err]) => err);
+      const summary =
+        errs.length === 1
+          ? `Track '${errs[0].groupId}${errs[0].trackId ? `/${errs[0].trackId}` : ''}' failed to load — ${this._describeFetchError(errs[0]).replace(/\.$/, '')}.`
+          : `${errs.length} tracks failed to load.`;
+      // Retryability spans the whole error set: the panel's Retry reloads
+      // everything, so one transient failure among them is enough.
+      const retryable = routed.some((c) => c.retry);
+      this._setMountError('track-fetch', summary, undefined, retryable);
+    } else if (!wanted && isOpen) {
+      this._mountError = null;
+    }
+  }
+
+  /**
+   * Human-readable one-liner for a track data failure — the badge's detail
+   * text, the `protvista-error` message, and the strict panel's summary, all
+   * from one place.
+   *
+   * An `adapter` failure says exactly what was thrown: the decoders already
+   * name the author's file and the offending row ("./hits.csv (parsed as
+   * CSV): row 3, column \"start\": expected a number, got \"abc\""), which is
+   * better than anything this method could synthesise. A `from: file` 4xx
+   * names the path and the gotcha behind it, because a wrong relative path is
+   * what it almost always is.
+   */
   private _describeFetchError(err: TrackFetchError): string {
     switch (err.kind) {
       case 'network':
         return `Couldn't reach ${err.url}`;
       case 'parse':
-        return `Unparseable response from ${err.url}`;
+        return err.message
+          ? `Unparseable response from ${err.url} (${err.message})`
+          : `Unparseable response from ${err.url}`;
+      case 'adapter':
+        // The author's own file: the decoder's text names the file and the
+        // row, and is better than anything synthesised here. A provider
+        // adapter's text names neither, so say where the data came from —
+        // and not in words that send the reader looking for a file to fix.
+        if (err.authored) {
+          return err.message ?? `Couldn't process the data for ${err.url}`;
+        }
+        return err.url
+          ? `Couldn't process the data from ${err.url}${err.message ? `: ${err.message}` : ''}`
+          : (err.message ?? "Couldn't process this track's data");
+      case 'render':
+        return err.message ?? 'This track could not draw the data it was given';
       default:
+        if (err.authored && (err.status ?? 0) < 500) {
+          return err.fromFile
+            ? `${err.url} could not be found (HTTP ${err.status}) — check the path is relative to the page.`
+            : `${err.url} could not be found (HTTP ${err.status}) — check the URL.`;
+        }
         return `HTTP ${err.status} — ${err.url}`;
     }
   }
@@ -2295,9 +3034,7 @@ class ProtvistaUniprot extends LitElement {
    */
   private _onChangeCapture = (e: Event): void => {
     const detail = (e as ProtvistaChangeEvent).detail as
-      | ProtvistaChangeEventDetail
-      | null
-      | undefined;
+      ProtvistaChangeEventDetail | null | undefined;
     if (!detail || typeof detail !== 'object') return;
 
     if (detail['display-start']) {
@@ -2333,9 +3070,7 @@ class ProtvistaUniprot extends LitElement {
    * the first id the renderer gave a track (`${CSS_PREFIX}-track-<key>`),
    * with the origin that key maps to.
    */
-  private _originOf(
-    e: Event
-  ):
+  private _originOf(e: Event):
     | {
         element: Element;
         key: string;
@@ -2462,6 +3197,7 @@ class ProtvistaUniprot extends LitElement {
 
   disconnectedCallback() {
     clearTimeout(this._movedTimer);
+    clearTimeout(this._announceTimer);
     this._variablesObserver?.disconnect();
     this._variablesObserver = undefined;
     if (this._variablesFrame !== undefined) {
@@ -2489,28 +3225,25 @@ class ProtvistaUniprot extends LitElement {
     // Three-branch classification mirroring the per-track fetch closure so
     // the mount panel can tell *broken* (network / HTTP 5xx / unparseable —
     // the service is down, offer Retry) from *missing* (HTTP 4xx — this
-    // accession has no entry, verify the identifier). The developer
-    // `console.*` lines are preserved verbatim.
+    // accession has no entry, verify the identifier).
+    //
+    // Classify and return; do not log. `_reportSequenceFailure` is the failure
+    // site here, and it routes one line through `_report` carrying `cause` —
+    // two console lines for one failure was just this method reporting
+    // something it had already delegated.
     let response: Response;
     try {
-      response = await fetch(
-        `https://www.ebi.ac.uk/proteins/api/proteins/${accession}`
-      );
+      response = await fetch(entryUrl(accession));
     } catch (e) {
-      console.error(`Couldn't load UniProt entry`, e);
-      return { error: { kind: 'network' } };
+      return { error: { kind: 'network', cause: e } };
     }
     if (!response.ok) {
-      console.warn(
-        `[protvista-uniprot] loadEntry: HTTP ${response.status} for '${accession}'.`
-      );
       return { error: { kind: 'http', status: response.status } };
     }
     try {
       return { entry: await response.json() };
     } catch (e) {
-      console.error(`Couldn't load UniProt entry`, e);
-      return { error: { kind: 'parse' } };
+      return { error: { kind: 'parse', cause: e } };
     }
   }
 
@@ -2539,8 +3272,16 @@ class ProtvistaUniprot extends LitElement {
     total = 1
   ) {
     const track = group.tracks[0];
-    const trackData = track && this.data[`${group.id}-${track.id}`];
-    if (!track || !hasRenderableData(trackData)) {
+    if (!track) return '';
+    const key = `${group.id}-${track.id}`;
+    const trackHasData = hasRenderableData(this.data[key]);
+    const trackHasError = this._trackErrors.has(key);
+    // Neither data nor a broken error: nothing to draw (the 4xx "missing"
+    // path). With an error, the row still renders — label, `⚠` badge, and
+    // Retry when the failure is recoverable — and only the content cell is
+    // dropped. This mirrors `_renderExpandedTrack`, so a failed track looks
+    // the same whether it sits in a group or on its own.
+    if (!trackHasData && !trackHasError) {
       return '';
     }
     const attrs = renderingToAttrs(track.rendering);
@@ -2556,29 +3297,40 @@ class ProtvistaUniprot extends LitElement {
           title="${track.description ?? ''}"
         >
           <span class="${CSS_PREFIX}-label-text"
-            >${(track.filterUI === 'nightingale-filter' &&
-              this.getFilterComponent(`${group.id}-${track.id}`)) ||
-            unsafeHTML(renderLabel(track.label, this.accession))}</span
-          >${this._renderRowControls(group, index, total)}
-        </div>
-        <div
-          class="${CSS_PREFIX}-track-content ${track.component ===
-          'nightingale-colored-sequence'
-            ? `${CSS_PREFIX}-track-content__coloured-sequence`
-            : ''}"
-          data-id="${CSS_PREFIX}-track_${track.id}"
-        >
-          ${this.getTrack(
-            track.component,
-            'non-overlapping',
-            attrs.color,
-            attrs.shape,
-            `${group.id}-${track.id}`,
-            attrs.scale,
-            attrs.colorRange,
-            showsSeriesLabel([track])
+            >${
+              (track.filterUI === 'nightingale-filter' &&
+                this.getFilterComponent(key)) ||
+              unsafeHTML(renderLabel(track.label, this.accession))
+            }</span
+          >${this._renderTrackBadge(key)}${this._renderRowControls(
+            group,
+            index,
+            total
           )}
         </div>
+        ${
+          trackHasData
+            ? html`<div
+                class="${CSS_PREFIX}-track-content ${
+                  track.component === 'nightingale-colored-sequence'
+                    ? `${CSS_PREFIX}-track-content__coloured-sequence`
+                    : ''
+                }"
+                data-id="${CSS_PREFIX}-track_${track.id}"
+              >
+                ${this.getTrack(
+                  track.component,
+                  'non-overlapping',
+                  attrs.color,
+                  attrs.shape,
+                  key,
+                  attrs.scale,
+                  attrs.colorRange,
+                  showsSeriesLabel([track])
+                )}
+              </div>`
+            : ''
+        }
       </div>
     `;
   }
@@ -2601,12 +3353,15 @@ class ProtvistaUniprot extends LitElement {
     const rows = this.config?.rows ?? [];
     return this._customizeMode
       ? rows.map((row) => ({ row, tracks: row.tracks }))
-      : displayRows(rows).filter((d) => this._rowRendersContent(d.row, d.tracks));
+      : displayRows(rows).filter((d) =>
+          this._rowRendersContent(d.row, d.tracks)
+        );
   }
 
   /**
-   * Whether a row draws anything on the canvas: a standalone track with data,
-   * or a group with a renderable *visible* track (or a visible fetch error).
+   * Whether a row draws anything on the canvas: a standalone track with data
+   * (or a visible fetch error), or a group with a renderable *visible* track
+   * (or a visible fetch error).
    *
    * A group is judged by its *visible* `tracks` — the same slice
    * `_renderGroupBlock` renders from — NOT by the group aggregate
@@ -2631,7 +3386,15 @@ class ProtvistaUniprot extends LitElement {
   ): boolean {
     if (row.standalone) {
       const track = row.tracks[0];
-      return !!track && hasRenderableData(this.data[trackKey(row.id, track.id)]);
+      if (!track) return false;
+      const key = trackKey(row.id, track.id);
+      // `|| _trackErrors.has(key)` is what keeps a *broken* standalone row on
+      // the canvas, exactly as the grouped branch below does. Without it the
+      // row vanished and `_renderAllHiddenNotice` claimed the user had hidden
+      // everything — a false statement with a Reset-layout button that fixes
+      // nothing. Standalone is the default shape for the starter kits, so this
+      // was the most-reachable failure surface in the component.
+      return hasRenderableData(this.data[key]) || this._trackErrors.has(key);
     }
     if (this._visibleGroupErrors.has(row.id)) return true;
     return tracks.some((t) => {
@@ -2679,11 +3442,7 @@ class ProtvistaUniprot extends LitElement {
 
     // Collapsed with an error but no aggregate: header + badge only
     // (mirrors the previous group-error row).
-    if (
-      !this.openGroups.includes(group.id) &&
-      !groupHasData &&
-      groupHasError
-    ) {
+    if (!this.openGroups.includes(group.id) && !groupHasData && groupHasError) {
       return this.renderGroupErrorRow(group);
     }
 
@@ -2696,82 +3455,107 @@ class ProtvistaUniprot extends LitElement {
         )} ${this._movedClass(group.id)}"
         id="${CSS_PREFIX}-group_${group.id}"
       >
-        ${this._customizeMode
-          ? // While customizing, the label cell holds real buttons, so it
-            // cannot itself be one — nesting interactive controls is an axe
-            // violation and leaves the inner buttons unreachable to some
-            // assistive tech. Collapse/expand moves into the control cluster
-            // as its own button, which is a better affordance anyway.
-            html`<div
-              class="${CSS_PREFIX}-group-label"
-              title="${group.description ?? ''}"
-            >
-              ${this._collapseButton(
-                group,
-                this._labelText(group.label),
-                expanded
-              )}<span class="${CSS_PREFIX}-label-text"
-                >${unsafeHTML(renderLabel(group.label, this.accession))}</span
-              >${this._renderGroupBadge(group.id)}${this._renderRowControls(
-                group,
-                index,
-                total
-              )}
-            </div>`
-          : html`<div
-              class="${CSS_PREFIX}-group-label${expanded ? ' open' : ''}"
-              data-group-toggle="${group.id}"
-              role="button"
-              tabindex="0"
-              aria-expanded="${expanded}"
-              title="${group.description ?? ''}"
-              @click="${this.handleGroupClick}"
-              @keydown="${this.handleGroupKeydown}"
-            >
-              <span class="${CSS_PREFIX}-label-text"
-                >${unsafeHTML(renderLabel(group.label, this.accession))}</span
-              >${this._renderGroupBadge(group.id)}
-            </div>`}
+        ${
+          this._customizeMode
+            ? // While customizing, the label cell holds real buttons, so it
+              // cannot itself be one — nesting interactive controls is an axe
+              // violation and leaves the inner buttons unreachable to some
+              // assistive tech. Collapse/expand moves into the control cluster
+              // as its own button, which is a better affordance anyway.
+              html`<div
+                class="${CSS_PREFIX}-group-label"
+                title="${group.description ?? ''}"
+              >
+                ${this._collapseButton(
+                  group,
+                  this._labelText(group.label),
+                  expanded
+                )}<span class="${CSS_PREFIX}-label-text"
+                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                >${this._renderGroupBadge(group.id)}${this._renderRowControls(
+                  group,
+                  index,
+                  total
+                )}
+              </div>`
+            : html`<div
+                class="${CSS_PREFIX}-group-label${expanded ? ' open' : ''}"
+                data-group-toggle="${group.id}"
+                role="button"
+                tabindex="0"
+                aria-expanded="${expanded}"
+                title="${group.description ?? ''}"
+                @click="${this.handleGroupClick}"
+                @keydown="${this.handleGroupKeydown}"
+              >
+                <span class="${CSS_PREFIX}-label-text"
+                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                >${this._renderGroupBadge(group.id)}
+              </div>`
+        }
         <div
           data-id="${CSS_PREFIX}-group_${group.id}"
-          class="${CSS_PREFIX}-aggregate-track-content ${CSS_PREFIX}-track-content ${group.component ===
-          'nightingale-colored-sequence'
-            ? `${CSS_PREFIX}-track-content__coloured-sequence`
-            : ''}"
+          class="${CSS_PREFIX}-aggregate-track-content ${CSS_PREFIX}-track-content ${
+            group.component === 'nightingale-colored-sequence'
+              ? `${CSS_PREFIX}-track-content__coloured-sequence`
+              : ''
+          }"
           .style="${expanded ? 'opacity:0' : 'opacity:1'}"
         >
-          ${groupHasData
-            ? this.getTrack(
-                group.component,
-                'non-overlapping',
-                groupAttrs.color,
-                groupAttrs.shape,
-                group.id,
-                groupAttrs.scale,
-                groupAttrs.colorRange,
-                // Keyed off the track the aggregate actually draws: a graph
-                // group's payload is its first drawn track
-                // (`drawnAggregateTracks` — not `detailOnly`, not hidden, in
-                // the current order), not merely the first visible one.
-                showsSeriesLabel(drawnAggregateTracks(group.tracks).slice(0, 1))
-              )
-            : ''}
+          ${
+            groupHasData
+              ? this.getTrack(
+                  group.component,
+                  'non-overlapping',
+                  groupAttrs.color,
+                  groupAttrs.shape,
+                  group.id,
+                  groupAttrs.scale,
+                  groupAttrs.colorRange,
+                  // Keyed off the track the aggregate actually draws: a graph
+                  // group's payload is its first drawn track
+                  // (`drawnAggregateTracks` — not `detailOnly`, not hidden, in
+                  // the current order), not merely the first visible one.
+                  showsSeriesLabel(
+                    drawnAggregateTracks(group.tracks).slice(0, 1)
+                  )
+                )
+              : ''
+          }
         </div>
       </div>
-      ${expanded
-        ? html`${repeat(
-            tracks,
-            (t) => t.id,
-            (t, i) => this._renderExpandedTrack(group, t, i, tracks.length)
-          )}`
-        : ''}
+      ${
+        expanded
+          ? html`${repeat(
+              tracks,
+              (t) => t.id,
+              (t, i) => this._renderExpandedTrack(group, t, i, tracks.length)
+            )}`
+          : ''
+      }
     `;
+  }
+
+  /** The empty-state message: nothing to draw, and nothing hidden. */
+  private _renderNoResults() {
+    // No accession is reachable here when a host supplies `sequence` itself,
+    // so the "for …" clause is dropped rather than left dangling.
+    const forWhat = this.accession ? ` for ${this.accession}` : '';
+    return html`<div class="protvista-no-results">
+      No feature data available${forWhat}
+    </div>`;
   }
 
   /**
    * Shown when the user has hidden everything. Without it the viewer would
    * look broken — an empty frame with no hint that the tracks are one click
    * from coming back.
+   *
+   * Only a genuinely-hidden canvas reaches here: a row whose data *failed*
+   * stays in `_rowsToRender` carrying its `⚠` badge (see
+   * `_rowRendersContent`), and a canvas that is empty with nothing hidden gets
+   * the no-results message instead (see `render()`), so this notice never
+   * stands in for a load failure or an absence it cannot fix.
    */
   private _renderAllHiddenNotice() {
     return html`
@@ -2820,11 +3604,16 @@ class ProtvistaUniprot extends LitElement {
         )} ${this._movedClass(trackKey(group.id, track.id))}"
         id="${CSS_PREFIX}-track_${track.id}"
       >
-        <div class="${CSS_PREFIX}-track-label" title="${track.description ?? ''}">
+        <div
+          class="${CSS_PREFIX}-track-label"
+          title="${track.description ?? ''}"
+        >
           <span class="${CSS_PREFIX}-label-text"
-            >${(track.filterUI === 'nightingale-filter' &&
-              this.getFilterComponent(key)) ||
-            unsafeHTML(renderLabel(track.label, this.accession))}</span
+            >${
+              (track.filterUI === 'nightingale-filter' &&
+                this.getFilterComponent(key)) ||
+              unsafeHTML(renderLabel(track.label, this.accession))
+            }</span
           >${this._renderTrackBadge(key)}${this._renderTrackControls(
             group,
             track,
@@ -2832,26 +3621,29 @@ class ProtvistaUniprot extends LitElement {
             total
           )}
         </div>
-        ${trackHasData
-          ? html`<div
-              class="${CSS_PREFIX}-track-content ${group.component ===
-              'nightingale-colored-sequence'
-                ? `${CSS_PREFIX}-track-content__coloured-sequence`
-                : ''}"
-              data-id="${CSS_PREFIX}-track_${track.id}"
-            >
-              ${this.getTrack(
-                track.component,
-                'non-overlapping',
-                attrs.color,
-                attrs.shape,
-                key,
-                attrs.scale,
-                attrs.colorRange,
-                showsSeriesLabel([track])
-              )}
-            </div>`
-          : ''}
+        ${
+          trackHasData
+            ? html`<div
+                class="${CSS_PREFIX}-track-content ${
+                  group.component === 'nightingale-colored-sequence'
+                    ? `${CSS_PREFIX}-track-content__coloured-sequence`
+                    : ''
+                }"
+                data-id="${CSS_PREFIX}-track_${track.id}"
+              >
+                ${this.getTrack(
+                  track.component,
+                  'non-overlapping',
+                  attrs.color,
+                  attrs.shape,
+                  key,
+                  attrs.scale,
+                  attrs.colorRange,
+                  showsSeriesLabel([track])
+                )}
+              </div>`
+            : ''
+        }
       </div>
     `;
   }
@@ -2879,21 +3671,25 @@ class ProtvistaUniprot extends LitElement {
         id="${CSS_PREFIX}-group_${row.id}"
       >
         <div class="${CSS_PREFIX}-track-label" title="${row.description ?? ''}">
-          ${collapsible
-            ? this._collapseButton(row, this._labelText(row.label), expanded)
-            : ''}<span class="${CSS_PREFIX}-label-text"
+          ${
+            collapsible
+              ? this._collapseButton(row, this._labelText(row.label), expanded)
+              : ''
+          }<span class="${CSS_PREFIX}-label-text"
             >${unsafeHTML(renderLabel(row.label, this.accession))}</span
           >${this._renderRowControls(row, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
       </div>
-      ${collapsible && expanded
-        ? html`${repeat(
-            row.tracks,
-            (t) => t.id,
-            (t, i) => this._renderTrackStub(row, t, i, row.tracks.length)
-          )}`
-        : ''}
+      ${
+        collapsible && expanded
+          ? html`${repeat(
+              row.tracks,
+              (t) => t.id,
+              (t, i) => this._renderTrackStub(row, t, i, row.tracks.length)
+            )}`
+          : ''
+      }
     `;
   }
 
@@ -2911,7 +3707,10 @@ class ProtvistaUniprot extends LitElement {
         )}"
         id="${CSS_PREFIX}-track_${track.id}"
       >
-        <div class="${CSS_PREFIX}-track-label" title="${track.description ?? ''}">
+        <div
+          class="${CSS_PREFIX}-track-label"
+          title="${track.description ?? ''}"
+        >
           <span class="${CSS_PREFIX}-label-text"
             >${unsafeHTML(renderLabel(track.label, this.accession))}</span
           >${this._renderTrackControls(group, track, index, total)}
@@ -3039,8 +3838,7 @@ class ProtvistaUniprot extends LitElement {
         (row) =>
           !row.standalone &&
           row.tracks.some(
-            (t) =>
-              (row.hidden || t.hidden) && !this._trackIsEmpty(row.id, t.id)
+            (t) => (row.hidden || t.hidden) && !this._trackIsEmpty(row.id, t.id)
           )
       )
       .map((row) => row.id);
@@ -3261,10 +4059,9 @@ class ProtvistaUniprot extends LitElement {
     return html`
       <button
         type="button"
-        class="${CSS_PREFIX}-row-control ${CSS_PREFIX}-row-control--move${dir ===
-        1
-          ? ` ${CSS_PREFIX}-row-control--down`
-          : ''}"
+        class="${CSS_PREFIX}-row-control ${CSS_PREFIX}-row-control--move${
+          dir === 1 ? ` ${CSS_PREFIX}-row-control--down` : ''
+        }"
         aria-label="Move ${name} ${dir === -1 ? 'up' : 'down'}"
         ?disabled="${atEnd}"
         @click="${(e: Event) => {
@@ -3272,7 +4069,9 @@ class ProtvistaUniprot extends LitElement {
           onClick(e.currentTarget as HTMLButtonElement);
         }}"
       >
-        <span aria-hidden="true">${svg`${unsafeHTML(inlineSvg(chevronUpIcon))}`}</span>
+        <span aria-hidden="true"
+          >${svg`${unsafeHTML(inlineSvg(chevronUpIcon))}`}</span
+        >
       </button>
     `;
   }
@@ -3376,14 +4175,31 @@ class ProtvistaUniprot extends LitElement {
     if (this._mountError) {
       return this.renderErrorPanel();
     }
+    // The spinner goes BEFORE the readiness gate, not after it. Gated behind
+    // it, the spinner could only appear in the narrow window between the
+    // sequence landing and the track fetches finishing — so the element
+    // rendered nothing at all during its longest wait, and a slow connection
+    // showed a blank region that reads as "broken". `loading` starts `true`,
+    // and `_settleLoading` clears it only once the sequence *and* the first
+    // track fetches have both landed, so moving the check up covers the whole
+    // initial load: config, sequence, and tracks, in whichever order they
+    // finish. `_mountError` is still checked above, so an error panel replaces
+    // the spinner rather than sitting under it.
+    if (this.loading) {
+      return html`<div
+          class="${CSS_PREFIX}-live-region"
+          role="status"
+          aria-live="polite"
+        >
+          ${this._announcement}
+        </div>
+        <div class="protvista-loader">
+          ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
+        </div>`;
+    }
     // Component isn't ready
     if (!this.sequence || !this.config) {
       return html``;
-    }
-    if (this.loading) {
-      return html`<div class="protvista-loader">
-        ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
-      </div>`;
     }
     // Derive error visibility once for this render — every group/track
     // badge decision below reads the precomputed sets.
@@ -3392,19 +4208,26 @@ class ProtvistaUniprot extends LitElement {
       // Fall through to the viewer only when there's a *visible* track
       // error to show a badge for; otherwise the blanket no-results
       // message (the silent-hide path) stands.
-      if (!this._anyVisibleError) {
-        return html`<div class="protvista-no-results">
-          No feature data available for ${this.accession}
-        </div>`;
-      }
+      if (!this._anyVisibleError) return this._renderNoResults();
     }
     const rows = this._rowsToRender();
+    // No row draws anything. That is "all tracks are hidden" only when the
+    // user hid something that would draw — `hasData` is a coarse heuristic
+    // (a raw `features` response with none matching a track's `filter:` still
+    // sets it), so it cannot tell an empty canvas from a hidden one. A canvas
+    // with nothing hidden has no data, and a Reset-layout button there would
+    // fix nothing.
+    if (
+      rows.length === 0 &&
+      this.config.rows.length > 0 &&
+      hiddenCount(this.config.rows, (rowId, trackId) =>
+        this._trackIsEmpty(rowId, trackId)
+      ) === 0
+    ) {
+      return this._renderNoResults();
+    }
     return html`
-      <div
-        class="${CSS_PREFIX}-live-region"
-        role="status"
-        aria-live="polite"
-      >
+      <div class="${CSS_PREFIX}-live-region" role="status" aria-live="polite">
         ${this._announcement}
       </div>
       <nightingale-manager
@@ -3417,9 +4240,9 @@ class ProtvistaUniprot extends LitElement {
               ${this._renderCustomizeToggle()}
             </div>
             <div
-              class="${CSS_PREFIX}-toolbar-row ${this._customizeMode
-                ? ''
-                : `${CSS_PREFIX}-toolbar-row--reserved`}"
+              class="${CSS_PREFIX}-toolbar-row ${
+                this._customizeMode ? '' : `${CSS_PREFIX}-toolbar-row--reserved`
+              }"
             >
               ${this._renderCustomizeActions()}
             </div>
@@ -3440,9 +4263,11 @@ class ProtvistaUniprot extends LitElement {
             ></nightingale-sequence>
           </div>
         </div>
-        ${rows.length === 0 && this.config.rows.length > 0
-          ? this._renderAllHiddenNotice()
-          : ''}
+        ${
+          rows.length === 0 && this.config.rows.length > 0
+            ? this._renderAllHiddenNotice()
+            : ''
+        }
         ${repeat(
           // Keyed on the row id so a reorder *moves* the Nightingale DOM
           // nodes instead of re-binding canvases positionally, keeping
@@ -3467,13 +4292,15 @@ class ProtvistaUniprot extends LitElement {
             ></nightingale-sequence>
           </div>
         </div>
-        ${!this.nostructure
-          ? html`
-              <protvista-uniprot-structure
-                accession="${this.accession || ''}"
-              ></protvista-uniprot-structure>
-            `
-          : ''}
+        ${
+          !this.nostructure
+            ? html`
+                <protvista-uniprot-structure
+                  accession="${this.accession || ''}"
+                ></protvista-uniprot-structure>
+              `
+            : ''
+        }
       </nightingale-manager>
     `;
   }
@@ -3505,49 +4332,60 @@ class ProtvistaUniprot extends LitElement {
       <div class="${CSS_PREFIX}-error-panel" role="alert" tabindex="-1">
         <div class="${CSS_PREFIX}-error-panel__head">
           <p class="${CSS_PREFIX}-error-panel__summary">${err.summary}</p>
-          ${dismissible || retryable
-            ? html`<div class="${CSS_PREFIX}-error-panel__actions">
-                ${retryable
-                  ? html`<button
-                      type="button"
-                      class="${CSS_PREFIX}-error-retry"
-                      @click="${() => this._retryMount()}"
-                    >
-                      Retry
-                    </button>`
-                  : ''}
-                ${dismissible
-                  ? html`<button
-                      type="button"
-                      aria-label="Dismiss error"
-                      @click="${() => this._dismissError()}"
-                    >
-                      Dismiss
-                    </button>`
-                  : ''}
-              </div>`
-            : ''}
-        </div>
-        ${err.groups && err.groups.length
-          ? html`<details class="${CSS_PREFIX}-error-issues" open>
-              <summary>${count} issue${count === 1 ? '' : 's'}</summary>
-              ${err.groups.map(
-                (g) => html`
-                  <div class="${CSS_PREFIX}-error-issue">
-                    <div class="${CSS_PREFIX}-error-issue__path">${g.path}</div>
-                    ${g.items.map(
-                      (it) => html`<div>
-                        ${it.message}
-                        <span class="${CSS_PREFIX}-error-issue__code"
-                          >(${it.code})</span
+          ${
+            dismissible || retryable
+              ? html`<div class="${CSS_PREFIX}-error-panel__actions">
+                  ${
+                    retryable
+                      ? html`<button
+                          type="button"
+                          class="${CSS_PREFIX}-error-retry"
+                          @click="${() => this._retryMount()}"
                         >
-                      </div>`
-                    )}
-                  </div>
-                `
-              )}
-            </details>`
-          : ''}
+                          Retry
+                        </button>`
+                      : ''
+                  }
+                  ${
+                    dismissible
+                      ? html`<button
+                          type="button"
+                          aria-label="Dismiss error"
+                          @click="${() => this._dismissError()}"
+                        >
+                          Dismiss
+                        </button>`
+                      : ''
+                  }
+                </div>`
+              : ''
+          }
+        </div>
+        ${
+          err.groups && err.groups.length
+            ? html`<details class="${CSS_PREFIX}-error-issues" open>
+                <summary>${count} issue${count === 1 ? '' : 's'}</summary>
+                ${err.groups.map(
+                  (g) => html`
+                    <div class="${CSS_PREFIX}-error-issue">
+                      <div class="${CSS_PREFIX}-error-issue__path">
+                        ${g.path}
+                      </div>
+                      ${g.items.map(
+                        (it) =>
+                          html`<div>
+                            ${it.message}
+                            <span class="${CSS_PREFIX}-error-issue__code"
+                              >(${it.code})</span
+                            >
+                          </div>`
+                      )}
+                    </div>
+                  `
+                )}
+              </details>`
+            : ''
+        }
       </div>
     `;
   }
@@ -3602,35 +4440,56 @@ class ProtvistaUniprot extends LitElement {
         aria-describedby="${descId}"
         title="${detail}"
         >⚠</span
-      ><span id="${descId}" class="${CSS_PREFIX}-visually-hidden">${detail}</span
-      >${retryKeys.length
-        ? html`<button
-            type="button"
-            class="${CSS_PREFIX}-error-retry"
-            aria-label="${retryLabel}"
-            @click="${(e: Event) => {
-              // Don't let the click bubble to the group-label's collapse
-              // toggle — Retry should reload, not expand/collapse the group.
-              e.stopPropagation();
-              this._retry(retryKeys);
-            }}"
-          >
-            Retry
-          </button>`
-        : ''}`;
+      ><span id="${descId}" class="${CSS_PREFIX}-visually-hidden"
+        >${detail}</span
+      >${
+        retryKeys.length
+          ? html`<button
+              type="button"
+              class="${CSS_PREFIX}-error-retry"
+              aria-label="${retryLabel}"
+              @click="${(e: Event) => {
+                // Don't let the click bubble to the group-label's collapse
+                // toggle — Retry should reload, not expand/collapse the group.
+                e.stopPropagation();
+                this._retry(retryKeys);
+              }}"
+            >
+              Retry
+            </button>`
+          : ''
+      }`;
   }
 
   /**
-   * Whether a fetch failure is worth retrying: transport problems
-   * (`network` — connectivity may return) and server errors (`http` 5xx —
-   * may be transient). A 4xx is deterministic (a 404 means the entity has
-   * no data of this kind) and a `parse` failure re-parses the same body,
-   * so neither offers a Retry.
+   * Whether a failure is worth retrying.
+   *
+   * Transport problems (`network` — connectivity may return) and server errors
+   * (`http` 5xx — may be transient) are, as is **any** HTTP failure on an
+   * authored source. That one looks odd next to the others: a static file
+   * that 404s will 404 again. But the author is the one who can fix it, and
+   * they fix it by correcting the path or dropping the file into place —
+   * after which Retry reloads that one track instead of the whole page. The
+   * affordance is for the person who can act, not for the server.
+   *
+   * So is a *provider adapter's* own throw (`retryable`, set by the loader,
+   * which alone knows which step threw). A provider adapter is not a pure
+   * decoder: it can make requests of its own (the AlphaFold confidence
+   * adapter fetches a second file), so its throw may be the same transient
+   * outage a 5xx is, and the reader has no file to fix.
+   *
+   * Everything else is deterministic and gets no Retry: a provider 4xx (which
+   * is not recorded as a failure at all), a `parse` failure that would
+   * re-parse the same body, a decoder rejecting the author's own file or a
+   * `setTrackData()` payload, an unregistered adapter name — the same code
+   * over the same input — and a `render` failure that would hand the
+   * component the same payload.
    */
   private _isRecoverable(err: TrackFetchError): boolean {
     return (
       err.kind === 'network' ||
-      (err.kind === 'http' && (err.status ?? 0) >= 500)
+      (err.kind === 'http' && ((err.status ?? 0) >= 500 || !!err.authored)) ||
+      (err.kind === 'adapter' && !!err.retryable)
     );
   }
 
@@ -3658,9 +4517,16 @@ class ProtvistaUniprot extends LitElement {
   private _renderGroupBadge(groupId: string) {
     if (!this._visibleGroupErrors.has(groupId)) return '';
     if (this.openGroups.includes(groupId) && !!this.data[groupId]) return '';
-    const detail = this._groupErrors.has(groupId)
-      ? 'All tracks in this group failed to load'
-      : 'Some tracks in this group failed to load';
+    // An aggregate-scoped failure (the collapsed view rejected its payload)
+    // has a message of its own worth more than the generic count — it names
+    // what the element could not read.
+    const aggregate = this._trackErrors.get(groupId);
+    const detail =
+      aggregate?.trackId === null && aggregate.message
+        ? aggregate.message
+        : this._groupErrors.has(groupId)
+          ? 'All tracks in this group failed to load'
+          : 'Some tracks in this group failed to load';
     return this._renderErrorBadge(
       detail,
       `${CSS_PREFIX}-gerr-${this._instanceId}-${groupId}`,
@@ -3781,8 +4647,7 @@ class ProtvistaUniprot extends LitElement {
     if (!selectedFilters) return;
 
     const baseline = this.data[`${trackKey}${UNFILTERED_SUFFIX}`] as
-      | { sequence: string; variants: TransformedVariant[] }
-      | undefined;
+      { sequence: string; variants: TransformedVariant[] } | undefined;
     // `filterUI` is a generic opt-in, so guard against a baseline that is
     // absent (filter fired before the loader ran) or not a variant
     // bundle (e.g. a plain feature array) — either would be silently
@@ -3918,17 +4783,13 @@ class ProtvistaUniprot extends LitElement {
           </nightingale-sequence-heatmap>
         `;
       default:
-        // Reached when a component is registered and validated but has
-        // no `case` here — the current gap for consumer components (see
-        // "Register + load + render" in docs/architecture.md). Name the
-        // component and the row: validation deliberately accepts these
-        // now, so this warning is the only signal the author gets that
-        // the row rendered empty.
-        console.warn(
-          `[protvista-uniprot] No renderer for component '${component}'` +
-            `${id ? ` (row '${id}')` : ''}. Custom components are defined ` +
-            `and validated but not yet drawn — the row renders empty.`
-        );
+        // Reached when a component is registered and validated but has no
+        // `case` here — the current gap for consumer components (see
+        // "Register + load + render" in docs/architecture.md). Draw nothing,
+        // and say nothing from here: `registerConfigComponents` has already
+        // reported it once for the whole config, through the router. A report
+        // from inside `render()` could only reach the console anyway, and
+        // would repeat on every pass.
         break;
     }
   }

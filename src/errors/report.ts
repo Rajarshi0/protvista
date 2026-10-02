@@ -1,13 +1,13 @@
 /**
  * Shared vocabulary for the user-facing error surfaces.
  *
- * `<protvista-uniprot>` reports every error through a single seam
- * (`reportError` on the element). That seam keeps the existing
- * developer-facing `console.*` output *and* adds three user-facing
- * channels on top: a mount-level alert panel, per-track badges, and a
- * bubbling `protvista-error` CustomEvent for embedders. This module
- * holds the two types that vocabulary is built on — kept type-only so
- * it adds nothing to the runtime bundle.
+ * `<protvista-uniprot>` reports every failure through a single seam
+ * (`_report` on the element), which asks the routing table in
+ * `./router.ts` which channels it reaches: the developer-facing
+ * `console.*` line, a mount-level alert panel, a per-track badge, and the
+ * bubbling `protvista-error` CustomEvent for embedders. This module holds
+ * the two types that vocabulary is built on — kept type-only so it adds
+ * nothing to the runtime bundle.
  */
 
 /**
@@ -17,14 +17,18 @@
  * Four phases emit today:
  *   - `config`          — config validation / parse failure (mount panel),
  *                         or a config that loaded with warnings (event only;
- *                         each issue carries `severity: 'warning'`)
+ *                         `detail.severity` is `'warning'`, and each issue,
+ *                         when there are any, carries `severity: 'warning'`)
  *   - `sequence`        — no usable sequence for the accession (mount panel)
- *   - `track-fetch`     — a track's URL returned HTTP 4xx/5xx (opt-in badge)
+ *   - `track-fetch`     — a track's data failed: its URL was unreachable
+ *                         or answered 5xx, an authored path or URL 4xx'd, its
+ *                         body was unparseable, or its decoder / adapter
+ *                         threw on the records (badge + event)
  *   - `set-track-data`  — misuse of the `setTrackData()` escape hatch
  *
  * Two are reserved for surfaces that don't exist in the codebase yet;
  * they are declared here so the vocabulary is stable and so that when
- * those features land they emit through the same `reportError` seam
+ * those features land they emit through the same `_report` seam
  * (one listener covers every flavour):
  *   - `transform-calculate` — a `calculate` expression threw for some
  *                             items (see specs/transform-engine.md)
@@ -53,9 +57,21 @@ export interface ErrorContext {
   url?: string;
   status?: number;
   /**
-   * For `track-fetch`, how the fetch failed: `network` (unreachable —
-   * blocked, offline, DNS, CORS, timeout), `http` (a 4xx/5xx response;
-   * `status` is set), or `parse` (a 2xx body that failed to parse).
+   * For `track-fetch`, how the track failed, in pipeline order:
+   *
+   *   - `network` — unreachable (blocked, offline, DNS, CORS, timeout);
+   *   - `http`    — a 4xx/5xx response (`status` is set);
+   *   - `parse`   — a 2xx body that failed to parse;
+   *   - `adapter` — the body arrived, but the decoder / shape validator /
+   *                 named adapter threw on it (a malformed file, or a
+   *                 provider adapter's own request failing);
+   *   - `render`  — the payload was built, and the Nightingale element
+   *                 rejected it when handed over. `trackId` is absent when
+   *                 the rejected payload was a group's collapsed aggregate
+   *                 rather than one track's.
+   *
+   * An `adapter` or `render` failure's message is the thrown error's own
+   * text, which names the author's file and the offending row.
    */
-  errorKind?: 'network' | 'http' | 'parse';
+  errorKind?: 'network' | 'http' | 'parse' | 'adapter' | 'render';
 }

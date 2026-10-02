@@ -254,9 +254,12 @@ there is no tokenizer — just structural validation. As shipped (issue
 `features-csv` / `features-tsv` rather than the lenient filter-and-warn
 originally sketched here:
 
-- A body that is not an array → `console.warn` + return `[]` (the
-  defensive wrong-container guard, mirroring the delimited adapters'
-  non-string guard).
+- A body that is not an array → throws, naming the type it got (as
+  `linegraph` and `variation` do). This was originally a `console.warn` +
+  return `[]` guard mirroring the delimited adapters' non-string one, but a
+  file wrapped as `{ "features": [...] }` then rendered as a track that
+  loaded and was empty, with no badge; it now reaches the track's `⚠` badge
+  like any other malformed file (#282).
 - Each element is validated and pared down to the canonical
   `FeatureRecord` shape. The start coordinate is read from `start` **or**
   `begin` (UniProt convention) and normalised to `start`; `start` wins

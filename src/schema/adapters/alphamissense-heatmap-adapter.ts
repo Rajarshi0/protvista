@@ -25,17 +25,27 @@ const parseCSV = (rawText: string): Array<Record<string, string>> => {
   return data;
 };
 
-// Load and parse
+/**
+ * Fetch and parse the AlphaMissense annotations the prediction payload points
+ * at.
+ *
+ * Throws on failure rather than logging and returning nothing. This is a
+ * second request the loader cannot see, so its outcome has to leave through
+ * the adapter: a throw reaches the loader's per-track catch and is routed
+ * like any other track failure — a badge, the event, and (this being a
+ * provider source) a Retry, since an outage here is usually transient.
+ * Unchecked, an error page's body went on to `parseCSV` as if it were data.
+ */
 const loadAndParseAnnotations = async (
   url: string
 ): Promise<Array<Record<string, string>>> => {
-  try {
-    const payload = await fetch(url);
-    const rawCSV = await payload.text();
-    return parseCSV(rawCSV);
-  } catch (e) {
-    console.error('Could not load AlphaMissense pathogenicity', e);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `AlphaMissense pathogenicity data unavailable (HTTP ${response.status}) at ${url}`
+    );
   }
+  return parseCSV(await response.text());
 };
 
 type PartialProtein = {

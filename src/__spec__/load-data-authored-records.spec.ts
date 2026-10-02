@@ -132,12 +132,16 @@ describe('inline and custom run the kind’s record adapter', () => {
   });
 
   it('surfaces a malformed inline record as a named error, not a blank track', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { data } = await load(
+    // The loader records the failure rather than logging it: every failure in
+    // the viewer is routed in one place (`src/errors/router.ts`), and the
+    // component turns this record into the badge, the event and the console
+    // line. The message itself is what matters here, and it is unchanged.
+    const { data, trackFailures } = await load(
       inlineConfig('linegraph', [{ position: 1, value: '412' }])
     );
     expect(data['G-t']).toBeUndefined();
-    expect(warn.mock.calls.flat().join(' ')).toMatch(
+    expect(trackFailures['G-t'].severity).toBe('error');
+    expect(trackFailures['G-t'].message).toMatch(
       /row 0: .*'value' is a string, not a number/
     );
   });
@@ -244,15 +248,11 @@ describe('inline text is read the way its format says', () => {
   });
 
   it('names the inline body and its reading in a parse error', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { data } = await load(
+    const { data, trackFailures } = await load(
       inlineText('linegraph', 'position,value\n1,abc\n', 'csv')
     );
     expect(data['G-t']).toBeUndefined();
-    expect(warn.mock.calls.flat().join(' ')).toMatch(
-      /inline data \(parsed as CSV\)/
-    );
-    vi.restoreAllMocks();
+    expect(trackFailures['G-t'].message).toMatch(/inline data \(parsed as CSV\)/);
   });
 
   it('reads a structured payload as records even under a text format', async () => {
