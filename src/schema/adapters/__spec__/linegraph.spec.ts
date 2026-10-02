@@ -170,9 +170,7 @@ describe('linegraph adapter', () => {
     const series = linegraph([{ position: 2, value: 0.5 }]) as Array<{
       values: unknown;
     }>;
-    expect(series[0].values).toEqual([
-      { position: 2, value: 0.5 },
-    ]);
+    expect(series[0].values).toEqual([{ position: 2, value: 0.5 }]);
   });
 });
 

@@ -10,6 +10,9 @@
  *     the delimited body reaches the decoder as raw text, not parsed
  *     JSON), while ordinary API tracks still fetch as `'json'`;
  *   • the decoded feature records land on the track's data slot.
+ *
+ * It also pins the failure path: a malformed JSON file renders empty with a
+ * file/record-named warning.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -248,7 +251,12 @@ describe('loadProtvistaData — from: file (features-json)', () => {
     const fetchOne = vi.fn(async () => [{ type: 'DOMAIN', start: 5, end: 4 }]);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const result = await loadProtvistaData('P05067', config, fetchOne, resolveAdapter);
+      const result = await loadProtvistaData(
+        'P05067',
+        config,
+        fetchOne,
+        resolveAdapter
+      );
       expect(result.data['MY-hits']).toBeUndefined();
       expect(warn.mock.calls.flat().join(' ')).toContain(
         './features.json (parsed as JSON): record 0: end (4) is before start (5).'

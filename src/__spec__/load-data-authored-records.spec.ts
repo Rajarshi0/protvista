@@ -11,7 +11,9 @@
  *
  * Pins, in order: the wrapping/non-wrapping split the rule is derived from,
  * the three transports agreeing, the pass-through for payloads already in the
- * renderer's representation, and the blast-radius containment.
+ * renderer's representation, the blast-radius containment, and authored
+ * point/variation coordinates held to whole numbers, with feature arrays
+ * bypassing the validator.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -345,7 +347,9 @@ describe('authored coordinates must be whole numbers', () => {
 
   it('rejects a fractional position in setTrackData() point records', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { data } = await loadCustom('linegraph', [{ position: 1.5, value: 2 }]);
+    const { data } = await loadCustom('linegraph', [
+      { position: 1.5, value: 2 },
+    ]);
     expect(data['G-t']).toBeUndefined();
     expect(warn.mock.calls.flat().join(' ')).toMatch(NOT_WHOLE);
   });
