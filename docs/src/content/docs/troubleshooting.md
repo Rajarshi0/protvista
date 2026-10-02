@@ -62,6 +62,10 @@ The viewer gates its whole pipeline on a truthy `accession`, and fetches that
 sequence first. If `accession` is missing or wrong, even fully local data won't
 show. Set a valid `accession` (e.g. `P05067`).
 
+While that first load is in flight you see a spinner, and screen readers hear
+"Loading protein data…" — so a region that stays *blank* is not a slow load.
+Check that `accession` is set, and that `suspend` is not still on the element.
+
 ### A track shows up empty
 
 Almost always a **path** issue with a file-backed track. `data: ./hotspots.csv`

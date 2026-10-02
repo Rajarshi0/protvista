@@ -162,6 +162,13 @@ const measureOnce = (name: string, start: string, end: string) => {
 };
 
 /**
+ * What the polite live region says while the element is loading. A named
+ * constant because `updated()` both sets it and tests for it when clearing —
+ * a literal in two places would silently stop clearing if one was reworded.
+ */
+const LOADING_ANNOUNCEMENT = 'Loading protein data…';
+
+/**
  * How a track's data failed. See `_trackErrors`.
  *
  * The first three are transport outcomes, classified by the fetch closure in
@@ -317,6 +324,13 @@ class ProtvistaUniprot extends LitElement {
    * announcement only helps people who hear it.
    */
   private _movedKey: string | null = null;
+  /**
+   * Whether the initial-load announcement has been made for the load in
+   * flight. Latches so `updated()` — which runs for every reactive property —
+   * announces the wait once rather than on every cycle, and resets when the
+   * load settles so a later accession change announces again.
+   */
+  private _loadAnnounced = false;
   /** Timer clearing `_movedKey`; re-armed on each move. */
   private _movedTimer?: ReturnType<typeof setTimeout>;
   /**
@@ -1489,6 +1503,25 @@ class ProtvistaUniprot extends LitElement {
       this._prevFocus = null;
     }
     this._panelWasOpen = panelOpen;
+
+    // Announce the wait politely. A live region only announces a *change* to
+    // its contents, so this cannot be set at load start — the region would
+    // arrive with its text already in it and most screen readers would stay
+    // silent. Setting it here, after the first paint has mounted the (empty)
+    // region, makes the text an update to a region already in the tree.
+    //
+    // The `_loadAnnounced` latch is what keeps it to once per load: `updated()`
+    // runs for every reactive property, and re-announcing on each would talk
+    // over the user. Clearing on completion leaves the region empty for the
+    // layout announcements that share it, and an empty string announces
+    // nothing.
+    if (this.loading && !this._loadAnnounced) {
+      this._loadAnnounced = true;
+      this._announce(LOADING_ANNOUNCEMENT);
+    } else if (!this.loading && this._loadAnnounced) {
+      this._loadAnnounced = false;
+      if (this._announcement === LOADING_ANNOUNCEMENT) this._announce('');
+    }
 
     // First render with content — manager is in the DOM, not the loader.
     if (this.hasData && !this.loading) {
@@ -3353,14 +3386,29 @@ class ProtvistaUniprot extends LitElement {
     if (this._mountError) {
       return this.renderErrorPanel();
     }
+    // The spinner goes BEFORE the readiness gate, not after it. Gated behind
+    // it, the spinner could only appear in the narrow window between the
+    // sequence landing and the track fetches finishing — so the element
+    // rendered nothing at all during its longest wait, and a slow connection
+    // showed a blank region that reads as "broken". `loading` starts `true`,
+    // so moving the check up covers the whole initial load: config, sequence,
+    // and the first track fetches. `_mountError` is still checked above, so an
+    // error panel replaces the spinner rather than sitting under it.
+    if (this.loading) {
+      return html`<div
+          class="${CSS_PREFIX}-live-region"
+          role="status"
+          aria-live="polite"
+        >
+          ${this._announcement}
+        </div>
+        <div class="protvista-loader">
+          ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
+        </div>`;
+    }
     // Component isn't ready
     if (!this.sequence || !this.config) {
       return html``;
-    }
-    if (this.loading) {
-      return html`<div class="protvista-loader">
-        ${svg`${unsafeHTML(inlineSvg(loaderIcon))}`}
-      </div>`;
     }
     // Derive error visibility once for this render — every group/track
     // badge decision below reads the precomputed sets.
