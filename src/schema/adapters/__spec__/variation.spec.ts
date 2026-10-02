@@ -190,6 +190,18 @@ describe('variation-csv / variation-tsv', () => {
   it('treats a non-text body as empty rather than throwing', () => {
     expect(variationCsv({ not: 'text' })).toEqual({ variants: [] });
   });
+
+  it('rejects a fractional position, naming the row and column', () => {
+    expect(() => variationCsv('position,variant\n4.5,K\n')).toThrow(
+      './my-variants.csv (parsed as CSV): row 2, column "position": expected a whole number, got "4.5".'
+    );
+  });
+
+  it('rejects a fractional position in TSV too', () => {
+    expect(() => variationTsv('position\tvariant\n4.5\tK\n')).toThrow(
+      './my-variants.tsv (parsed as TSV): row 2, column "position": expected a whole number, got "4.5".'
+    );
+  });
 });
 
 describe('the variation family on the kinds that use it', () => {

@@ -166,13 +166,34 @@ export function parseDecimal(raw: string): number | null {
 }
 
 /**
+ * Throw unless an already-parsed coordinate is a whole number. `raw` in the
+ * message is the untrimmed cell, as in the "expected a number" errors.
+ */
+function wholeNumber(
+  cells: string[],
+  index: Map<string, number>,
+  col: string,
+  n: number,
+  line: number,
+  formatLabel: string
+): void {
+  if (Number.isInteger(n)) return;
+  throw new Error(
+    `${formatLabel}: row ${line}, column "${col}": expected a whole number, ` +
+      `got "${cells[index.get(col) as number]}".`
+  );
+}
+
+/**
  * Turn tokenized rows (header + data) into `FeatureRecord`s.
  *
  * The header row must contain `type`, `start`, `end`, and `description`
  * (in any order, no duplicates); `score` is optional. Every data row must
  * have exactly as many fields as the header. `start`/`end` are coerced to
- * decimal numbers and must be finite; `score`, when the column is present
- * and the cell is non-empty, is likewise coerced and validated.
+ * decimal numbers, must be finite whole numbers, and `end` may not precede
+ * `start` (equal endpoints — a single residue — are fine, as in BED);
+ * `score`, when the column is present and the cell is non-empty, is coerced
+ * and validated but may be any decimal.
  *
  * On any violation this throws with a message naming the offending row (by
  * 1-based line number, header = line 1) and, where meaningful, the column —
@@ -251,6 +272,17 @@ export function rowsToFeatureRecords(
       end: num('end'),
     };
 
+    // Coordinates must be whole residues; checked after both parse so a
+    // non-number anywhere in the row is reported first.
+    wholeNumber(cells, index, 'start', record.start, line, formatLabel);
+    wholeNumber(cells, index, 'end', record.end, line, formatLabel);
+    if (record.end < record.start) {
+      throw new Error(
+        `${formatLabel}: row ${line}: end (${record.end}) is before ` +
+          `start (${record.start}).`
+      );
+    }
+
     const description = cells[index.get('description') as number];
     if (description !== '') record.description = description;
 
@@ -296,7 +328,8 @@ export const POINT_COLUMNS = ['position', 'value'] as const;
  * any order, no duplicates), every data row must have exactly as many
  * fields as the header, and both cells are coerced through
  * {@link parseDecimal} so the number grammar cannot drift between the
- * feature and graph formats. Extra columns are permitted and ignored,
+ * feature and graph formats. `position` must be a whole number; `value`
+ * may be any decimal. Extra columns are permitted and ignored,
  * matching the feature layer's treatment of unknown headers.
  *
  * Rows are returned in file order — `linegraph` draws points in the order
@@ -366,7 +399,12 @@ export function rowsToPointRecords(
       return n;
     };
 
-    records.push({ position: num('position'), value: num('value') });
+    const record: PointRecord = {
+      position: num('position'),
+      value: num('value'),
+    };
+    wholeNumber(cells, index, 'position', record.position, line, formatLabel);
+    records.push(record);
   }
 
   return records;
@@ -405,8 +443,8 @@ export const VARIATION_OPTIONAL_COLUMNS = [
  * with the same discipline: the header must contain `position` and `variant`
  * (in any order, no duplicates), every data row must have exactly as many
  * fields as the header, and `position` is coerced through
- * {@link parseDecimal}. Extra columns beyond the documented optional ones are
- * permitted and ignored.
+ * {@link parseDecimal} and must be a whole number. Extra columns beyond the
+ * documented optional ones are permitted and ignored.
  *
  * `variant` is a string, not a number — it is the residue (or residues) the
  * position changes to, `*` for a stop, `-` for a deletion. It is required to
@@ -473,6 +511,7 @@ export function rowsToVariationRecords(
           `got "${rawPosition}".`
       );
     }
+    wholeNumber(cells, index, 'position', position, line, formatLabel);
 
     const variant = cell('variant') ?? '';
     if (variant === '') {
