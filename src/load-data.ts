@@ -20,6 +20,13 @@
  *      looks up in the registry) and run it, apply the single-type filter
  *      if the track has one, and assign the result to
  *      `data[`${group}-${track}`]`.
+ *   3b. Record a track whose decode / adapter step threw in
+ *      `trackFailures` (keyed `${groupId}-${trackId}`) and leave its slot
+ *      empty, so one bad file degrades one track rather than the batch —
+ *      and so the caller can route it instead of losing it to the console.
+ *      This module reports nothing itself: it has no surfaces, and a
+ *      `console` call here would be a channel outside the routing table
+ *      (`src/errors/router.ts`).
  *   4. Assign a group-level aggregate at `data[group]`, built from the
  *      tracks that are neither `detailOnly` nor hidden
  *      (`aggregatePayload`) — which is their `.flat()` for most
@@ -30,7 +37,7 @@
  *      taken before `filter:`, as `trackCoordinates` — kept out of `data`
  *      for the component's sequence-bounds warning.
  *
- * Intentionally kept side-effect-free: no `this`, no DOM. Tracks that
+ * Intentionally kept side-effect-free: no `this`, no DOM, no `console`. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
  * adapted payload mirrored under a second key,
  * `${groupId}-${trackId}${UNFILTERED_SUFFIX}`, so the component's filter
@@ -147,6 +154,53 @@ type LoadResult = {
    * tooltips.
    */
   trackCoordinates: Record<string, TrackCoordinates>;
+  /**
+   * Per-track outcomes that are not fetch failures, keyed by
+   * `${groupId}-${trackId}`: a decode/validate failure (`./hits.csv (parsed
+   * as CSV): row 3, column "start": expected a number, got "abc"`), an
+   * adapter that rejected the body it was handed, an unregistered `adapter:`
+   * name, or a `from: custom` track nobody injected data into.
+   *
+   * Returned rather than reported here, because this module renders nothing
+   * and logs nothing: every failure in the viewer is routed in one place
+   * (`src/errors/router.ts`), and a loader that wrote to the console would be
+   * a second, unrouted channel. The caller correlates these to rows and
+   * routes them (see `_collectTrackErrors`).
+   */
+  trackFailures: Record<string, TrackProcessingFailure>;
+  /**
+   * One message per URL template that was not fetched because a `{token}`
+   * had no value or a refused one (see `substituteTemplate`). Returned rather
+   * than logged for the same reason as `trackFailures`; the caller routes
+   * each as a warning.
+   */
+  skipWarnings: string[];
+};
+
+/** One track's non-fetch outcome. See `LoadResult.trackFailures`. */
+export type TrackProcessingFailure = {
+  /**
+   * How bad it is, in the routing table's terms (`src/errors/router.ts`).
+   * `error` is a track that cannot render what it was asked to — a malformed
+   * file, an adapter that threw. `info` is an expected absence: a
+   * `from: custom` track nobody injected data into.
+   */
+  severity: 'error' | 'info';
+  /** The message, verbatim — a thrown error's text names the file and the row. */
+  message: string;
+  /** The thrown value itself, for the developer channel. Absent for `info`. */
+  cause?: unknown;
+  /**
+   * Whether running the track again could change the outcome. Only a
+   * *provider* adapter's own throw qualifies: a provider adapter is not a
+   * pure transform — it can make requests of its own (the AlphaFold
+   * confidence adapter fetches a second file), so its failure may be as
+   * transient as a 5xx. A decoder rejecting the author's file, a malformed
+   * `setTrackData()` payload, and an unregistered adapter name are the same
+   * code over the same input every time. Set here because only the loader
+   * knows which step threw.
+   */
+  retryable?: boolean;
 };
 
 /**
@@ -436,6 +490,7 @@ export async function loadProtvistaData(
   const trackCoordinates: Record<string, TrackCoordinates> = {};
   const substituted = new Map<string, string>();
   const skipped = new Set<string>();
+  const skipWarnings: string[] = [];
   const substitute = (template: string, trackPath: string): string | null => {
     const known = substituted.get(template);
     if (known !== undefined) return known;
@@ -447,7 +502,7 @@ export async function loadProtvistaData(
     }
     skipped.add(template);
     const braced = (tokens: string[]) => tokens.map((t) => `{${t}}`).join(', ');
-    console.warn(
+    skipWarnings.push(
       `[protvista-uniprot] Not fetching '${template}' for track ${trackPath}: ` +
         ('unresolved' in result
           ? `undefined variable(s) ${braced(result.unresolved)}. ` +
@@ -512,6 +567,7 @@ export async function loadProtvistaData(
   );
 
   const data: Record<string, unknown> = {};
+  const trackFailures: Record<string, TrackProcessingFailure> = {};
 
   // Resolve an adapter by name through the injected registry resolver — the
   // loader itself holds no adapter map and knows no adapter names. A
@@ -543,8 +599,14 @@ export async function loadProtvistaData(
       data[`${key}${UNFILTERED_SUFFIX}`] = payload;
     }
     const source = track.data[0];
-    const isInline = source?.from === 'inline';
-    if ((isAuthoredSource(source) || isInline) && hasRenderableRows(payload)) {
+    // Inline and `setTrackData()` payloads are bring-your-own data too, with
+    // no raw response for the legacy heuristic to see. Without `custom` here,
+    // a viewer drawn wholly from injected data reads as "no data".
+    const isSupplied = source?.from === 'inline' || source?.from === 'custom';
+    if (
+      (isAuthoredSource(source) || isSupplied) &&
+      hasRenderableRows(payload)
+    ) {
       hasData = true;
     }
   };
@@ -607,6 +669,9 @@ export async function loadProtvistaData(
         if (!first) return;
         const url = first.url;
         const adapter = first.adapter;
+        // Set when the throw came from a provider adapter's own body — the
+        // one failure here a Retry could change (`retryable` below).
+        let providerAdapterThrew = false;
 
         // Isolate the per-track pipeline: an adapter (or filter/tooltip
         // step) that throws on an unexpected payload — e.g. the empty
@@ -623,9 +688,10 @@ export async function loadProtvistaData(
           // tracks.
           if (first.from === 'custom') {
             if (!(trackKey in customTrackData)) {
-              console.info(
-                `Track ${groupId}/${trackId} is 'from: custom' but no data was provided via setTrackData().`
-              );
+              trackFailures[trackKey] = {
+                severity: 'info',
+                message: `Track ${groupId}/${trackId} is 'from: custom' but no data was provided via setTrackData().`,
+              };
               return;
             }
             // `setTrackData()` payloads are not bounds-checked: they are
@@ -682,6 +748,19 @@ export async function loadProtvistaData(
           //    provider transform, or one the author pinned). Empty-body
           //    guards and post-processing live inside each.
           let transformedData: any = trackData;
+          // A body that never arrived (the fetch closure's `null`) has nothing
+          // to decode. The caller reports the fetch failure itself, and a
+          // decoder handed the `[]` placeholder would add its own "expected a
+          // text body" line beside it, pointing at the body instead of the
+          // path. Provider adapters still run: some fetch a second source and
+          // degrade on a partial payload, and their throw is subordinate to
+          // the fetch failure there anyway.
+          if (
+            first.format !== undefined &&
+            rawData[(Array.isArray(url) ? url[0] : url) ?? ''] == null
+          ) {
+            return undefined;
+          }
           if (first.format !== undefined) {
             // The author's own path, so a parse error names their file.
             const source =
@@ -703,7 +782,15 @@ export async function loadProtvistaData(
               url: source,
             };
           } else if (adapter) {
-            transformedData = await resolveAdapterFn(adapter)(...trackData);
+            // Resolved outside the guard: an unregistered name is a config
+            // mistake, not something a Retry could fix.
+            const adapterFn = resolveAdapterFn(adapter);
+            try {
+              transformedData = await adapterFn(...trackData);
+            } catch (err) {
+              providerAdapterThrew = true;
+              throw err;
+            }
           }
 
           // 2. Filter raw data if filter is specified
@@ -735,10 +822,16 @@ export async function loadProtvistaData(
           assignTrackData(trackKey, annotated, track);
           return annotated;
         } catch (err) {
-          console.warn(
-            `[protvista-uniprot] track ${groupId}/${trackId} failed to process; rendering it empty.`,
-            err
-          );
+          // Record rather than log: a malformed file is an authoring error the
+          // author has to be able to *see*, and the console is the one place
+          // they are not looking. The caller routes this to a badge, an event,
+          // and the console line that used to be all of it.
+          trackFailures[trackKey] = {
+            severity: 'error',
+            message: err instanceof Error ? err.message : String(err),
+            cause: err,
+            ...(providerAdapterThrew ? { retryable: true } : {}),
+          };
           return undefined;
         }
       })
@@ -753,5 +846,13 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
-  return { rawData, data, hasData, trackUrls, trackCoordinates };
+  return {
+    rawData,
+    data,
+    hasData,
+    trackUrls,
+    trackCoordinates,
+    trackFailures,
+    skipWarnings,
+  };
 }

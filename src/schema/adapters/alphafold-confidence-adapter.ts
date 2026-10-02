@@ -11,15 +11,25 @@ type AlphafoldConfidencePayload = {
 const getConfidenceURLFromPayload = (af: AlphaFoldPayload[number]) =>
   af.cifUrl?.replace('-model', '-confidence').replace('.cif', '.json');
 
+/**
+ * Fetch the per-residue confidence file the prediction payload points at.
+ *
+ * Throws on failure rather than logging and returning nothing. This is a
+ * second request the loader cannot see, so its outcome has to leave through
+ * the adapter: a throw reaches the loader's per-track catch and is routed
+ * like any other track failure — a badge, the event, and (this being a
+ * provider source) a Retry, since an outage here is usually transient.
+ */
 const loadConfidence = async (
   url: string
 ): Promise<AlphafoldConfidencePayload> => {
-  try {
-    const payload = await fetch(url);
-    return payload.json();
-  } catch (e) {
-    console.error('Could not load AlphaFold confidence', e);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `AlphaFold confidence data unavailable (HTTP ${response.status}) at ${url}`
+    );
   }
+  return await response.json();
 };
 
 type PartialProtein = {

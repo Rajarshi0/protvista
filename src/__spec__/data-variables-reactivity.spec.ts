@@ -40,7 +40,8 @@ type El = HTMLElement & {
   _onVariablesChanged(): void;
 };
 
-const TEMPLATE = 'https://api.example.org/{species}/{build}/features/{accession}';
+const TEMPLATE =
+  'https://api.example.org/{species}/{build}/features/{accession}';
 const urlFor = (species: string, build = 'v2024.12', accession = 'P05067') =>
   `https://api.example.org/${species}/${build}/features/${accession}`;
 
@@ -108,7 +109,9 @@ function stubFetch() {
   );
 }
 const featureUrls = () =>
-  calls.map((c) => c.url).filter((u) => u.startsWith('https://api.example.org/'));
+  calls
+    .map((c) => c.url)
+    .filter((u) => u.startsWith('https://api.example.org/'));
 
 // ── Mount helpers ──────────────────────────────────────────────
 const mounted: HTMLElement[] = [];
@@ -116,7 +119,10 @@ let errorIssues: ValidationIssue[];
 
 function mount(
   attrs: Record<string, string> = { 'data-species': 'human' },
-  { config = viewerConfig as object, accession = 'P05067' as string | null } = {}
+  {
+    config = viewerConfig as object,
+    accession = 'P05067' as string | null,
+  } = {}
 ): El {
   const el = document.createElement('protvista-uniprot') as unknown as El;
   if (accession !== null) el.setAttribute('accession', accession);
@@ -175,7 +181,9 @@ describe('<protvista-uniprot> data-* variables — first load', () => {
   it('does not report missing-variable for a token supplied via data-*', async () => {
     const el = mount();
     await vi.waitFor(() => expect(el.loading).toBe(false));
-    expect(errorIssues.filter((i) => i.code === 'missing-variable')).toEqual([]);
+    expect(errorIssues.filter((i) => i.code === 'missing-variable')).toEqual(
+      []
+    );
   });
 
   it('reports missing-variable (as a warning) and skips the fetch when nothing supplies it', async () => {
@@ -306,7 +314,7 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
       ],
     };
 
-    it('is promoted to a full load, so no track keeps the old values', async () => {
+    it('defers to the in-flight full load, so no track keeps the old values', async () => {
       const { el } = await mountLoaded(undefined, { config: twoTracks });
       hang.add(urlFor('mouse'));
       hang.add(otherFor('mouse'));
@@ -319,14 +327,13 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
       // Retry one track while the full load is still in flight. Left
       // targeted, it would abort the full load and refetch only `G-t2`,
       // leaving `G-t` on the `human` data while the relevance key
-      // already says `mouse`.
+      // already says `mouse`. The full load already covers `G-t2`, so
+      // the retry is a no-op and the full load runs to completion.
       calls.length = 0;
       hang.clear();
       await el._loadData(new Set(['G-t2']));
-      expect(fullLoad.signal?.aborted).toBe(true);
-      expect(featureUrls().sort()).toEqual(
-        [urlFor('mouse'), otherFor('mouse')].sort()
-      );
+      expect(fullLoad.signal?.aborted).toBe(false);
+      expect(featureUrls()).toEqual([]);
       release();
     });
 
@@ -343,11 +350,13 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
     await settle();
     flushFrames();
     expect(load).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(el.loading).toBe(false));
-    expect(featureUrls()).toEqual([]);
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('undefined variable')
+    // Routed once the batch settles, so wait for it rather than `loading`.
+    await vi.waitFor(() =>
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('undefined variable')
+      )
     );
+    expect(featureUrls()).toEqual([]);
   });
 
   describe('changes that cannot affect a URL do not reload', () => {

@@ -10,7 +10,7 @@
  *     `{accession}` resolves end-to-end exactly as before;
  *   • multi-token URLs and the merge precedence as the loader sees it;
  *   • injection safety — substituted values reach the fetcher encoded;
- *   • an unresolved token skips the fetch (with one warning) instead of
+ *   • an unresolved token skips the fetch (with one returned warning) instead of
  *     requesting a half-built URL, leaving sibling tracks untouched;
  *   • per-template dedup and the `trackUrls` record of substituted URLs.
  */
@@ -140,7 +140,9 @@ describe('loadProtvistaData — template variables', () => {
       const result = await loadProtvistaData(
         { species: 'human', build: 'v2024.12', accession: 'P05067' },
         configWith([
-          urlSource('https://api.example.org/{species}/{build}/features/{accession}'),
+          urlSource(
+            'https://api.example.org/{species}/{build}/features/{accession}'
+          ),
         ]),
         fetchOne,
         resolveAdapter
@@ -172,7 +174,10 @@ describe('loadProtvistaData — template variables', () => {
     it('the named accession wins over data-accession', async () => {
       const fetchOne = echoFetch();
       await loadProtvistaData(
-        mergeVariables({ dataset: { accession: 'Q99999' }, accession: 'P05067' }),
+        mergeVariables({
+          dataset: { accession: 'Q99999' },
+          accession: 'P05067',
+        }),
         configWith([urlSource('https://e.org/{accession}')]),
         fetchOne,
         resolveAdapter
@@ -196,7 +201,10 @@ describe('loadProtvistaData — template variables', () => {
       const result = await loadProtvistaData(
         { species: 'human', accession: 'P05067' },
         configWith([
-          urlSource(['https://e.org/{species}/a', 'https://e.org/{accession}/b']),
+          urlSource([
+            'https://e.org/{species}/a',
+            'https://e.org/{accession}/b',
+          ]),
         ]),
         fetchOne,
         resolveAdapter
@@ -258,11 +266,14 @@ describe('loadProtvistaData — template variables', () => {
           resolveAdapter
         );
         expect(fetchOne).toHaveBeenCalledTimes(1);
-        expect(fetchOne).toHaveBeenCalledWith('https://e.org/ok/P05067', 'json');
+        expect(fetchOne).toHaveBeenCalledWith(
+          'https://e.org/ok/P05067',
+          'json'
+        );
 
-        const invalid = warn.mock.calls
-          .map((c) => String(c[0]))
-          .filter((m) => m.includes('invalid value'));
+        const invalid = result.skipWarnings.filter((m) =>
+          m.includes('invalid value')
+        );
         expect(invalid).toHaveLength(1);
         expect(invalid[0]).toContain('https://e.org/public/{dataset}/data');
         expect(invalid[0]).toContain('G/a');
@@ -291,7 +302,7 @@ describe('loadProtvistaData — template variables', () => {
       expect(fetchOne).toHaveBeenCalledWith('https://e.org/ok/P05067', 'json');
       expect(result.data['G-b']).toHaveLength(1);
       expect(
-        warn.mock.calls.filter((c) => String(c[0]).includes('invalid value'))
+        result.skipWarnings.filter((m) => m.includes('invalid value'))
       ).toHaveLength(1);
     });
   });
@@ -313,11 +324,14 @@ describe('loadProtvistaData — template variables', () => {
       expect(fetchOne).toHaveBeenCalledTimes(1);
       expect(fetchOne).toHaveBeenCalledWith('https://e.org/ok/P05067', 'json');
 
-      // One developer warning naming the template, the track, and both tokens.
-      const messages = warn.mock.calls.map((c) => String(c[0]));
-      const unresolved = messages.filter((m) => m.includes('undefined variable'));
+      // One warning naming the template, the track, and both tokens.
+      const unresolved = result.skipWarnings.filter((m) =>
+        m.includes('undefined variable')
+      );
       expect(unresolved).toHaveLength(1);
-      expect(unresolved[0]).toContain('https://e.org/{species}/{build}/{accession}');
+      expect(unresolved[0]).toContain(
+        'https://e.org/{species}/{build}/{accession}'
+      );
       expect(unresolved[0]).toContain('G/a');
       expect(unresolved[0]).toContain('{species}');
       expect(unresolved[0]).toContain('{build}');
@@ -334,7 +348,7 @@ describe('loadProtvistaData — template variables', () => {
 
     it('warns once per template even when several tracks share it', async () => {
       const fetchOne = echoFetch();
-      await loadProtvistaData(
+      const result = await loadProtvistaData(
         { accession: 'P05067' },
         configWith([
           urlSource('https://e.org/{species}'),
@@ -344,8 +358,8 @@ describe('loadProtvistaData — template variables', () => {
         resolveAdapter
       );
       expect(fetchOne).not.toHaveBeenCalled();
-      const unresolved = warn.mock.calls.filter((c) =>
-        String(c[0]).includes('undefined variable')
+      const unresolved = result.skipWarnings.filter((m) =>
+        m.includes('undefined variable')
       );
       expect(unresolved).toHaveLength(1);
     });
@@ -400,14 +414,16 @@ describe('loadProtvistaData — template variables', () => {
         resolveAdapter
       );
       expect(fetchOne).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0][0])).toContain("Not fetching './{ds}/x.csv'");
+      expect(result.skipWarnings).toHaveLength(1);
+      expect(result.skipWarnings[0]).toContain("Not fetching './{ds}/x.csv'");
+      expect(result.trackFailures).toEqual({});
+      expect(warn).not.toHaveBeenCalled();
       expect(result.data['G-a']).toBeUndefined();
     });
 
     it('names the substituted path in a parse error', async () => {
       const fetchOne = vi.fn(async () => 'type,start\nDOMAIN,abc');
-      await loadProtvistaData(
+      const result = await loadProtvistaData(
         { dataset: 'ds1', accession: 'P05067' },
         configWith([
           {
@@ -421,10 +437,8 @@ describe('loadProtvistaData — template variables', () => {
         resolveAdapter
       );
       expect(fetchOne).toHaveBeenCalledWith('./ds1.csv', 'text');
-      const errors = warn.mock.calls
-        .map((c) => c[1])
-        .filter((e): e is Error => e instanceof Error);
-      expect(errors.some((e) => e.message.includes('./ds1.csv'))).toBe(true);
+      expect(result.trackFailures['G-a']?.severity).toBe('error');
+      expect(result.trackFailures['G-a']?.message).toContain('./ds1.csv');
     });
   });
 });

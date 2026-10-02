@@ -134,15 +134,23 @@ function renderPreview(configText: string, accession: string): void {
 }
 
 // Runtime/data failures (bad URL, unreachable service) bubble here as
-// `protvista-error` with detail `{ phase, issues, context }` (see
-// `reportError` in protvista-uniprot.ts). Surface them alongside config
-// diagnostics — they can arrive after a config that itself validated cleanly.
+// `protvista-error` with detail
+// `{ phase, severity, message, source, issues, context }` (see `_report` in
+// protvista-uniprot.ts). Surface them alongside config diagnostics — they can
+// arrive after a config that itself validated cleanly.
 previewHost.addEventListener('protvista-error', (event) => {
   const { detail } = event as CustomEvent<{
     phase?: string;
+    severity?: 'error' | 'warning' | 'info';
+    message?: string;
     issues?: ValidationIssue[];
   }>;
-  diagnosticsView.appendRuntime(detail?.issues, detail?.phase);
+  diagnosticsView.appendRuntime(
+    detail?.issues,
+    detail?.phase,
+    detail?.message,
+    detail?.severity === 'warning' ? 'warning' : undefined
+  );
 });
 
 // ── Update pipeline ───────────────────────────────────────────

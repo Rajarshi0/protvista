@@ -89,6 +89,23 @@ describe('createDiagnosticsView', () => {
     expect(summary.textContent).toBe('1 warning — config is valid.');
   });
 
+  it('appendRuntime: shows the event message in place of the generic fallback', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([]);
+    view.appendRuntime([], 'track-fetch', './hits.csv could not be found (HTTP 404)');
+    expect(list.children[0].textContent).toBe(
+      '[track-fetch] ./hits.csv could not be found (HTTP 404)'
+    );
+  });
+
+  it('appendRuntime: a warning alone is marked and leaves the config valid', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([]);
+    view.appendRuntime(undefined, 'theme', 'Colour "nope" did not resolve', 'warning');
+    expect((list.children[0] as HTMLElement).dataset.severity).toBe('warning');
+    expect(summary.textContent).toBe('1 warning — config is valid.');
+  });
+
   it('appendRuntime: counts a config warning and a runtime warning together as warnings', () => {
     const view = createDiagnosticsView(summary, list);
     view.showConfig([{ message: 'w', code: 'x', severity: 'warning' }]);
@@ -116,6 +133,15 @@ describe('createDiagnosticsView', () => {
     const view = createDiagnosticsView(summary, list);
     view.showConfig([{ message: 'w', code: 'x', severity: 'warning' }]);
     view.appendRuntime([{ message: 'boom', code: 'runtime' }], 'track-fetch');
+    expect(summary.textContent).toBe('2 problems found:');
+  });
+
+  it('appendRuntime: an error beside a warning counts as problems', () => {
+    const view = createDiagnosticsView(summary, list);
+    view.showConfig([]);
+    view.appendRuntime(undefined, 'theme', 'Colour "nope" did not resolve', 'warning');
+    view.appendRuntime(undefined, 'track-fetch', 'HTTP 503', 'error');
+    expect((list.children[1] as HTMLElement).dataset.severity).toBeUndefined();
     expect(summary.textContent).toBe('2 problems found:');
   });
 });

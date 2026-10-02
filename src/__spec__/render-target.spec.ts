@@ -122,28 +122,91 @@ describe('getTrack() per component — config → nightingale attribute mapping'
     });
   }
 
-  it('returns undefined and warns for unknown component', () => {
+  it('returns undefined and says nothing for an undrawable component', () => {
+    // Drawing nothing is the right answer here; *reporting* it is not this
+    // method's job. It runs inside `render()`, where a report could only
+    // reach the console and would repeat on every pass — so the signal lives
+    // at config time instead (see the next test).
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = el.getTrack('not-a-real-component' as KnownComponentName);
     expect(result).toBeUndefined();
-    // The warning has to name the component: a consumer component that
-    // is registered and validates clean lands here, and this is the
-    // author's only signal that the row rendered empty.
-    expect(warn).toHaveBeenCalledOnce();
-    expect(warn.mock.calls[0][0]).toContain("'not-a-real-component'");
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('names the row id too, when the caller supplies one', () => {
+  it('reports an undrawable component once per config, naming its rows', () => {
+    // A consumer component that is registered and validates clean lands in
+    // `getTrack`'s `default:` and draws nothing. This is the author's only
+    // signal — routed as a config warning, so it reaches the
+    // `protvista-error` event too, not just the console.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    el.getTrack(
-      'not-a-real-component' as KnownComponentName,
-      '',
-      '',
-      '',
-      'GROUP-track'
+    const events: Array<{ phase?: string }> = [];
+    const node = buildInstance();
+    node.addEventListener('protvista-error', (e: Event) =>
+      events.push((e as CustomEvent).detail)
     );
-    expect(warn.mock.calls[0][0]).toContain("'GROUP-track'");
+
+    node.registerConfigComponents({
+      version: '1.0',
+      sources: {},
+      defaults: { rendering: {} },
+      rows: [
+        {
+          id: 'MINE',
+          label: 'Mine',
+          component: 'acme-custom-track',
+          rendering: {},
+          tracks: [
+            {
+              id: 't',
+              label: 't',
+              kind: 'features',
+              component: 'acme-custom-track',
+              rendering: {},
+              data: [{ from: 'custom' }],
+            },
+          ],
+        },
+      ],
+    });
+
+    // Once for the whole config, even though two entries name it.
+    const hits = warn.mock.calls.filter((c) =>
+      String(c[0]).includes("No renderer for component 'acme-custom-track'")
+    );
+    expect(hits).toHaveLength(1);
+    expect(String(hits[0][0])).toContain("row 'MINE'");
+    expect(events.map((d) => d.phase)).toEqual(['config']);
+    warn.mockRestore();
+  });
+
+  it('says nothing for a config whose components can all be drawn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const node = buildInstance();
+    node.registerConfigComponents({
+      version: '1.0',
+      sources: {},
+      defaults: { rendering: {} },
+      rows: [
+        {
+          id: 'G',
+          label: 'G',
+          component: 'nightingale-track-canvas',
+          rendering: {},
+          tracks: [
+            {
+              id: 't',
+              label: 't',
+              kind: 'features',
+              component: 'nightingale-track-canvas',
+              rendering: {},
+              data: [{ from: 'custom' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });

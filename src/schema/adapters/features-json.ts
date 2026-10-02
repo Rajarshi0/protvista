@@ -28,10 +28,13 @@
  *
  * Malformed input throws a descriptive, record/field-named error (naming
  * the offending array index and field); the loader's per-track try/catch
- * turns that into the track's parse-failure surface — a `console.warn`
- * and an empty track — rather than crashing the viewer. A body that is
- * not an array at all is treated defensively (warn + empty), mirroring
- * the delimited adapters' non-string guard.
+ * turns that into the track's `⚠` badge and `protvista-error` event rather
+ * than crashing the viewer. A body that is not an array at all throws too,
+ * as `linegraph` and `variation` do: a file wrapped as
+ * `{ "features": [...] }` is the commonest way to get this wrong, and an
+ * empty track with only a console line would tell the author their file
+ * loaded and was empty. (A *failed* fetch never reaches here as a
+ * non-array — the loader hands the decoder `[]` and reports the fetch.)
  */
 
 import type { AdapterFunction } from '../types.js';
@@ -66,12 +69,9 @@ function describe(x: unknown): string {
 export const featuresJson: AdapterFunction = (raw, labelArg) => {
   const label = typeof labelArg === 'string' ? labelArg : FORMAT_LABEL;
   if (!Array.isArray(raw)) {
-    console.warn(
-      '[protvista] features-json adapter: expected an array; got ' +
-        describe(raw) +
-        '. Treating as empty.'
+    throw new Error(
+      `${label}: expected an array of feature records; got ${describe(raw)}.`
     );
-    return [];
   }
 
   const records: FeatureRecord[] = [];

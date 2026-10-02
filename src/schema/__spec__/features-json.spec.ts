@@ -15,10 +15,10 @@
  *     and `end` not preceding `start` (equal endpoints accepted);
  *   - strict, record/field-named errors on malformed input (non-string
  *     `type`, non-number `start` / `end` / `score`, non-object element);
- *   - the non-array guard returning `[]` with a warning.
+ *   - the non-array guard throwing, naming the type it got.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { featuresJson } from '../adapters/features-json.js';
 
 describe('features-json adapter', () => {
@@ -167,21 +167,23 @@ describe('features-json adapter', () => {
     ]);
   });
 
-  it('returns [] and warns with a descriptive message on a non-array body', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(featuresJson({ not: 'an array' })).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('[protvista] features-json adapter:')
+  it('throws a descriptive error on a non-array body', () => {
+    // A file wrapped as `{ "features": [...] }` is the commonest way to get
+    // this wrong. Warning and returning [] left an empty track with no badge,
+    // which reads as "the file loaded and is empty".
+    expect(() => featuresJson({ features: [] })).toThrow(
+      'features-json: expected an array of feature records; got object.'
     );
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('got object'));
-    warn.mockRestore();
   });
 
-  it('returns [] and names the type on a `null` body', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(featuresJson(null)).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('got null'));
-    warn.mockRestore();
+  it('names the type of a `null` body', () => {
+    expect(() => featuresJson(null)).toThrow(/got null\.$/);
+  });
+
+  it('names the author\'s file when the pipeline supplies it', () => {
+    expect(() => featuresJson({}, './hits.json (parsed as JSON)')).toThrow(
+      /^\.\/hits\.json \(parsed as JSON\): expected an array/
+    );
   });
 
   it('throws a record+field-named error on a non-string type', () => {
