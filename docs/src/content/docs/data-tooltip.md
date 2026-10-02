@@ -93,8 +93,9 @@ The same text fires a `tooltip-field-miss` [`protvista-error` event](/protvista/
 The names to check against are the record's own: the fields a provider adapter outputs, or the column headers of your file (see [Fields from your own file](#fields-from-your-own-file)). A few details:
 
 - Every field the template names counts, including one inside `{% if $field %}`, a function such as `equals($field, "x")`, or `{% link href=$field %}`, and one in a fenced code block, which Markdoc fills in too. Inline code (single backticks) is printed literally, so a name there is not a reference.
-- A field that is present but empty — `''`, `null`, a blank cell in a column of your own — is not missing. A `description`, `color`, `shape`, `fill` or `opacity` column that is blank on every row is the exception: those blanks are left off the record, so the field reads as missing.
-- For a dotted path such as `variant.wildType`, a record where `variant` is `null` counts as having it.
+- A field that is present but empty (`''`, a blank cell, or `null` in a JSON key of your own) is not missing. The exception is the built-in columns `description`, `score`, `color`, `shape`, `fill` and `opacity`: a blank cell there, or `null` / `''` in JSON, is left off the record, so a column that is blank on every row reads as missing.
+- A variation file's records carry `start` and `end` (not `position`), plus `variant`, `wildType`, `description`, `consequence` and `consequenceType`; its other columns are dropped.
+- For a dotted path such as `variant.wildType`, a record where `variant` is `null` counts as having it, so it does not warn. In the `fields` form that row just drops out. A template (`{% $variant.wildType %}`) currently fails the whole track on such a record, so guard it with `{% if $variant %}` or use the `fields` form.
 - `$ctx.accession`, `$ctx.trackId` and `$ctx.kind`, and any key you supply under the template's `variables:`, are checked against those values rather than the records.
 - Only a `dataTooltip` you write is checked. A track using its kind's built-in default, or the automatic tooltip, never warns, and neither do line-graph, coloured-sequence and heatmap tracks, which have no per-feature tooltip for `dataTooltip` to template (see [Line graphs](#line-graphs)).
 

@@ -3498,7 +3498,9 @@ describe('track-data coordinate warning', () => {
 
     it('fires nothing for a track with no authored dataTooltip', async () => {
       // `features`' own default names fields too, but defaults are not checked.
-      stubRoutes({ csv: IN_RANGE });
+      stubRoutes({
+        csv: 'type,start,end,description\nDOMAIN,1,10,\nDOMAIN,5,20,\n',
+      });
       const { el, misses, lines } = mountMisses({ viewerConfig: CONFIG });
 
       await vi.waitFor(() => {

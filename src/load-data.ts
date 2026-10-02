@@ -902,9 +902,6 @@ export async function loadProtvistaData(
           }
 
           // 3. Resolve per-item tooltips (see `resolveTrackTooltips`).
-          //    Graph tracks (linegraph, colored-sequence, heatmap) have no
-          //    per-item hover, so the resolver returns `''` and no field
-          //    is written.
           const annotated = resolveTrackTooltips(filteredData, groupId, track);
           // 4. Assign track data (+ a pristine baseline for filter tracks)
           assignTrackData(trackKey, annotated, track);
