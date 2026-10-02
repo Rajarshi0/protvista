@@ -43,6 +43,8 @@ const report = (
   extra: Partial<FailureReport> = {}
 ): FailureReport => ({
   severity,
+  // A phase with no qualified row of its own, so the unqualified rows are what
+  // the general cases below exercise.
   phase: 'track-fetch',
   scope: scope === 'viewer' ? 'viewer' : { trackKey: 'g-y' },
   message: 'something went wrong',
@@ -51,11 +53,45 @@ const report = (
 });
 
 describe('the routing table is total', () => {
-  it('covers every (severity, scope) pair exactly once', () => {
-    const seen = ROUTING_TABLE.map((r) => `${r.severity}/${r.scope}`);
+  it('covers every (severity, scope) pair with exactly one unqualified row', () => {
+    // Totality lives in the unqualified rows: they are the fallback every
+    // report lands on. A phase-qualified row is an override on top, so it must
+    // not be the only row for its pair — otherwise some other phase with that
+    // severity and scope would have nothing to match.
+    const unqualified = ROUTING_TABLE.filter((r) => r.phase === undefined);
+    const seen = unqualified.map((r) => `${r.severity}/${r.scope}`);
     const expected = SEVERITIES.flatMap((s) => SCOPES.map((sc) => `${s}/${sc}`));
     expect([...seen].sort()).toEqual([...expected].sort());
     expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('gives a phase-qualified row precedence over its unqualified pair', () => {
+    const qualified = ROUTING_TABLE.filter((r) => r.phase !== undefined);
+    expect(qualified.length).toBeGreaterThan(0);
+    for (const rule of qualified) {
+      const picked = ruleFor(
+        report(rule.severity, rule.scope, { phase: rule.phase })
+      );
+      expect(picked).toBe(rule);
+      // …and a different phase with the same severity and scope still gets the
+      // unqualified row, so the override is narrow.
+      const other = ruleFor(
+        report(rule.severity, rule.scope, { phase: 'sequence' })
+      );
+      expect(other.phase).toBeUndefined();
+    }
+  });
+
+  it('never qualifies a row without also keeping its unqualified pair', () => {
+    for (const rule of ROUTING_TABLE.filter((r) => r.phase !== undefined)) {
+      const fallback = ROUTING_TABLE.find(
+        (r) =>
+          r.phase === undefined &&
+          r.severity === rule.severity &&
+          r.scope === rule.scope
+      );
+      expect(fallback, `${rule.severity}/${rule.scope}`).toBeDefined();
+    }
   });
 
   it('resolves a rule for every pair, strict or not', () => {
@@ -193,8 +229,8 @@ describe('the published routing table matches the implementation', () => {
 
   it('publishes one row per rule, in the same order', () => {
     expect(docRows).toHaveLength(ROUTING_TABLE.length);
-    expect(docRows.map(([sev, scope]) => `${sev}/${scope}`)).toEqual(
-      ROUTING_TABLE.map((r) => `${r.severity}/${r.scope}`)
+    expect(docRows.map(([sev, scope, phase]) => `${sev}/${scope}/${phase}`)).toEqual(
+      ROUTING_TABLE.map((r) => `${r.severity}/${r.scope}/${r.phase ?? 'any'}`)
     );
   });
 
@@ -208,7 +244,7 @@ describe('the published routing table matches the implementation', () => {
       ({ always: 'always', strict: 'under strict', never: 'never' })[rule.panel];
 
     ROUTING_TABLE.forEach((rule, i) => {
-      const [, , consoleCell, eventCell, panel, badge] = docRows[i];
+      const [, , , consoleCell, eventCell, panel, badge] = docRows[i];
       const where = `${rule.severity}/${rule.scope}`;
       // Every routed failure reaches the console; the table says so per row
       // so a reader never has to infer it.

@@ -884,8 +884,13 @@ describe('file-source 404s on screen', () => {
     const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
     expect(tf.detail.context.status).toBe(404);
     expect(tf.detail.context.errorKind).toBe('http');
-    // Deterministic: the path is wrong, and refetching it stays wrong.
-    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
+    // Retry *is* offered, unlike a provider 4xx or a malformed file. Refetching
+    // changes nothing on its own — but the author is the one who can fix a
+    // wrong path, and once they have, this reloads the one track rather than
+    // making them reload the page.
+    expect(
+      target.querySelector(`.${CSS_PREFIX}-error-retry`)
+    ).not.toBeNull();
   });
 
   it('keeps an API-source 404 silent (missing, not broken)', async () => {
@@ -2096,7 +2101,8 @@ describe('routing matrix — track-scoped failures', () => {
       expected: {
         phase: 'track-fetch',
         badge: true,
-        retry: false,
+        // Retryable in place once the author fixes the path.
+        retry: true,
         panel: [false, true],
         consoleLevel: 'warn',
         consoleMatch: /\.\/hits\.csv could not be found \(HTTP 404\)/,
@@ -2333,10 +2339,10 @@ describe('routing matrix — viewer-scoped failures', () => {
     ).toBe(true);
   });
 
-  it('routes a setTrackData misuse to the event only, never the panel', async () => {
-    // A misused escape hatch is the embedder's bug, not a broken config: the
-    // viewer still renders everything it was given, so `strict` has nothing
-    // to promote. The event names the track so the embedder can act on it.
+  it('routes a setTrackData misuse to the event, and to the panel under strict', async () => {
+    // A rejected call named something the embedder asked for that did not
+    // happen, which is what `strict` is for — unlike a config warning, which
+    // names something that loaded as written and stays off the panel.
     const warn = vi
       .spyOn(console, 'warn')
       .mockImplementation(() => undefined);
@@ -2347,8 +2353,17 @@ describe('routing matrix — viewer-scoped failures', () => {
     el.setTrackData('g', 'nope', [{ type: 'DOMAIN' }]);
 
     expect(events.map((e) => e.detail.phase)).toEqual(['set-track-data']);
-    expect(el._mountError).toBeNull();
+    expect(el._mountError?.phase).toBe('set-track-data');
     expect(warn.mock.calls.length).toBe(1);
+  });
+
+  it('keeps a setTrackData misuse off the panel without strict', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const el = buildLoaded(normConfig([customTrack('t')]));
+
+    el.setTrackData('g', 'nope', [{ type: 'DOMAIN' }]);
+
+    expect(el._mountError).toBeNull();
   });
 });
 

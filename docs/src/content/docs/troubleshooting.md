@@ -58,14 +58,15 @@ to one **track**. The table below is the whole rule. It lives as data in
 `src/errors/router.ts` and is drift-tested against this page, so the two cannot
 disagree.
 
-| Severity | Scope | Console | `protvista-error` | Alert panel | Row badge |
-| --- | --- | --- | --- | --- | --- |
-| `error` | viewer | yes | yes | always | — |
-| `error` | track | yes | yes | under `strict` | yes |
-| `warning` | viewer | yes | yes | never | — |
-| `warning` | track | yes | yes | under `strict` | yes |
-| `info` | viewer | yes | no | never | — |
-| `info` | track | yes | no | never | no |
+| Severity | Scope | Phase | Console | `protvista-error` | Alert panel | Row badge |
+| --- | --- | --- | --- | --- | --- | --- |
+| `error` | viewer | any | yes | yes | always | — |
+| `error` | track | any | yes | yes | under `strict` | yes |
+| `warning` | viewer | `set-track-data` | yes | yes | under `strict` | — |
+| `warning` | viewer | any | yes | yes | never | — |
+| `warning` | track | any | yes | yes | under `strict` | yes |
+| `info` | viewer | any | yes | no | never | — |
+| `info` | track | any | yes | no | never | no |
 
 Reading it:
 
@@ -74,18 +75,27 @@ Reading it:
 - A **track-scoped** failure leaves the rest of the viewer working, so the row
   carries it as a `⚠` badge. `strict` promotes the batch to a single aggregated
   panel; without `strict` the badges stand alone.
-- A **viewer-scoped warning** names something legal that loaded as written (a
-  config warning, a misused `setTrackData()` call). It never raises the panel,
-  even under `strict` — hiding a working viewer behind a notice about something
-  that worked is not a louder failure, just a less useful one.
+- A **viewer-scoped warning** names something legal that loaded as written — a
+  config warning, or a `theme:` field that could not be resolved. It never
+  raises the panel, even under `strict`: hiding a working viewer behind a notice
+  about something that worked is not a louder failure, just a less useful one.
+- The one exception is a rejected **`setTrackData()`** call, which `strict` does
+  promote. The rows above are read most-specific-first, so a row naming a
+  `phase` wins over the `any` row for the same severity and scope. A config
+  warning describes something that happened as written; an ignored API call
+  describes something the caller asked for that did not happen, which is what
+  `strict` exists to make loud.
 - **`info`** is an expected absence, not a failure: a provider endpoint
   answering 404 for an entity with no data of this kind, or a `from: custom`
   track nobody injected data into. It gets a console line and no user surface.
 
 A **Retry** control appears on whichever surface carried the failure, and only
-when retrying could change the answer: a network error or a 5xx may be
-transient, while a 4xx, a malformed file and an adapter that threw will fail
-the same way again.
+when retrying could plausibly change the answer: a network error or a 5xx may
+be transient, and a `from: file` path that 404s is something *you* can fix —
+correct the path or drop the file into place, then Retry reloads that one track
+instead of the whole page. A malformed file, an adapter that threw and a payload
+the track could not draw all get no Retry: they would fail the same way again
+with no action available in between.
 
 ### The `context` object
 

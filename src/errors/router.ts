@@ -55,10 +55,11 @@ export interface FailureReport {
   /** One line, in the terms the person reading it thinks in. */
   message: string;
   /**
-   * Whether retrying could plausibly succeed: connectivity may return, a 5xx
-   * may be transient. A deterministic failure (a 4xx, a malformed file, an
-   * adapter that threw) is not recoverable, and offering a Retry for one is
-   * worse than offering none.
+   * Whether retrying could plausibly change the outcome: connectivity may
+   * return, a 5xx may be transient, and a `from: file` path the author can
+   * correct is retryable in place once they have. A failure with no action
+   * available in between (a malformed file, an adapter or component that threw)
+   * is not, and offering a Retry for one is worse than offering none.
    */
   recoverable?: boolean;
   /**
@@ -97,6 +98,19 @@ export interface RoutingRule {
   severity: FailureSeverity;
   /** `'track'` matches any `{ trackKey }` scope. */
   scope: 'viewer' | 'track';
+  /**
+   * When set, the rule governs only this phase and is matched ahead of the
+   * unqualified row for the same (severity, scope).
+   *
+   * One phase needs this. Two viewer-scoped warnings disagree about `strict`
+   * for a reason severity and scope cannot express: a config warning names
+   * something legal that *loaded as written*, so promoting it would hide a
+   * working viewer, while a rejected `setTrackData()` call names something the
+   * caller asked for that *did not happen*, which is exactly what `strict` is
+   * for. Qualifying the narrower case keeps that distinction in the table
+   * instead of back in a conditional at the call site.
+   */
+  phase?: ErrorPhase;
   event: boolean;
   panel: 'always' | 'strict' | 'never';
   badge: boolean;
@@ -107,9 +121,10 @@ export interface RoutingRule {
 /**
  * The routing table, in the order the documentation publishes it.
  *
- * Every (severity, scope) combination appears exactly once, so routing is
- * total — there is no fallthrough, and no failure class can be added without
- * landing on a row. `retry` is not a column: it follows `report.recoverable`
+ * Every (severity, scope) combination has exactly one unqualified row, so
+ * routing is total — there is no fallthrough, and no failure class can be
+ * added without landing on a row. A row may additionally name a `phase`, in
+ * which case it governs that phase ahead of the unqualified one. `retry` is not a column: it follows `report.recoverable`
  * on whichever surface the failure reached, so a transient failure is
  * retryable from the badge and the panel alike.
  *
@@ -134,6 +149,16 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     badge: true,
     rationale:
       'One row is broken and the rest of the viewer works, so the badge carries it; strict promotes it.',
+  },
+  {
+    severity: 'warning',
+    scope: 'viewer',
+    phase: 'set-track-data',
+    event: true,
+    panel: 'strict',
+    badge: false,
+    rationale:
+      'A rejected API call did not do what the caller asked, so strict promotes it.',
   },
   {
     severity: 'warning',
@@ -177,12 +202,19 @@ export function scopeAxis(scope: FailureScope): 'viewer' | 'track' {
   return scope === 'viewer' ? 'viewer' : 'track';
 }
 
-/** The row governing a report. Total over the table — never `undefined`. */
+/**
+ * The row governing a report: the phase-qualified one if there is one for this
+ * (severity, scope), otherwise the unqualified one. Total over the table —
+ * never `undefined`, because every (severity, scope) pair has an unqualified
+ * row and a drift test pins that.
+ */
 export function ruleFor(report: FailureReport): RoutingRule {
   const axis = scopeAxis(report.scope);
-  const rule = ROUTING_TABLE.find(
-    (r) => r.severity === report.severity && r.scope === axis
-  );
+  const matches = (r: RoutingRule) =>
+    r.severity === report.severity && r.scope === axis;
+  const rule =
+    ROUTING_TABLE.find((r) => matches(r) && r.phase === report.phase) ??
+    ROUTING_TABLE.find((r) => matches(r) && r.phase === undefined);
   // Unreachable: the table covers all six combinations, and a drift test
   // pins that. Throwing beats silently swallowing a failure if it ever is.
   if (!rule) {

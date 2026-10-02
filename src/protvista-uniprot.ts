@@ -3971,17 +3971,26 @@ class ProtvistaUniprot extends LitElement {
   }
 
   /**
-   * Whether a failure is worth retrying: transport problems (`network` —
-   * connectivity may return) and server errors (`http` 5xx — may be
-   * transient). Everything else is deterministic and gets no Retry: a 4xx
-   * (whether "no data of this kind" or a wrong `from: file` path), a `parse`
-   * failure that would re-parse the same body, and an `adapter` failure that
-   * would re-run the same code over the same records.
+   * Whether a failure is worth retrying.
+   *
+   * Transport problems (`network` — connectivity may return) and server errors
+   * (`http` 5xx — may be transient) are, as is **any** HTTP failure on a
+   * `from: file` source. That last one looks odd next to the others: a static
+   * file that 404s will 404 again. But the author is the one who can fix it,
+   * and they fix it by correcting the path or dropping the file into place —
+   * after which Retry reloads that one track instead of the whole page. The
+   * affordance is for the person who can act, not for the server.
+   *
+   * Everything else is deterministic and gets no Retry: a provider 4xx (which
+   * is not recorded as a failure at all), a `parse` failure that would
+   * re-parse the same body, an `adapter` failure that would re-run the same
+   * code over the same records, and a `render` failure that would hand the
+   * component the same payload.
    */
   private _isRecoverable(err: TrackFetchError): boolean {
     return (
       err.kind === 'network' ||
-      (err.kind === 'http' && (err.status ?? 0) >= 500)
+      (err.kind === 'http' && ((err.status ?? 0) >= 500 || !!err.fromFile))
     );
   }
 
