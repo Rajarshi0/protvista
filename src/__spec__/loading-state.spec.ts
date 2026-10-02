@@ -77,6 +77,18 @@ async function settle(el: El): Promise<void> {
   await el.updateComplete;
 }
 
+/**
+ * Wait out the delay the element puts between mounting the live region and
+ * filling it (`LIVE_REGION_SETTLE_MS`), then for the render that follows.
+ */
+async function announced(el: El): Promise<void> {
+  await vi.waitFor(() => {
+    if (!el.querySelector(LIVE)?.textContent?.includes(LOADING_TEXT)) {
+      throw new Error('not announced yet');
+    }
+  });
+}
+
 afterEach(() => {
   for (const el of appended.splice(0)) el.remove();
   vi.unstubAllGlobals();
@@ -184,7 +196,7 @@ describe('initial loading state', () => {
 
     expect(el.sequence).toBeUndefined();
     expect(el.querySelector(LOADER)).not.toBeNull();
-    expect(el.querySelector(LIVE)!.textContent).toContain(LOADING_TEXT);
+    await announced(el);
 
     releaseSequence();
     await vi.waitFor(() => {
@@ -266,6 +278,93 @@ describe('initial loading state', () => {
   });
 });
 
+describe('a sequence fetch superseded by an accession change', () => {
+  /**
+   * Hold each accession's sequence response until the test releases it, so a
+   * superseded fetch can be made to land at the worst moment. Track data
+   * resolves immediately.
+   */
+  function stubHeldSequences() {
+    const release = new Map<string, (res: Response) => void>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        const m = url.match(/\/proteins\/api\/proteins\/(\w+)/);
+        if (m) {
+          return new Promise<Response>((resolve) => release.set(m[1], resolve));
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ type: 'DOMAIN', start: 1, end: 5 }],
+        } as unknown as Response;
+      })
+    );
+    const ok = (sequence: string) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ sequence: { sequence } }),
+      }) as unknown as Response;
+    const missing = { ok: false, status: 404 } as unknown as Response;
+    const held = async (accession: string) => {
+      await vi.waitFor(() => {
+        if (!release.has(accession)) throw new Error(`${accession} not requested`);
+      });
+      return release.get(accession)!;
+    };
+    return { held, ok, missing };
+  }
+
+  it('ignores the old sequence landing while the new one is still in flight', async () => {
+    const { held, ok } = stubHeldSequences();
+    const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'AAAAAA' });
+    const releaseA = await held('AAAAAA');
+
+    el.accession = 'BBBBBB';
+    const releaseB = await held('BBBBBB');
+    releaseA(ok('OLDSEQ'));
+    await settle(el);
+
+    // B's tracks have landed, but B's sequence has not: the spinner stays, and
+    // nothing of A's is drawn under B's name.
+    expect(el.sequence).not.toBe('OLDSEQ');
+    expect(el.querySelector(LOADER)).not.toBeNull();
+
+    releaseB(ok('NEWSEQ'));
+    await vi.waitFor(() => {
+      if (!el.querySelector('nightingale-manager')) throw new Error('not ready');
+    });
+    expect(el.sequence).toBe('NEWSEQ');
+  });
+
+  it('raises no panel when the old accession 404s after the new one loaded', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { held, ok, missing } = stubHeldSequences();
+    const events: Event[] = [];
+    const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'TYPO01' });
+    el.addEventListener('protvista-error', (e) => events.push(e));
+    const releaseTypo = await held('TYPO01');
+
+    el.accession = 'P05067';
+    (await held('P05067'))(ok('MSEQENCE'));
+    await vi.waitFor(() => {
+      if (!el.querySelector('nightingale-manager')) throw new Error('not ready');
+    });
+
+    releaseTypo(missing);
+    await settle(el);
+
+    // The late 404 is for an accession nobody is looking at any more. Routed,
+    // it would have said "No UniProt entry found for 'P05067'" over a viewer
+    // that is working.
+    expect(el.querySelector(PANEL)).toBeNull();
+    expect(events).toHaveLength(0);
+    expect(el.querySelector('nightingale-manager')).not.toBeNull();
+  });
+});
+
 describe('initial loading announcement', () => {
   it('announces the wait politely in a live region that is already mounted', async () => {
     stubHungFetch();
@@ -277,7 +376,38 @@ describe('initial loading announcement', () => {
     expect(region).not.toBeNull();
     expect(region.getAttribute('role')).toBe('status');
     expect(region.getAttribute('aria-live')).toBe('polite');
-    expect(region.textContent).toContain(LOADING_TEXT);
+    // Mounted empty: text that arrived with the region would go unannounced.
+    expect(region.textContent!.trim()).toBe('');
+
+    await announced(el);
+    // The same node, now changed — which is what a live region announces.
+    expect(el.querySelector(LIVE)).toBe(region);
+  });
+
+  it('drops a pending announcement when the load finishes first', async () => {
+    const proto = customElements.get('protvista-uniprot')!.prototype as {
+      _announce(message: string): void;
+    };
+    const announce = vi.spyOn(proto, '_announce');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const body = String(input).includes('/proteins/api/proteins/')
+          ? { sequence: { sequence: 'MSEQENCE' } }
+          : [{ type: 'DOMAIN', start: 1, end: 5 }];
+        return { ok: true, status: 200, json: async () => body } as unknown as Response;
+      })
+    );
+    const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067' });
+    await vi.waitFor(() => {
+      if (!el.querySelector('nightingale-manager')) {
+        throw new Error('viewer not ready');
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // A load quicker than the settle delay has nothing left to announce.
+    expect(announce.mock.calls.filter(([m]) => m === LOADING_TEXT)).toEqual([]);
   });
 
   it('announces once, not on every re-render', async () => {
@@ -288,7 +418,7 @@ describe('initial loading announcement', () => {
     const announce = vi.spyOn(proto, '_announce');
 
     const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067' });
-    await settle(el);
+    await announced(el);
 
     const before = announce.mock.calls.length;
     // Churn the update cycle the way unrelated reactive state does.
@@ -336,6 +466,7 @@ describe('initial loading announcement', () => {
 
     (el as unknown as { suspend: boolean }).suspend = false;
     await settle(el);
+    await announced(el);
 
     // Announced exactly once, into a region that was already in the tree and
     // still empty — so the text lands as a change to it.

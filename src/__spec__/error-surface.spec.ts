@@ -908,6 +908,30 @@ describe('file-source 404s on screen', () => {
     ).not.toBeNull();
   });
 
+  it('logs only the routed line for a failed text file, not a decoder line too', async () => {
+    // The decoder used to run on the empty placeholder a failed fetch leaves,
+    // and printed "expected a text body; got object" beside the 404 — pointing
+    // at the body when the path was the problem.
+    for (const format of ['csv', 'tsv', 'bed'] as const) {
+      const path = `./hits.${format}`;
+      vi.restoreAllMocks();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      stubFetch([[path.slice(1), { ok: false, status: 404 }]]);
+
+      const el = buildLoaded(
+        normConfig([
+          sourceTrack('hits', { from: 'file', url: path, format, shape: 'feature' }),
+        ]),
+        { openGroups: ['g'] }
+      );
+      await el._loadData();
+
+      expect(warn.mock.calls.map((c) => String(c[0])), path).toEqual([
+        expect.stringMatching(PATH_HINT),
+      ]);
+    }
+  });
+
   it('keeps an API-source 404 silent (missing, not broken)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     stubFetch([['/bad.json', { ok: false, status: 404 }]]);
@@ -1026,6 +1050,53 @@ describe('standalone row error badge', () => {
     const target = renderTarget(el);
 
     expect(target.querySelector(ALL_HIDDEN)).not.toBeNull();
+  });
+
+  it('says there is no data, not that tracks are hidden, when a filter matches nothing', async () => {
+    // The raw response has features, so `hasData` is set — but none of them
+    // are the track's `filter:` type, so no row draws. Nothing is hidden, and
+    // a Reset-layout button would fix nothing.
+    const track = {
+      ...urlTrack('solo', 'https://example.org/f.json'),
+      filter: 'DOMAIN',
+    };
+    stubFetch([
+      [
+        '/f.json',
+        {
+          ok: true,
+          status: 200,
+          body: { features: [{ type: 'CHAIN', begin: '1', end: '8' }] },
+        },
+      ],
+    ]);
+    const el = buildLoaded(standaloneConfig(track));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(el.hasData).toBe(true);
+    expect(target.querySelector(ALL_HIDDEN)).toBeNull();
+    expect(target.querySelector('.protvista-no-results')).not.toBeNull();
+  });
+
+  it('does not carry hasData over to a full load that finds nothing', async () => {
+    // An accession change is a full load. The previous entry's `hasData` used
+    // to stick, so an entry whose every track was missing claimed its tracks
+    // were hidden.
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 404 }]]);
+    const el = buildLoaded(
+      standaloneConfig(urlTrack('solo', 'https://example.org/bad.json')),
+      { hasData: true }
+    );
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(el.hasData).toBe(false);
+    expect(target.querySelector(ALL_HIDDEN)).toBeNull();
+    expect(target.querySelector('.protvista-no-results')).not.toBeNull();
   });
 
   it('drops a 4xx standalone row silently (missing, not broken)', async () => {
@@ -2018,6 +2089,37 @@ describe('the protvista-error payload', () => {
     expect(seq.detail.message).toContain('P05067X');
     expect(seq.detail.message).not.toContain('[protvista');
     expect(seq.detail.severity).toBe('error');
+    // A fetch failure names where the sequence was asked for, as the
+    // documented `source` and `context.url` say it does.
+    const entry = 'https://www.ebi.ac.uk/proteins/api/proteins/P05067X';
+    expect(seq.detail.source).toBe(entry);
+    expect(seq.detail.context.url).toBe(entry);
+  });
+
+  it('names the source of a payload its component could not draw', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stubFetch([['/x.json', { ok: true, status: 200, body: { features: [] } }]]);
+    const events: ErrorEvent[] = [];
+    const el = buildLoaded(
+      normConfig([urlTrack('t', 'https://example.org/x.json')]),
+      { openGroups: ['g'] }
+    );
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+    await el._loadData();
+
+    el._assignComponentData(
+      {
+        set data(_v: unknown) {
+          throw new TypeError('undefined is not iterable');
+        },
+      },
+      [{ bad: true }],
+      'g-t'
+    );
+
+    const render = events.find((e) => e.detail.context.errorKind === 'render')!;
+    expect(render.detail.source).toBe('https://example.org/x.json');
+    expect(render.detail.context.url).toBe('https://example.org/x.json');
   });
 
   it('carries the config panel\'s summary for a rejected config', async () => {
@@ -2203,6 +2305,32 @@ describe('routing matrix — track-scoped failures', () => {
       },
     },
     {
+      name: 'HTTP 4xx from a from: file path with an explicit adapter',
+      // The descriptor the validator recommends for a file it cannot sniff.
+      // It has no `format`, but the path is still the author's to get wrong.
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'file',
+              url: './plddt.json',
+              adapter: 'uniprot-features-json',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [['/plddt.json', { ok: false, status: 404 }]],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch:
+          /\.\/plddt\.json could not be found \(HTTP 404\) — check the path is relative to the page\./,
+      },
+    },
+    {
       name: 'unparseable body',
       config: (strict) =>
         normConfig([urlTrack('t', 'https://example.org/x.json')], { strict }),
@@ -2213,7 +2341,10 @@ describe('routing matrix — track-scoped failures', () => {
         retry: false,
         panel: [false, true],
         consoleLevel: 'warn',
-        consoleMatch: /Unparseable response from https:\/\/example\.org\/x\.json/,
+        // The parser's own complaint rides along: on an author's file it is
+        // the position that makes the file fixable.
+        consoleMatch:
+          /Unparseable response from https:\/\/example\.org\/x\.json \(Unexpected token < in JSON\)/,
       },
     },
     {
@@ -2308,6 +2439,55 @@ describe('routing matrix — track-scoped failures', () => {
         consoleLevel: 'warn',
         consoleMatch:
           /Couldn't process the data from https:\/\/alphafold\.example\/api\/prediction\/P05067: AlphaFold confidence data unavailable \(HTTP 503\)/,
+      },
+    },
+    {
+      name: 'AlphaMissense adapter whose own request failed',
+      // Same second-request shape as the AlphaFold confidence file. It used to
+      // log and return nothing, leaving the row silently empty.
+      config: (strict) =>
+        normConfig(
+          [
+            sourceTrack('t', {
+              from: 'url',
+              url: [
+                'https://alphafold.example/api/prediction/P05067',
+                'https://example.org/proteins/P05067',
+              ],
+              adapter: 'alphamissense-average-csv',
+            }),
+          ],
+          { strict }
+        ),
+      routes: [
+        [
+          '/api/prediction/',
+          {
+            ok: true,
+            status: 200,
+            body: [
+              {
+                sequence: 'MSEQENCE',
+                amAnnotationsUrl:
+                  'https://alphafold.example/files/AF-P05067-F1-aa-substitutions.csv',
+              },
+            ],
+          },
+        ],
+        [
+          '/proteins/P05067',
+          { ok: true, status: 200, body: { sequence: { sequence: 'MSEQENCE' } } },
+        ],
+        ['-aa-substitutions.csv', { ok: false, status: 503 }],
+      ],
+      expected: {
+        phase: 'track-fetch',
+        badge: true,
+        retry: true,
+        panel: [false, true],
+        consoleLevel: 'warn',
+        consoleMatch:
+          /Couldn't process the data from https:\/\/alphafold\.example\/api\/prediction\/P05067: AlphaMissense pathogenicity data unavailable \(HTTP 503\)/,
       },
     },
     {
@@ -2861,6 +3041,138 @@ describe('render failures over time', () => {
     expect(
       renderTarget(el).querySelector(`.${CSS_PREFIX}-error-retry`)
     ).not.toBeNull();
+  });
+});
+
+describe('a badge Retry during a full load', () => {
+  it('lets the full load finish rather than aborting it', async () => {
+    // A targeted Retry used to supersede an in-flight full load. The full
+    // load's results — here the payload `setTrackData()` asked for — were
+    // dropped with it, and the Retry only reloaded its own track.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/a.json', { ok: false, status: 503 }]]);
+    const el = buildLoaded(
+      normConfig([urlTrack('a', 'https://example.org/a.json'), customTrack('c')]),
+      { openGroups: ['g'] }
+    );
+    await el._loadData();
+    expect(el._trackErrors.has('g-a')).toBe(true);
+
+    // Hold the next fetches so the full load is still in flight.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        await gate;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ features: [] }),
+        } as unknown as Response;
+      })
+    );
+    el.setTrackData('g', 'c', [{ type: 'DOMAIN', start: 1, end: 5 }]);
+    const retry = el._loadData(new Set(['g-a']));
+    release();
+    await retry;
+    await vi.waitFor(() => {
+      if (!el.data['g-c']) throw new Error('full load not applied');
+    });
+
+    expect(el._trackErrors.has('g-a')).toBe(false);
+  });
+});
+
+describe('the strict panel tracks the whole error set', () => {
+  const twoTracks = () =>
+    normConfig(
+      [
+        urlTrack('a', 'https://example.org/a.json'),
+        urlTrack('b', 'https://example.org/b.json'),
+      ],
+      { strict: true }
+    );
+
+  it('keeps the panel up when a sibling Retry succeeds and another still fails', async () => {
+    // Two badge Retries are disjoint batches. The one that succeeded used to
+    // see no failures of its own and clear the panel, leaving the track that
+    // was still broken badge-only under strict.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([
+      ['/a.json', { ok: false, status: 503 }],
+      ['/b.json', { ok: false, status: 503 }],
+    ]);
+    const el = buildLoaded(twoTracks(), { openGroups: ['g'] });
+    await el._loadData();
+    expect(el._mountError?.summary).toBe('2 tracks failed to load.');
+
+    stubFetch([
+      ['/a.json', { ok: false, status: 503 }],
+      ['/b.json', { ok: true, status: 200, body: { features: [] } }],
+    ]);
+    // `a`'s batch lands first and re-raises; `b`'s lands after it.
+    await Promise.all([
+      el._loadData(new Set(['g-a'])),
+      el._loadData(new Set(['g-b'])),
+    ]);
+
+    expect(el._trackErrors.has('g-a')).toBe(true);
+    expect(el._trackErrors.has('g-b')).toBe(false);
+    expect(el._mountError?.phase).toBe('track-fetch');
+    expect(el._mountError?.summary).toMatch(/^Track 'g\/a' failed to load/);
+  });
+
+  it('clears the panel once the last failure is fixed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/a.json', { ok: false, status: 503 }]]);
+    const el = buildLoaded(twoTracks(), { openGroups: ['g'] });
+    await el._loadData();
+    expect(el._mountError?.phase).toBe('track-fetch');
+
+    stubFetch([]);
+    await el._loadData(new Set(['g-a']));
+
+    expect(el._mountError).toBeNull();
+  });
+
+  it('does not re-raise a dismissed panel for a batch with no new failure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/a.json', { ok: false, status: 503 }]]);
+    const el = buildLoaded(twoTracks(), { openGroups: ['g'] });
+    await el._loadData();
+    el._mountError = null;
+
+    // `b` reloads fine; `a` is untouched and still broken, but nothing new
+    // happened that the user has not already dismissed.
+    stubFetch([['/a.json', { ok: false, status: 503 }]]);
+    await el._loadData(new Set(['g-b']));
+
+    expect(el._mountError).toBeNull();
+  });
+
+  it('keeps the aggregate, and its Retry, when a render failure joins a 503', async () => {
+    // A render failure used to raise its own one-track panel with no Retry,
+    // replacing the aggregate that was offering one for the 503.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    stubFetch([['/a.json', { ok: false, status: 503 }]]);
+    const el = buildLoaded(twoTracks(), { openGroups: ['g'] });
+    await el._loadData();
+    el._mountError = null;
+
+    el._assignComponentData(
+      {
+        set data(_v: unknown) {
+          throw new TypeError('undefined is not iterable');
+        },
+      },
+      [{ bad: true }],
+      'g-b'
+    );
+
+    expect(el._mountError?.summary).toBe('2 tracks failed to load.');
+    expect((el._mountError as { retry?: boolean } | null)?.retry).toBe(true);
   });
 });
 

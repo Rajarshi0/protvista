@@ -177,13 +177,12 @@ export function parseDecimal(raw: string): number | null {
  * On any violation this throws with a message naming the offending row (by
  * 1-based line number, header = line 1) and, where meaningful, the column —
  * e.g. `features-csv: row 3, column "start": expected a number, got "abc"`.
- * The loader's per-track try/catch catches the throw, emits a
- * `console.warn`, and renders that one track empty; the descriptive
- * message reaches the developer console so the file can be fixed. (It does
- * not currently raise a ⚠ badge / `protvista-error` event — a text body
- * that parses as text but is semantically malformed is invisible to the
- * fetch-level error surface. Surfacing adapter throws as track errors is a
- * follow-up.)
+ * The loader's per-track try/catch records the throw as that track's
+ * failure and leaves the track empty, so one bad file degrades one row. The
+ * element routes it like any other track failure: this message is the ⚠
+ * badge's text, the `protvista-error` event's `message`, and the console line
+ * — so the author sees which row and column to fix without opening the
+ * console.
  */
 export function rowsToFeatureRecords(
   rows: string[][],

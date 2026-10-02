@@ -514,8 +514,11 @@ export async function loadProtvistaData(
       data[`${key}${UNFILTERED_SUFFIX}`] = payload;
     }
     const source = track.data[0];
-    const isInline = source?.from === 'inline';
-    if ((isAuthoredSource(source) || isInline) && hasRenderableRows(payload)) {
+    // Inline and `setTrackData()` payloads are bring-your-own data too, with
+    // no raw response for the legacy heuristic to see. Without `custom` here,
+    // a viewer drawn wholly from injected data reads as "no data".
+    const isSupplied = source?.from === 'inline' || source?.from === 'custom';
+    if ((isAuthoredSource(source) || isSupplied) && hasRenderableRows(payload)) {
       hasData = true;
     }
   };
@@ -631,6 +634,19 @@ export async function loadProtvistaData(
           //    provider transform, or one the author pinned). Empty-body
           //    guards and post-processing live inside each.
           let transformedData: any = trackData;
+          // A body that never arrived (the fetch closure's `null`) has nothing
+          // to decode. The caller reports the fetch failure itself, and a
+          // decoder handed the `[]` placeholder would add its own "expected a
+          // text body" line beside it, pointing at the body instead of the
+          // path. Provider adapters still run: some fetch a second source and
+          // degrade on a partial payload, and their throw is subordinate to
+          // the fetch failure there anyway.
+          if (
+            first.format !== undefined &&
+            rawData[(Array.isArray(url) ? url[0] : url) ?? ''] == null
+          ) {
+            return undefined;
+          }
           if (first.format !== undefined) {
             transformedData = await runPipeline(
               first.shape ?? 'feature',

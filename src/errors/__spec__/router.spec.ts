@@ -306,22 +306,23 @@ describe('failure sites report rather than route', () => {
     expect(sources['src/load-data.ts']).not.toContain('dispatchEvent');
   });
 
-  it('raises the alert panel only from the three routed paths', () => {
-    // `_report`'s routed promotion, plus the two callers that aggregate and so
-    // raise it themselves from the channels the router handed back: the
-    // per-track correlation pass, and the render-handover failure (which fires
-    // outside that pass). Any further caller is a site deciding for itself.
+  it('raises the alert panel only from the two routed paths', () => {
+    // `_report`'s routed promotion, plus `_syncTrackPanel`, the one aggregate
+    // over every failing track — which both the per-track correlation pass and
+    // the render-handover failure hand their routed answer to, and which
+    // re-asks the router (`_route`) about the rest of the set. Any further
+    // caller is a site deciding for itself.
     const raises = [
       ...sources['src/protvista-uniprot.ts'].matchAll(
         /this\._setMountError\(/g
       ),
     ];
-    expect(raises).toHaveLength(3);
+    expect(raises).toHaveLength(2);
     // Each one is reached only behind a routed decision, never a `strict` read:
     // the block enclosing the call — the nearest line above it that is
     // indented less — must be an `if` on the router's answer. Checking that
-    // the guard strings occur *somewhere* in the file passed with any one of
-    // the three left unguarded.
+    // the guard strings occur *somewhere* in the file passed with either one
+    // left unguarded.
     const lines = sources['src/protvista-uniprot.ts'].split('\n');
     const indent = (line: string) => line.length - line.trimStart().length;
     const guards = lines.flatMap((line, i) => {
@@ -331,10 +332,14 @@ describe('failure sites report rather than route', () => {
       while (j >= 0 && (lines[j].trim() === '' || indent(lines[j]) >= depth)) j--;
       return [lines[j].trim()];
     });
-    expect(guards).toHaveLength(3);
+    expect(guards).toHaveLength(2);
     for (const guard of guards) {
-      expect(guard).toMatch(/^(?:\} else )?if \((?:channels\.panel|panelWanted)\b/);
+      expect(guard).toMatch(/^(?:\} else )?if \((?:channels\.panel|wanted)\b/);
     }
+    // `wanted` is the router's answer over the whole set, not a local flag.
+    expect(sources['src/protvista-uniprot.ts']).toContain(
+      'const wanted = routed.some((c) => c.panel);'
+    );
   });
 
   it('reads config.strict in exactly one place', () => {

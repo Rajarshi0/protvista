@@ -98,8 +98,9 @@ when retrying could plausibly change the answer: a network error or a 5xx may
 be transient, and a path or URL to your own data that 404s is something *you*
 can fix — correct it or drop the file into place, then Retry reloads that one
 track instead of the whole page. A built-in provider adapter that throws gets a
-Retry too: some make requests of their own (the AlphaFold confidence track
-fetches a second file), so their failures can be as temporary as a 5xx. A
+Retry too: some make requests of their own (the AlphaFold confidence and
+AlphaMissense tracks each fetch a second file), so their failures can be as
+temporary as a 5xx. A
 malformed file, a malformed `setTrackData()` payload, an unregistered adapter
 name and a payload the track could not draw all get no Retry: they would fail
 the same way again with no action available in between.
@@ -190,13 +191,15 @@ your editor at the schema for inline checking — see
 
 Look at `errorKind`: `network` usually means CORS or connectivity (the data
 server must allow cross-origin requests from your page); `http` with a `status`
-means the server returned a 5xx; `parse` means the body wasn't the shape the
-adapter expected; `adapter` means the decoder rejected the records themselves.
+means the server returned a 5xx; `parse` means the body could not be parsed at
+all, and the message carries the parser's own complaint (where in the body it
+gave up); `adapter` means the decoder rejected the records themselves.
 Confirm the URL in a browser tab, and check it returns the
 [shape the adapter expects](/protvista/adapter-reference). (A 4xx such as 404
 from a *provider endpoint* is treated as "no data for this track" and is hidden
-rather than reported as an error. From a `from: file` source it is reported —
-there a 404 can only mean the path is wrong.)
+rather than reported as an error. From a `from: file` source — with a format or
+an explicit `adapter:` — or any URL with a declared `format`, it is reported:
+there a 404 can only mean the path or URL is wrong.)
 
 ## Where to go next
 
