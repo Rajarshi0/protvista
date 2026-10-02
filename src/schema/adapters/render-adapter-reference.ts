@@ -169,6 +169,23 @@ function domainTable(docs: readonly KindAdapterDoc[]): string {
   return [header, ...rows].join('\n');
 }
 
+/** Per-adapter output-field tables, for the adapters that document them. */
+function outputSections(docs: readonly KindAdapterDoc[]): string[] {
+  return docs
+    .filter((d) => d.outputFields?.length)
+    .map((d) =>
+      [
+        `### \`${d.name}\` output`,
+        '',
+        ...(d.outputSummary ? [d.outputSummary, ''] : []),
+        '| Field | Notes |\n|---|---|',
+        ...(d.outputFields ?? []).map(
+          (f) => `| \`${f.name}\` | ${cell(f.notes)} |`
+        ),
+      ].join('\n')
+    );
+}
+
 export function renderReferenceMarkdown(
   reference: readonly AdapterDoc[] = ADAPTER_REFERENCE
 ): string {
@@ -247,6 +264,10 @@ export function renderReferenceMarkdown(
   lines.push('');
   lines.push(domainTable(domain));
   lines.push('');
+  for (const section of outputSections(domain)) {
+    lines.push(section);
+    lines.push('');
+  }
 
   lines.push('## Related');
   lines.push('');

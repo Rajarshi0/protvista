@@ -126,41 +126,66 @@ const reachableFrom = (entry: string) => {
   return { modules: seen, runtimeNightingale };
 };
 
-const ENTRY = 'src/config.ts';
-const graph = reachableFrom(ENTRY);
+// Every pure subpath and the module it publishes.
+const PURE_ENTRIES = [
+  { subpath: './config', entry: 'src/config.ts' },
+];
 
-describe('protvista-uniprot/config is a side-effect-free import', () => {
-  it('reaches no custom-element registration', () => {
-    const offenders: string[] = [];
-    for (const rel of graph.modules) {
-      const src = stripComments(read(rel));
-      if (/@customElement\s*\(/.test(src) || /customElements\.define\s*\(/.test(src)) {
-        offenders.push(rel);
+describe.each(PURE_ENTRIES)(
+  'protvista-uniprot$subpath is a side-effect-free import',
+  ({ subpath, entry }) => {
+    const graph = reachableFrom(entry);
+
+    it('reaches no custom-element registration', () => {
+      const offenders: string[] = [];
+      for (const rel of graph.modules) {
+        const src = stripComments(read(rel));
+        if (
+          /@customElement\s*\(/.test(src) ||
+          /customElements\.define\s*\(/.test(src)
+        ) {
+          offenders.push(rel);
+        }
       }
-    }
-    expect(
-      offenders,
-      `Modules reachable from ${ENTRY} register a custom element, so importing ` +
-        `the ./config subpath is no longer side-effect-free. Keep config.ts a ` +
-        `re-export of pure modules only.`
-    ).toEqual([]);
-  });
+      expect(
+        offenders,
+        `Modules reachable from ${entry} register a custom element, so importing ` +
+          `the ${subpath} subpath is no longer side-effect-free. Keep ${entry} a ` +
+          `re-export of pure modules only.`
+      ).toEqual([]);
+    });
 
-  it('does not reach the element modules', () => {
-    const elementModules = [
+    it('does not reach the element modules', () => {
+      const elementModules = [
+        'src/index.ts',
+        'src/protvista-uniprot.ts',
+        'src/protvista-uniprot-structure.ts',
+        'src/protvista-uniprot-datatable.ts',
+        'src/built-in-components.ts',
+      ];
+      const reached = elementModules.filter((m) => graph.modules.has(m));
+      expect(reached).toEqual([]);
+    });
+
+    it('creates no runtime dependency on a Nightingale element package', () => {
+      // A value import of a `@nightingale-elements/*` package can register an
+      // element on load; keep every such import in this graph type-only.
+      expect(graph.runtimeNightingale).toEqual([]);
+    });
+  }
+);
+
+// `./structure` defines `<protvista-uniprot-structure>` on purpose; what it
+// must not do is pull the viewer (and its tracks) in with it.
+describe('protvista-uniprot/structure does not load the viewer', () => {
+  const graph = reachableFrom('src/structure.ts');
+
+  it('does not reach <protvista-uniprot> or the package root', () => {
+    const viewerModules = [
       'src/index.ts',
       'src/protvista-uniprot.ts',
-      'src/protvista-uniprot-structure.ts',
-      'src/protvista-uniprot-datatable.ts',
       'src/built-in-components.ts',
     ];
-    const reached = elementModules.filter((m) => graph.modules.has(m));
-    expect(reached).toEqual([]);
-  });
-
-  it('creates no runtime dependency on a Nightingale element package', () => {
-    // A value import of a `@nightingale-elements/*` package can register an
-    // element on load; keep every such import in this graph type-only.
-    expect(graph.runtimeNightingale).toEqual([]);
+    expect(viewerModules.filter((m) => graph.modules.has(m))).toEqual([]);
   });
 });

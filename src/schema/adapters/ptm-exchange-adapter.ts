@@ -54,6 +54,12 @@ enum ConfidenceScoreColors {
   Bronze = '#a65708',
 }
 
+/**
+ * One `MOD_RES_LS` marker per modification at `absolutePosition`. Each marker
+ * passes through the API's `ptms` entries for that modification, unchanged,
+ * and carries the `confidenceScore` its colour is computed from: `null` when
+ * the entries report no score, or a mixture (which is also warned about).
+ */
 const convertPtmExchangePtms = (ptms: PTM[], absolutePosition: number) => {
   const groupPtmsByModification: Record<string, PTM[]> = {};
   for (const ptm of ptms) {
@@ -73,13 +79,14 @@ const convertPtmExchangePtms = (ptms: PTM[], absolutePosition: number) => {
     let confidenceScore: string | null = null;
     if (confidenceScores.size) {
       if (confidenceScores.size > 1) {
-        console.error(
+        console.warn(
           `PTMeXchange PTM has a mixture of confidence scores: ${Array.from(
             confidenceScores
           )}`
         );
       } else {
-        [confidenceScore] = confidenceScores;
+        // A missing property (or `dbReferences`) reads as `undefined` here.
+        [confidenceScore = null] = confidenceScores;
       }
     }
 
@@ -91,6 +98,8 @@ const convertPtmExchangePtms = (ptms: PTM[], absolutePosition: number) => {
       shape: 'triangle',
       color:
         (confidenceScore && ConfidenceScoreColors[confidenceScore]) || 'black',
+      ptms: groupedPtms,
+      confidenceScore,
     };
   });
 };
@@ -108,7 +117,7 @@ export const proteomicsPtmAdapter: AdapterFunction = (raw) => {
         for (const ptm of feature.ptms) {
           const absolutePosition = +feature.begin + ptm.position - 1;
           if (!Number.isFinite(absolutePosition)) {
-            console.error(
+            console.warn(
               `Encountered infinite number: +feature.begin + ptm.position - 1 = ${+feature.begin} + ${
                 ptm.position
               } - 1`
@@ -118,7 +127,7 @@ export const proteomicsPtmAdapter: AdapterFunction = (raw) => {
           const aa = feature.peptide[ptm.position - 1];
           if (absolutePosition in absolutePositionToPtms) {
             if (absolutePositionToPtms[absolutePosition].aa !== aa) {
-              console.error(
+              console.warn(
                 `One PTM has different amino acid values: [${absolutePositionToPtms[absolutePosition].aa}, ${aa}]`
               );
             } else {
@@ -130,10 +139,11 @@ export const proteomicsPtmAdapter: AdapterFunction = (raw) => {
         }
       }
 
-      return Object.entries(absolutePositionToPtms).map(
-        ([absolutePosition, { ptms }]) =>
+      return Object.entries(absolutePositionToPtms)
+        .map(([absolutePosition, { ptms }]) =>
           convertPtmExchangePtms(ptms, +absolutePosition)
-      ).flat();
+        )
+        .flat();
     }
   }
   return [];

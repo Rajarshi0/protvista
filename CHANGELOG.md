@@ -2,6 +2,116 @@
 
 ## Unreleased
 
+### Fixed: a collapsed group no longer draws its hidden tracks
+
+Hiding a track in customize mode (or authoring it `hidden: true`) removed it
+from the expanded group but left its data in the group's collapsed summary.
+The summary is now built from the visible tracks only, and rebuilt from the
+already-loaded data whenever a track is hidden, shown or moved. A line-graph or
+coloured-sequence group draws its first visible track, and its `change` events
+name that track as their source.
+
+### Added: `detail.track` on the `change` event
+
+Every `change` event from a track now says where it came from before any
+other listener sees it: `detail.track.rowId`, `trackId` (`null` for a
+collapsed group's aggregate) and `kind`, the track's semantic kind after
+`extends` merging. A host building its own tooltips no longer has to parse
+element ids (whose format and `pv-<hash>` prefix are not a compatibility
+contract) or walk `getConfig()`, which returns the authored config and is
+`undefined` until the config loads. The detail type is exported as
+`ProtvistaChangeEventDetail`.
+
+### Fixed: zoom and pan update the viewer's display range
+
+The viewer read a zoom or pan from `detail.displaystart` / `displayend`, but
+Nightingale sends `display-start` / `display-end`, so the range it re-rendered
+with never followed the user's zoom. It now reads the hyphenated keys, which
+is also how `ProtvistaChangeEventDetail` types them.
+
+### Added: collapsed groups remember where each feature came from
+
+Every item the viewer loads is tagged with its source track and kind, so a
+click in a collapsed group that mixes tracks reports
+`detail.track.sourceTrackId` / `sourceKind` — for example
+`'interpro-features'` for an InterPro item in DOMAINS and `'features'` for a
+UniProt one. A collapsed graph group (line graph, coloured sequence) draws a
+single track, so its clicks and hovers name that track — for example the
+variant-count line graph in VARIATION. The tag is a non-enumerable property
+under the exported `PV_SOURCE` symbol, read with
+`getFeatureSource(feature)`; it does not appear in `Object.keys`,
+`JSON.stringify`, object spread or snapshots.
+Items are now always copied before tagging, so adapter output and
+`setTrackData()` input are never mutated.
+
+### Added: an `adapters` property, and idempotent registration
+
+`adapters` is the declarative form of `registerAdapter()`: a map of name to
+function, registered as soon as it is set. It may be set before the element
+is defined — the value is applied on upgrade, before loading starts — so a
+host no longer needs to render with `suspend`, register, then clear it.
+Registering the same value under the same name again is now a no-op in every
+registry bucket instead of a `RegistryCollisionError`, which makes React
+StrictMode's double-invoked ref callbacks safe when the values are defined
+once at module scope. A different value under a taken name still throws, and
+"the same" means the same reference, so an inline function written in a
+component is a different value on every render.
+
+If React 19 renders the element before it is defined, it turns `adapters`,
+`viewerConfig` or the structure element's `data` into an attribute such as
+`adapters="[object Object]"`, and the value is lost. The element now logs a
+warning naming the prop instead of loading silently without it.
+
+### Added: public typings and subpaths
+
+`suspend`, `notooltip`, `nostructure`, `noPersistLayout`, `configSrc`,
+`accession`, `sequence` and `viewerConfig` are now public properties, and
+both elements are in `HTMLElementTagNameMap`. The package root exports the
+types `ProcessedStructureData`, `AdapterFunction`, `ProtvistaViewerConfig`,
+`TooltipSpec`, `ProtvistaChangeEvent`, `ProtvistaChangeEventDetail`,
+`ProtvistaTrackOrigin` and `FeatureSource`. Two new subpaths:
+`protvista-uniprot/react` (types only — JSX declarations for both elements
+using attribute spellings; needs React 19 and `@types/react` 19 or later,
+declared as an optional peer dependency) and `protvista-uniprot/structure`
+(`<protvista-uniprot-structure>` without the track viewer).
+
+### Changed: proteomics adapters keep what tooltips need
+
+`uniprot-proteomics-json` passes every field of the API's peptide feature
+through under its own name (`ptms` included), copies the response's `taxid`
+onto each feature, and still rewrites `type` to `unique` / `non_unique` for
+the `filter:` sugar — keeping the API's own type as `sourceType`
+(`PROTEOMICS` or `PROTEOMICS_PTM`). It also no longer mutates the raw
+response, which the default config shares with the PTM track.
+`uniprot-proteomics-ptm-json` markers now carry the API's `ptms` entries for
+their modification and residue, unchanged, and the `confidenceScore` their
+colour is computed from (`null` when the evidence is missing or mixed). Its
+data-quality messages are `console.warn` rather than `console.error`. Both
+outputs are documented in the adapter reference as each adapter's output
+contract.
+
+### Changed: `<protvista-uniprot-structure>`'s colour theme attribute is `color-theme`
+
+`colorTheme` had no explicit attribute mapping, so its attribute was the
+lowercased `colortheme`, unlike `selected-id` and `no-table`. It is now
+`color-theme`; a page setting `colortheme="…"` should switch.
+
+### Fixed: line-graph clicks
+
+`nightingale-linegraph-track` spells the event-type field `eventtype`, so
+the built-in popover (which checks `eventType === 'click'`) never opened for
+line graphs, and its click carries no `feature` or `coords`. The viewer now
+copies `eventtype` to `eventType` for every listener, and fills a line-graph
+click's `feature` with each series' point at the clicked position (the shape
+its hover already sends) plus a `tooltipContent` listing them, and `coords`
+from the pointer event. Clicking a line graph now opens the popover.
+
+### Fixed: the host `change` listener no longer piles up on reconnect
+
+The listener tracking zoom/pan was added in `connectedCallback` and never
+removed, so each disconnect/reconnect added another. It is now registered
+once, in the constructor.
+
 ### Changed: `theme.labelColor` now keeps the group/track hierarchy
 
 A config `theme.labelColor` used to paint group and track labels the same

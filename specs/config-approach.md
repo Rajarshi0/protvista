@@ -720,7 +720,9 @@ A group that pairs a summary track with a detail view — variant counts (a line
 A `detailOnly` track does not feed the group's collapsed view. It is left out in two places:
 
 - **Component inference.** `GroupConfig.component` is inferred from the non-`detailOnly` tracks only, so the group above resolves to `nightingale-linegraph-track` without an explicit `component:`. An explicit `component:` still wins.
-- **The collapsed view's data.** A linegraph or coloured-sequence group draws its first non-`detailOnly` track; any other group flattens the non-`detailOnly` tracks together. The choice follows the flag, not position, so reordering the tracks in a group (`moveTrack`, or a user dragging them) never makes the collapsed view draw the detail track's data.
+- **The collapsed view's data.** A linegraph or coloured-sequence group draws its first non-`detailOnly` track; any other group flattens the non-`detailOnly` tracks together. The choice follows the flag, not position, so reordering the tracks in a group (`setTrackOrder`, or a user moving them in customize mode) never makes the collapsed view draw the detail track's data.
+
+The collapsed view also leaves out `hidden` tracks, whether authored or set in customize mode: a hidden track is absent from the canvas, collapsed or not. So the collapsed view draws `drawnAggregateTracks(tracks)` — not `detailOnly`, not hidden, in the current order — and a graph group draws (and its `change` events name as their source) the first of those. The viewer rebuilds it from the per-track data whenever a layout change alters that list, without refetching anything.
 
 It does not change anything else about the track. A `detailOnly` track shows, hides, filters (`filterUI`), reorders and renders exactly as before when its group is expanded; when the group is collapsed no individual track renders anyway.
 
@@ -955,6 +957,31 @@ change. `registerFormat()` and `registerShape()` are reserved names for that
 extension; the `FormatDefinition` / `ShapeDefinition` records above are shaped
 to be registry entries when it happens, so adding them later is additive.
 
+#### Provider adapter output
+
+A provider transform's output is what an embedder reads off `detail.feature`
+to build its own tooltip, so it is a contract:
+
+- **Pass the provider's fields through** under their own names and values. A
+  transform adds what the renderer needs, such as `start`, but doesn't reshape
+  or rename provider fields for one consumer.
+- **A forced overwrite keeps the original under one clearly named field.**
+  `uniprot-proteomics-json` must overwrite `type` with `unique` /
+  `non_unique` for the `filter:` sugar, so it keeps the API's own type as
+  `sourceType`. It also copies the response-level `taxid` onto each feature.
+- **A derived field is added only when it's part of what the track shows.**
+  `uniprot-proteomics-ptm-json` builds one marker per modification per residue.
+  The marker passes the API's `ptms` entries through and adds the
+  `confidenceScore` its `color` is computed from. That score is `null` when the
+  entries report none, or a mixture (a mixture also logs a warning). Values an
+  embedder can derive from passed-through data are left out, such as the
+  modified residue, which is the entry sequence at `start`.
+- **The adapter reference documents the contract** (`outputSummary` /
+  `outputFields` in `src/schema/adapters/adapter-reference.ts`, rendered into
+  `docs/src/content/docs/adapter-reference.md` by `pnpm adapters:sync`).
+- **A transform never mutates its input.** One response body may feed several
+  tracks (the default config shares the proteomics body between both adapters).
+
 ### Escape-Hatch API (Programmatic — 20% advanced use cases)
 
 ```typescript
@@ -965,10 +992,28 @@ to be registry entries when it happens, so adding them later is additive.
 interface ProtvistaRuntimeAPI {
   /**
    * Register a custom adapter so it can be referenced by name in config.
-   * @param name - A unique adapter name (must not collide with built-ins).
+   * @param name - The adapter name. A taken name throws
+   *               `RegistryCollisionError`, except that a built-in adapter
+   *               may be overridden once. Registering the same function
+   *               (by reference) under the same name again is a no-op.
    * @param fn   - A function: (...rawResponses: any[]) => TrackData.
    */
   registerAdapter(name: string, fn: AdapterFunction): void;
+
+  /**
+   * Adapters to register, by name — the declarative form of
+   * `registerAdapter`, with the same collision rules. May be set before the
+   * element is defined: the value is applied on upgrade, before loading
+   * starts. Property only (no attribute).
+   */
+  adapters?: Record<string, AdapterFunction>;
+
+  /**
+   * Hold off loading. Configure the element (register kinds, themes,
+   * components, set `viewerConfig`), then clear it to load. Reflected as
+   * the `suspend` attribute.
+   */
+  suspend?: boolean;
 
   /**
    * Register a custom semantic kind so community-defined data types
@@ -1034,7 +1079,7 @@ interface ProtvistaRuntimeAPI {
    * canonical path for rich / interactive / stateful tooltips — the
    * library does not ship a programmatic per-kind override registry.
    */
-  notooltip?: boolean; // HTML attribute only: <protvista-uniprot notooltip>
+  notooltip?: boolean; // also reflected as an attribute: <protvista-uniprot notooltip>
 
   /**
    * Replace the entire viewer configuration at runtime.
@@ -1216,8 +1261,19 @@ Attach a `change` listener to the `<protvista-uniprot>` element. Its `detail` ca
   uniprot-website encodes the dismissal set as `hideTooltipEvents = new Set([undefined, 'reset', 'click'])` — a bare event with no `eventType` (`undefined`), a `reset`, and a fresh `click` all dismiss the current overlay (the `click` then re-opens for the newly clicked feature). Everything else is a hover signal.
 - **`feature`** — the full adapter-output item for the interacted datapoint, including any `tooltipContent` the library pre-computed.
 - **`coords`** — an `[x, y]` tuple in **page coordinates** (`pageX`/`pageY` — viewport-relative *plus* the current scroll offset). To position against the viewport (what Floating UI and `position: fixed` expect), subtract `window.scrollX` / `window.scrollY`, exactly as the built-in popover does. If you instead render into an absolutely-positioned container that already lives in page-coordinate space, use `[x, y]` unchanged.
+- **`track`** — where the event came from, added by the viewer before any other listener runs (its host listener is registered in the capture phase, in the constructor):
+  - `rowId` — the group id, or a standalone track's own id;
+  - `trackId` — the track id, or `null` when the event came from a collapsed group's aggregate;
+  - `kind` — the track's semantic kind after `extends` merging, or `null` (always `null` for an aggregate);
+  - `sourceTrackId` / `sourceKind` — the track that produced `feature`, read from the feature's source tag. Present for every feature the viewer loaded, so a click in a collapsed group says which track the item came from. A collapsed graph group (`nightingale-linegraph-track`, `nightingale-colored-sequence`) draws only its first non-`detailOnly` track, and its points carry no tag, so its events name that track. `sourceKind ?? kind` is the kind to build a tooltip for.
 
-The `change` payload (`eventType`, `feature`, `coords`) is part of the viewer's stable compatibility surface — see [`docs/architecture-audit.md`](../docs/architecture-audit.md).
+  The source tag is a non-enumerable property under `PV_SOURCE` (`Symbol.for('protvista-uniprot.source')`), readable with the exported `getFeatureSource(feature)`. It never appears in `Object.keys`, `JSON.stringify` or object spread.
+
+Zoom and pan events carry no `track`, only the new range as `display-start` / `display-end`, the keys Nightingale sends. The viewer records them, so a re-render keeps the user's zoom.
+
+The viewer also normalises two Nightingale inconsistencies on the same event: `nightingale-linegraph-track` spells the field `eventtype`, which is copied to `eventType`; and its click carries neither `feature` nor `coords`, so the viewer fills `feature` with each series' point at the clicked position (keyed by series name, as its `mouseover` already sends), plus a `tooltipContent` listing them, and `coords` from the pointer event.
+
+The `change` payload (`eventType`, `feature`, `coords`, `track`) is part of the viewer's stable compatibility surface — see [`docs/architecture-audit.md`](../docs/architecture-audit.md). Its type is exported as `ProtvistaChangeEventDetail`.
 
 ### Rendering the overlay
 
@@ -1231,6 +1287,28 @@ Two interaction edge cases worth knowing:
 ### React 19 note
 
 The mount/unmount of the `change` listener is naturally expressed as a single ref callback that returns its cleanup function (React 19). Prefer that shape over the older split-`useEffect` mount/unmount pair; new adopters should not copy the split form as canonical. The worked example in [Rich tooltips in React](https://ebi-webcomponents.github.io/protvista/react-integration) shows both.
+
+React 19 is the supported React target:
+
+- **JSX typings.** `import type {} from 'protvista-uniprot/react'` declares both elements in `React.JSX.IntrinsicElements`. Props use the **attribute** spelling (`notooltip`, `suspend`, `no-persist-layout`, `config-src`, `no-table`, `selected-id`, `color-theme`). React 19 sets attributes on an element that isn't defined yet, and HTML lowercases attribute names. The typings need `@types/react` 19 or later, which the package declares as an optional peer dependency. React 18 isn't supported: it writes `suspend={false}` as an attribute, which still suspends.
+- **Object-valued props** (`viewerConfig`, `adapters`, the structure element's `data`) only work as properties. React 19 sets them as properties when the element is already defined at render time, so import the element before rendering it. On an undefined element React stringifies them into an attribute such as `adapters="[object Object]"`, and the value is lost. Each element `console.warn`s once when it finds such an attribute. A ref works on an undefined element because the element picks the property up on upgrade. On an already-defined element, a ref runs after `connectedCallback`, which is too late for a config that names a custom adapter.
+- **StrictMode.** Registering the same value again is a no-op, compared by reference. Adapters, kinds and themes defined once at module scope therefore survive a double-invoked setup. An inline function or object literal is a new value on every run, and the second registration throws `RegistryCollisionError`.
+
+## Package surface
+
+`protvista-uniprot` serves any embedder. uniprot-website motivated much of the runtime API, but it isn't the requirement: each public entry point and type must make sense for a generic embedder rendering its own UI on top of the element.
+
+| Entry point | What it is |
+| --- | --- |
+| `protvista-uniprot` | Self-registers both elements. Exports `filterConfig`, `colorConfig` and `ProtvistaUniprotStructure`. Also exports `PV_SOURCE`, `getFeatureSource`, and types for the library's own API: `ProtvistaViewerConfig`, `AdapterFunction`, `TooltipSpec`, `ProcessedStructureData`, `ProtvistaChangeEvent`, `ProtvistaChangeEventDetail`, `ProtvistaEventType`, `ProtvistaTrackOrigin` and `FeatureSource`. |
+| `protvista-uniprot/config` | `filterConfig` / `colorConfig` with no element and no side effects (`config-subpath-purity.spec.ts`). |
+| `protvista-uniprot/structure` | `<protvista-uniprot-structure>` alone, without the track viewer. |
+| `protvista-uniprot/react` | Types only: the JSX declarations above. |
+
+Two things are deliberately **not** public:
+
+- **Per-kind feature shape types**, such as a `FeatureByKind` map from kind to adapter output. Exporting them would make every field a consumer reads part of the public type contract, which ties the library to one consumer's needs. Consumers type what they read themselves. `ProtvistaChangeEventDetail` is generic over its `Feature` for this reason. The adapter reference documents output fields in prose (see [Provider adapter output](#provider-adapter-output)).
+- **HTML escaping helpers.** The built-in tooltips' `escapeHtml` / `sanitizeUrl` stay internal. An embedder that builds HTML strings uses its own helper or DOMPurify.
 
 ## Security and trust model
 
@@ -1471,6 +1549,8 @@ These hold across the configuration schema:
 
 **Defaults are canonical.** Built-in semantic kinds carry the canonical rendering defaults for their domain (AlphaFold confidence ramp, AlphaMissense pathogenicity ramp, etc.) so that authors get the "standard" appearance without writing any rendering block at all.
 
+**Any embedder, not one consumer.** Runtime API, exported types and adapter output must make sense for a generic embedder that renders its own tooltips or UI on top of `<protvista-uniprot>`. A need specific to one consumer (uniprot-website included) is solved by that consumer, not by API shaped around what it happens to read. See [Package surface](#package-surface).
+
 ## Versioning
 
 The schema follows semantic versioning at the protocol level (distinct from the library's own npm version). `version: "1.0"` is the first published protocol version; later versions will increment additively.
@@ -1541,6 +1621,10 @@ The grant deliverable (P1 — the config schema) has no external cross-project d
 - [x] The CSV, TSV, JSON and BED formats are built in. A track that points at `./x.csv` / `./x.tsv` / `./x.json` / `./x.bed` loads end to end — reading the format off the extension, fetching the file as text (CSV/TSV/BED) or JSON, decoding it into the records the track's `kind` draws, and rendering on `nightingale-track-canvas` — without consumer-side adapter registration.
 - [x] File-extension shorthand (`./hits.csv` → CSV, `./hits.tsv` → TSV, `./hits.json` → JSON, `./regions.bed` → BED) states the source's encoding; the track's `kind` states the records, and the pair selects the reading. A malformed file makes the decoder throw a descriptive error naming the file, the reading applied to it, and the offending row/record/line (and, where applicable, the column/field), which the loader logs while rendering that track empty.
 - [x] BED coordinates are converted from 0-based half-open to the viewer's 1-based inclusive convention (`start = bedStart + 1`, `end = bedEnd`) — a BED interval `100 200` renders as `start: 101, end: 200`.
+- [x] Every `change` event from a track carries `detail.track` (`rowId`, `trackId`, the kind after `extends` merging) from the first click on. A collapsed group's event also names the source track of the feature, or of the one track a graph aggregate draws. Zoom and pan update the viewer's display range from `display-start` / `display-end` (`change-event.spec.ts`, `feature-source.spec.ts`).
+- [x] `adapters` set before the element is defined is applied before loading starts. Registering the same value again is a no-op, and a different one still throws. An object prop that React 19 stringified into an attribute produces a warning (`adapters-before-define.spec.ts`).
+- [x] The proteomics provider adapters pass the API's fields through as documented under [Provider adapter output](#provider-adapter-output) (`proteomics-adapters.spec.ts`).
+- [x] The package exposes exactly the entry points and types under [Package surface](#package-surface), and each resolves under publint and attw (`pnpm test:pack`, `public-types.spec.ts`).
 
 ## Tests
 

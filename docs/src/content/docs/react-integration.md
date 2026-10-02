@@ -16,7 +16,7 @@ The normative contract for everything below lives in [`specs/config-approach.md`
 1. Set `notooltip` so the built-in popover stays out of your way.
 2. Attach a `change` listener to the `<protvista-uniprot>` element.
 3. Branch on `detail.eventType`: `click` opens a tooltip, `mouseover`/`mouseout` drive hover, and `reset` (scroll/zoom) dismisses.
-4. Read `detail.feature` (the full datapoint, including any library-precomputed `tooltipContent`) and `detail.coords` (an `[x, y]` page-coordinate tuple).
+4. Read `detail.feature` (the full datapoint, including any library-precomputed `tooltipContent`), `detail.coords` (an `[x, y]` page-coordinate tuple) and `detail.track` (which track it came from, and its kind).
 5. Render your overlay at those coordinates, and dismiss it on the `{ undefined, 'reset', 'click' }` set.
 
 ### `notooltip` does not hide the content
@@ -32,9 +32,25 @@ The normative contract for everything below lives in [`specs/config-approach.md`
 | `'mouseout'` | Hover leave            | Clear hover state                                             |
 | `'reset'`    | Scrolled / zoomed view | Dismiss — "stop showing any per-feature tooltip"              |
 
-These `eventType` values, and the interactions that trigger them, are emitted by the underlying Nightingale track (`@nightingale-elements`), not by `<protvista-uniprot>` itself — Nightingale emits `'reset'` on view changes such as scroll and zoom. The viewer only re-exposes the payload on its `change` event.
+These `eventType` values, and the interactions that trigger them, are emitted by the underlying Nightingale track (`@nightingale-elements`), not by `<protvista-uniprot>` itself — Nightingale emits `'reset'` on view changes such as scroll and zoom. The viewer re-exposes the payload on its `change` event with one spelling: line-graph tracks send a lowercase `eventtype`, which the viewer copies to `eventType` before your listener runs.
+
+A line-graph click arrives with `feature` set to each series' point at the clicked position, keyed by series name (`{ [name]: { position, value } }`, the same shape its hover sends), plus a `tooltipContent` listing them.
 
 uniprot-website dismisses on `hideTooltipEvents = new Set([undefined, 'reset', 'click'])`: a bare event (no `eventType`), a `reset`, and a fresh `click` all hide the current overlay — the `click` then re-opens for the newly clicked feature.
+
+### `track` says where the event came from
+
+`detail.track` names the track the event came from, so you can pick a tooltip builder without parsing element ids or walking the config:
+
+| Field           | Value                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `rowId`         | The group id, or a standalone track's own id                                           |
+| `trackId`       | The track id — `null` for a collapsed group, which draws several tracks at once        |
+| `kind`          | The track's semantic kind, after `extends` merging — `null` for a collapsed group      |
+| `sourceTrackId` | The track that produced `detail.feature`                                               |
+| `sourceKind`    | That track's kind                                                                      |
+
+`sourceTrackId` / `sourceKind` come from a tag the viewer puts on every item it loads, so they answer "which track did this feature come from?" even in a collapsed group that mixes, say, UniProt and InterPro domains. `sourceKind ?? kind` is the kind to build for. The tag is also readable directly with `getFeatureSource(feature)`; it is a non-enumerable symbol property, so it never shows up when you serialise or spread a feature.
 
 ### `coords` is in page coordinates
 
@@ -47,17 +63,14 @@ React + [Floating UI](https://floating-ui.com/) only. The example imports from `
 ```tsx
 import { useEffect, useRef, useState } from 'react';
 import { useFloating, autoUpdate } from '@floating-ui/react';
-
-type ChangeDetail = {
-  eventType?: 'click' | 'mouseover' | 'mouseout' | 'reset';
-  feature?: { tooltipContent?: string; [k: string]: unknown };
-  coords?: [number, number];
-};
+import type ProtvistaUniprot from 'protvista-uniprot';
+import type { ProtvistaChangeEvent } from 'protvista-uniprot';
+import type {} from 'protvista-uniprot/react'; // JSX types for the elements
 
 const HIDE = new Set([undefined, 'reset', 'click']);
 
 export function FeatureViewer({ accession }: { accession: string }) {
-  const hostRef = useRef<HTMLElement>(null);
+  const hostRef = useRef<ProtvistaUniprot>(null);
   const [tip, setTip] = useState<{ html: string } | null>(null);
   // whileElementsMounted: autoUpdate keeps the overlay positioned and avoids a
   // first-frame top-left flash before the async placement resolves.
@@ -67,11 +80,12 @@ export function FeatureViewer({ accession }: { accession: string }) {
     const el = hostRef.current;
     if (!el) return;
     const onChange = (e: Event) => {
-      const { eventType, feature, coords } = (e as CustomEvent<ChangeDetail>).detail ?? {};
+      const { eventType, feature, coords } = (e as ProtvistaChangeEvent).detail ?? {};
       if (HIDE.has(eventType)) setTip(null); // reset/undefined dismiss; click falls through to re-open
       // This example reuses the library's precomputed tooltipContent. To build
       // your own UI from feature fields (evidence badges, links, …), branch on
-      // `feature` here instead of gating on `feature.tooltipContent`.
+      // `detail.track.sourceKind ?? detail.track.kind` and read `feature`
+      // instead of gating on `feature.tooltipContent`.
       if (eventType !== 'click' || !coords || !feature?.tooltipContent) return;
       const [x, y] = coords; // page coords → viewport for position: fixed
       refs.setPositionReference({
@@ -89,7 +103,6 @@ export function FeatureViewer({ accession }: { accession: string }) {
 
   return (
     <>
-      {/* @ts-expect-error custom element */}
       <protvista-uniprot ref={hostRef} accession={accession} notooltip />
       {tip && (
         <div ref={refs.setFloating} style={floatingStyles} role="tooltip"
@@ -117,10 +130,39 @@ const hostRef = (el: HTMLElement | null) => {
 };
 
 // …
-{/* @ts-expect-error custom element */}
 <protvista-uniprot ref={hostRef} accession={accession} notooltip />
 ```
 
 Prefer this once you're on React 19 — don't copy the split mount/unmount `useEffect` shape as the canonical form.
+
+## Typing the elements in JSX
+
+`import type {} from 'protvista-uniprot/react'` (once, anywhere in your program) declares `<protvista-uniprot>` and `<protvista-uniprot-structure>` as JSX intrinsic elements. It needs React 19 and `@types/react` 19 or later. Props use the **attribute** spelling — `notooltip`, `suspend`, `no-persist-layout`, `config-src`, `no-table`, `selected-id`, `color-theme` — because React 19 sets attributes, not properties, on an element that is not defined yet, and HTML lowercases attribute names: a camel-cased `noTable` would arrive as the unobserved `notable`.
+
+:::caution[React 18]
+The typings target React 19. React 18 writes every custom-element prop as an attribute, including `suspend={false}`, which leaves an attribute that still suspends the viewer. On React 18, set boolean props from a ref instead.
+:::
+
+Object-valued props (`viewerConfig`, `adapters`, the structure element's `data`) can only be set as properties. React 19 sets them as properties when the element is already defined at render time, so import the element before you render it:
+
+```tsx
+import 'protvista-uniprot'; // defines <protvista-uniprot> before any render
+
+<protvista-uniprot accession={accession} adapters={adapters} />
+```
+
+If you load the package lazily, render the element only once the import has resolved. Otherwise React stringifies the object into an attribute such as `adapters="[object Object]"`. The value is lost, and the element logs a warning naming the prop. Setting the prop from a ref also works on an element that is not defined yet, because the element picks it up when it upgrades:
+
+```tsx
+<protvista-uniprot ref={(el) => { if (el) el.adapters = adapters; }} accession={accession} />
+```
+
+## Replacing a built-in adapter
+
+To load a track's data through your own function, set the element's `adapters` property, either as a JSX prop as shown above or as `el.adapters = { 'uniprot-proteomics-json': myAdapter }`. The adapters are registered before loading starts, so there is no need to render with `suspend` and clear it afterwards. Setting the *same* functions again is a no-op, so React StrictMode's double-invoked ref callbacks are safe — as long as `adapters` is defined once at module scope. An object literal or arrow function written inside the component is a new value on every render, and the second registration throws. See [Escape hatches](/protvista/escape-hatches).
+
+```tsx
+const adapters = { 'uniprot-proteomics-json': myAdapter }; // module scope
+```
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._

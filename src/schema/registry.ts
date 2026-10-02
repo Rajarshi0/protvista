@@ -33,6 +33,11 @@
  *     that is not a built-in twice still throws, so a consumer
  *     colliding with their own adapter is caught as before. To add a
  *     built-in adapter, see `BUILTIN_ADAPTERS` in `./adapters`.
+ *   - Registering the *same* value under a name again is a no-op in
+ *     every bucket, not a collision. A host that runs its setup twice
+ *     against one element (React StrictMode's double-invoked ref
+ *     callbacks) is not registering anything new, so it must not throw;
+ *     a *different* value under a taken name still does.
  *   - The built-in semantic kinds reference adapter names that are
  *     themselves registered built-ins — both the generic file-format
  *     adapters and the UniProt/EBI domain adapters live in
@@ -75,6 +80,17 @@ export interface Registry {
 
   // ── Adapters ──────────────────────────────────────────────
   registerAdapter(name: string, fn: AdapterFunction): void;
+  /**
+   * Swap the set of adapters one caller owns — `previous`, exactly as it
+   * last passed it — for `next`, all or nothing. A name from `previous`
+   * may take a new function; a name `next` drops is unregistered, falling
+   * back to the built-in it overrode. Any other name follows
+   * `registerAdapter`'s rules, and if one of them collides nothing changes.
+   */
+  replaceAdapters(
+    previous: Readonly<Record<string, AdapterFunction>> | undefined,
+    next: Readonly<Record<string, AdapterFunction>> | undefined
+  ): void;
   getAdapter(name: string): AdapterFunction | undefined;
   hasAdapter(name: string): boolean;
   listAdapters(): string[];
@@ -252,8 +268,9 @@ const BUILTIN_THEMES: ReadonlyArray<readonly [string, readonly ColorStop[]]> = [
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Thrown when the same name is registered twice in the same bucket
- * (semantic kinds, adapters, themes, or components). The spec's escape-hatch
+ * Thrown when a name is registered twice in the same bucket (semantic
+ * kinds, adapters, themes, or components) with a different value.
+ * Re-registering the identical value is a no-op. The spec's escape-hatch
  * docstrings require "unique … must not collide with built-ins"; a
  * silent override would make behaviour order-dependent.
  */
@@ -386,6 +403,9 @@ export function createRegistry(): Registry {
   // register over any of these once; the name is dropped from the set
   // on override so a second registration collides like any other.
   const builtinAdapterNames = new Set<string>();
+  // Every built-in's own function, kept so `replaceAdapters` can put one
+  // back when the caller that overrode it lets the name go.
+  const builtinAdapterFns = new Map<string, AdapterFunction>();
   let seedingBuiltinAdapters = false;
 
   // Seed built-in semantic kinds. Rendering presets are copied
@@ -413,6 +433,10 @@ export function createRegistry(): Registry {
     );
   }
 
+  // Themes are stored as copies, so a repeat registration is recognised
+  // by the stops array the caller passed rather than the stored value.
+  const themeSources = new Map<string, ColorStop[]>();
+
   // ── register* helpers with collision detection ─────────────
   function registerInto<T>(
     bucket: string,
@@ -426,6 +450,8 @@ export function createRegistry(): Registry {
       );
     }
     if (map.has(name)) {
+      // Re-registering the same value is a no-op, not a collision.
+      if (map.get(name) === value) return;
       throw new RegistryCollisionError(bucket, name);
     }
     map.set(name, value);
@@ -452,8 +478,12 @@ export function createRegistry(): Registry {
       if (seedingBuiltinAdapters) {
         registerInto('adapter', adapters, name, fn);
         builtinAdapterNames.add(name);
+        builtinAdapterFns.set(name, fn);
         return;
       }
+      // Same function again (including a built-in's own): nothing changes,
+      // and a built-in stays overridable.
+      if (adapters.get(name) === fn) return;
       if (builtinAdapterNames.has(name)) {
         // Consumer override of a built-in: allowed, and allowed once.
         // Forgetting the built-in status here means a second
@@ -464,6 +494,49 @@ export function createRegistry(): Registry {
         return;
       }
       registerInto('adapter', adapters, name, fn);
+    },
+    replaceAdapters(previous, next) {
+      // The caller owns the names it registered that still hold its
+      // function.
+      const owned = new Set(
+        Object.entries(previous ?? {})
+          .filter(([name, fn]) => adapters.get(name) === fn)
+          .map(([name]) => name)
+      );
+      const entries = Object.entries(next ?? {});
+      const kept = new Set(entries.map(([name]) => name));
+      // Check every entry before touching the map, so a collision part-way
+      // through leaves the registry as it was.
+      for (const [name, fn] of entries) {
+        if (name.length === 0) {
+          throw new TypeError(
+            'Cannot register adapter: name must be a non-empty string.'
+          );
+        }
+        if (
+          adapters.has(name) &&
+          adapters.get(name) !== fn &&
+          !owned.has(name) &&
+          !builtinAdapterNames.has(name)
+        ) {
+          throw new RegistryCollisionError('adapter', name);
+        }
+      }
+      for (const name of owned) {
+        if (kept.has(name)) continue;
+        const builtin = builtinAdapterFns.get(name);
+        if (builtin) {
+          // Back to the built-in, overridable once more.
+          adapters.set(name, builtin);
+          builtinAdapterNames.add(name);
+        } else {
+          adapters.delete(name);
+        }
+      }
+      for (const [name, fn] of entries) {
+        if (owned.has(name)) adapters.set(name, fn);
+        else registry.registerAdapter(name, fn);
+      }
     },
     getAdapter(name) {
       return adapters.get(name);
@@ -482,12 +555,14 @@ export function createRegistry(): Registry {
           `Cannot register theme '${name}': stops must be an array of at least 2 ColorStop entries.`
         );
       }
+      if (themeSources.get(name) === stops) return;
       registerInto(
         'theme',
         themes,
         name,
         stops.map((s) => ({ ...s }))
       );
+      themeSources.set(name, stops);
     },
     getTheme(name) {
       return themes.get(name);
