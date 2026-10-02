@@ -147,12 +147,7 @@ function isBlankRow(cells: readonly string[]): boolean {
  * adapter reference (`docs/adapter-reference.md`) can be pinned to the
  * parser's actual requirement by a drift test.
  */
-export const REQUIRED_COLUMNS = [
-  'type',
-  'start',
-  'end',
-  'description',
-] as const;
+export const REQUIRED_COLUMNS = ['type', 'start', 'end', 'description'] as const;
 
 /**
  * A plain decimal number literal (optional sign, integer/fraction, optional
