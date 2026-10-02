@@ -85,6 +85,14 @@ framework ref, or a Lit `.adapters=${…}` binding on a page that loads
 before it starts loading, so there is no need to render with `suspend` and clear
 it afterwards. Entries set after the data has loaded apply to the next load.
 
+Each value you set replaces the last one, all at once. A name may take a new
+function, so an object re-created on every render of a component is fine. A
+name the new value leaves out is unregistered, and any built-in adapter it
+overrode comes back. Unlike `registerAdapter`, the property's own entries are
+not bound by the unique-names rule below. A name registered some other way,
+such as with `registerAdapter`, still throws `RegistryCollisionError`, and the
+element keeps its previous adapters.
+
 ## A custom kind and a custom theme
 
 ```js
