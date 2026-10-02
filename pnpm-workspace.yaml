@@ -31,3 +31,17 @@ allowBuilds:
 # still waits its day.
 minimumReleaseAgeExclude:
   - '@nightingale-elements/*'
+
+# Overrides force a patched version of a dependency that a parent package pins
+# exactly, so `pnpm audit --fix update` can't move it. They apply to this
+# repo's installs only — overrides are not published, so consumers still get
+# whatever the parent declares.
+overrides:
+  # Nightingale pins lodash-es exactly (filter 4.17.11, track and variation
+  # 4.17.15), all with known advisories. Same major, so a safe stopgap; remove
+  # once Nightingale relaxes the pins and the fix ships to consumers too.
+  lodash-es: ^4.18.1
+
+  # vite-plugin-svgo pins svgo 4.0.1, whose removeScripts plugin has
+  # advisories. Build-time only, and only ever runs over our own icons.
+  svgo: ^4.1.0

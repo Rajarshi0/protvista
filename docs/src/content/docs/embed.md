@@ -14,7 +14,7 @@ viewer for that protein:
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.2/dist/protvista-uniprot.mjs"
+  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/protvista-uniprot.mjs"
 ></script>
 
 <protvista-uniprot accession="P05067"></protvista-uniprot>
@@ -35,7 +35,7 @@ beta with nothing to install:
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.2/dist/protvista-uniprot.mjs"
+  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/protvista-uniprot.mjs"
 ></script>
 
 <protvista-uniprot accession="P05067"></protvista-uniprot>
@@ -95,6 +95,7 @@ Set these as HTML attributes (or as JavaScript properties on the element).
 | --- | --- | --- |
 | `accession` | string | The UniProt accession to display. Takes precedence over an `accession` in a config. |
 | `config-src` | string | URL or path to a **YAML or JSON** config, fetched at mount time. See [Author a config](/protvista/configure). |
+| `data-*` | string | Fills a `{token}` in the config's data URLs: `data-species="mouse"` fills `{species}`, `data-dataset-id` fills `{datasetId}`. Overrides the config's `variables:` defaults. `{accession}` always comes from the `accession` attribute (or the config's `accession:`), so `data-accession` has no effect. Changing one on the live element reloads the data. |
 | `viewerConfig` | object | A config object (or a YAML/JSON string) assigned as a JS property — there is no matching HTML attribute. An alternative to `config-src` when you already have the config in memory. |
 | `nostructure` | boolean | Hides the 3D structure group. |
 | `notooltip` | boolean | Suppresses the built-in click tooltip (set this when you render your own — see [Rich tooltips in React](/protvista/react-integration)). |

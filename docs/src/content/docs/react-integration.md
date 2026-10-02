@@ -159,10 +159,13 @@ If you load the package lazily, render the element only once the import has reso
 
 ## Replacing a built-in adapter
 
-To load a track's data through your own function, set the element's `adapters` property, either as a JSX prop as shown above or as `el.adapters = { 'uniprot-proteomics-json': myAdapter }`. The adapters are registered before loading starts, so there is no need to render with `suspend` and clear it afterwards. Setting the *same* functions again is a no-op, so React StrictMode's double-invoked ref callbacks are safe — as long as `adapters` is defined once at module scope. An object literal or arrow function written inside the component is a new value on every render, and the second registration throws. See [Escape hatches](/protvista/escape-hatches).
+To load a track's data through your own function, set the element's `adapters` property, either as a JSX prop as shown above or as `el.adapters = { 'uniprot-proteomics-json': myAdapter }`. The adapters are registered before loading starts, so there is no need to render with `suspend` and clear it afterwards. Each value replaces the one before it, so the object can be written inside the component and re-created on every render, and React StrictMode's double-invoked ref callbacks are safe. A name the new value leaves out is unregistered, and any built-in it overrode comes back. A name already registered some other way, such as with `registerAdapter()`, throws `RegistryCollisionError`. Adapters changed after the data has loaded apply to the next load. See [Escape hatches](/protvista/escape-hatches).
 
 ```tsx
-const adapters = { 'uniprot-proteomics-json': myAdapter }; // module scope
+<protvista-uniprot
+  accession={accession}
+  adapters={{ 'uniprot-proteomics-json': myAdapter }}
+/>
 ```
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._

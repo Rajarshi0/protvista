@@ -60,6 +60,8 @@ The schema is split into two conceptual layers:
 
 ### Intent Layer
 
+**Template variables.** Every `{token}` in a data URL — a `sources` value or a descriptor `url:` — resolves against one merged variables dictionary fed by three sources, lowest precedence first: the config's top-level `variables:` block (baseline values shared by every mount of that config), the host element's `data-*` attributes (`<protvista-uniprot data-species="mouse">` supplies `{species}`; HTML's reserved `data-*` namespace keeps author variables clear of `class` / `id` / `aria-*`), and the named `accession` attribute, which is an alias for `data-accession` and wins over it on conflict, so `<protvista-uniprot accession="P05067">` stays the zero-learning-curve path. The element only loads track data once it has an accession (the named attribute, or the config's `accession:` copied into it), so inside the element `{accession}` always comes from that, and `data-accession` never reaches a URL. Only a direct `loadProtvistaData` caller sees it. Token names match `[A-Za-z][A-Za-z0-9_]*` and are case-sensitive; braces that don't match (`{foo-bar}`) are literal text. `data-*` values are read through `element.dataset`, so the DOM's kebab → camelCase rule applies: `data-dataset-id` supplies `{datasetId}` — write `data-species` in HTML and `{species}` in URLs. Values are URL-encoded when substituted (`encodeURIComponent`), so a value cannot add a path segment, query, or fragment. A value encoding can't make safe is refused, and its URL is skipped with a console warning: exactly `.` or `..` (a dot-segment the URL parser would collapse, climbing out of the template's path) and malformed Unicode (a lone surrogate). `{accession}` instead keeps its `[A-Za-z0-9_-]{1,32}` gate. Every occurrence of a token is replaced. Variables are read at fetch time (after parse → validate → normalize), so a config loaded via `config-src` sees the mount's `data-*`, and changing a `data-*` attribute on a live element re-runs the data load — a burst of changes coalesces into one load on the next animation frame, the superseded load is aborted, and a change that alters no URL the config uses (`data-testid`, a same-value write, a `data-accession` shadowed by the named attribute) does nothing. A token defined nowhere is a `missing-variable` validator warning, and at fetch time that URL is skipped (with a console warning) rather than requested half-built. Labels and tooltips are unaffected: they still interpolate `{accession}` only.
+
 ```typescript
 /**
  * Root configuration object for a ProtVista viewer instance.
@@ -92,6 +94,7 @@ interface ProtvistaViewerConfig {
    *
    * Merge semantics:
    *   - `sources`            merged by key (child wins)
+   *   - `variables`          merged by key (child wins)
    *   - `defaults`           merged field-wise (child wins)
    *   - `rows`               merged by `id`; a child row with a
    *                          known id extends the base; a new id is
@@ -151,8 +154,9 @@ interface ProtvistaViewerConfig {
    *
    * Tracks reference these by key name in `DataSourceDescriptor.source`
    * (preferred) or implicitly via a bare `url` value that is not an
-   * http(s) URL or a file path. URLs support `{accession}` placeholder
-   * interpolation.
+   * http(s) URL or a file path. URLs support `{token}` template
+   * variables — `{accession}` and anything in `variables` or the host's
+   * `data-*` attributes (see "Template variables" above).
    *
    * Example:
    *   sources: {
@@ -167,6 +171,27 @@ interface ProtvistaViewerConfig {
    *   url: "https://my.lab/data"     // literal URL
    */
   sources?: Record<string, string>;
+
+  /**
+   * Baseline values for `{token}` template variables in data URLs,
+   * shared by every mount of this config. Merged under the host's
+   * `data-*` attributes and its `accession` attribute (precedence,
+   * lowest first: variables < data-* < accession). Merged by key
+   * across `extends` (child wins).
+   *
+   * Every token a data URL uses must resolve against at least one of
+   * the three sources. One defined nowhere produces a
+   * `missing-variable` warning (the config still loads; the value may
+   * arrive at runtime as a `data-*` attribute) and, at fetch time, the
+   * URL is skipped rather than requested half-built.
+   *
+   * Values are strings. Keys are unconstrained, but only keys matching
+   * the token grammar `[A-Za-z][A-Za-z0-9_]*` can ever be referenced.
+   *
+   * Example:
+   *   variables: { species: "human", build: "v2024.12" }
+   */
+  variables?: Record<string, string>;
 
   /**
    * Global defaults applied to every group/track unless overridden.
@@ -1318,6 +1343,7 @@ The viewer runs in the embedder's browsing context and inherits the embedder's C
 - **`from: file` fetches** resolve to `fetch()` against the same origin as the hosting page — they are not filesystem reads in the Node sense. In practice, this means the HTML page and its sibling data files must be served from the same origin (e.g. a local web server, or a file hosted on a static site); opening `index.html` directly via `file://` will fail same-origin checks on most browsers.
 - **`from: inline` data** never triggers a fetch and is the most trustworthy form for offline / local-dev use.
 - **`from: custom` data** is injected by the embedder via `setTrackData()`; the trust posture is whatever the embedder applies to its own data.
+- **Template variables** (`data-*` attributes, `variables:`, `accession`) are URL-encoded before substitution, so a hostile value cannot add a path segment, query string or fragment to a data URL. A value of exactly `.` or `..` is refused rather than encoded, because the URL parser treats it (and `%2E%2E`) as a dot-segment that climbs out of the template's path; so is malformed Unicode. `{accession}` is restricted to `[A-Za-z0-9_-]{1,32}`. Encoding protects URL *structure* only — an embedder that copies untrusted input (a query parameter, say) into a `data-*` attribute still decides which value is requested within that structure.
 - **`extends` resolution** can transitively introduce fetches at config-load time. The default fetcher accepts URLs (`http(s)://…`) and file paths (`/…`, `./…`, `../…`) and enforces a 2 MiB body ceiling; bare names are rejected unless the embedder supplies an `opts.resolver` that maps them to a parsed config. Authors are trusting the contents of whatever URL or file they name in `extends:` — including the `sources` URLs that target will introduce. Adopters who expose `extends:` values to end-users (dashboarding tools, admin UIs) should wrap the loader with their own origin allow-list before handing URLs on.
 - **Tooltip HTML** flows through Markdoc's own safe renderer — the document never reaches a raw `innerHTML` seam. User-interpolated data in `{% $field %}` placeholders is HTML-escaped before entering the Markdoc pipeline, so a malicious adapter payload cannot smuggle `<script>` into a tooltip. Authors registering custom adapters via `registerAdapter()` should nevertheless treat adapter output as the same trust level as the upstream data source. Consumers rendering their own tooltip UI via the Nightingale `change`-event pattern (with `notooltip` on the element to suppress the built-in popover) own their escaping in that path — the library's declarative tooltip pipeline is not in play there.
 
@@ -1500,6 +1526,41 @@ A `.bed` file behaves the same way via the `bed` adapter, with two format-specif
 
 > **Note.** CSV, TSV, JSON, and BED all ship today — see [`specs/generic-format-adapters.md`](./generic-format-adapters.md).
 
+### Example 5: Template variables — one config, many species and builds
+
+**Input (YAML):**
+
+```yaml
+# Shared baseline values; every mount of this config starts from these.
+variables:
+  species: human
+  build: v2024.12
+
+sources:
+  features: 'https://api.example.org/{species}/{build}/features/{accession}'
+
+rows:
+  - id: FEATURES
+    tracks:
+      - id: all
+        kind: features
+        data: features
+```
+
+**Mount (HTML):**
+
+```html
+<protvista-uniprot
+  accession="P05067"
+  data-species="mouse"
+  config-src="./species-config.yaml"
+></protvista-uniprot>
+```
+
+**Expected output (viewer behaviour):**
+
+The `features` track fetches `https://api.example.org/mouse/v2024.12/features/P05067`: `{species}` comes from the `data-species` attribute (which overrides the `variables:` baseline `human`), `{build}` from `variables:`, and `{accession}` from the named attribute. Setting `el.dataset.species = 'rat'` (or `setAttribute('data-species', 'rat')`) later re-runs the data load once, against `…/rat/v2024.12/…`. A mount that omits `data-species` falls back to `human`. If `variables:` didn't define `species` either, validation would warn `Source 'features' references undefined variable '{species}'. …` and, absent a `data-species` at fetch time, the track would load empty without a request.
+
 ## Edge Cases & Error Handling
 
 | Scenario                                                                                                                          | Expected Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -1536,6 +1597,10 @@ A `.bed` file behaves the same way via the `bed` adapter, with two format-specif
 | Config JSON is syntactically invalid                                                                                              | Standard JSON parse error surfaced to the consumer.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Config contains `{accession}` placeholders but no accession was provided via attribute or config                                  | Validation fails: `"Config contains {accession} placeholders but no accession was provided via attribute or config."`                                                                                                                                                                                                                                                                                                                                                                   |
 | Both the HTML attribute and the config file specify `accession`                                                                   | The HTML attribute wins. No warning — this is the expected reuse pattern (one config, many entries).                                                                                                                                                                                                                                                                                                                                                                                    |
+| A data URL (`sources` value or descriptor `url:`) uses a `{token}` that `variables:` doesn't define and that isn't `{accession}`    | Validation warning (`missing-variable`), at `/sources/<name>` or the track path: `"Source '<name>' references undefined variable '{<token>}'. Define it in top-level 'variables:' or pass it as a data-<token-in-kebab-case> attribute at runtime."` (`Track '<groupId>/<trackId>' …` for a URL on the track itself). The attribute is named in the kebab case `dataset` maps back to the token, so `{datasetId}` names `data-dataset-id`. The config still loads. The element passes its current `data-*` names to validation, so a token the host supplies is not reported.                                                                         |
+| A data URL's `{token}` resolves against none of `variables:`, `data-*`, or `accession` at fetch time                               | That URL is **not fetched**; a developer `console.warn` names the template, the track, and the missing tokens (`Not fetching '<template>' for track <groupId>/<trackId>: undefined variable(s) {<token>}. …`), once per template. The track renders empty — no ⚠ badge, no `protvista-error` (nothing was fetched, so nothing broke) — and every other track loads normally. Setting the missing `data-*` attribute later re-runs the load.                                                       |
+| A variable's value is exactly `.` or `..`, or contains malformed Unicode (a lone surrogate)                                         | That URL is **not fetched**; a developer `console.warn` names the template, the track, and the token (`Not fetching '<template>' for track <groupId>/<trackId>: invalid value for {<token>} ('.', '..' and malformed Unicode are refused).`), once per template. As with an undefined token, the track renders empty and every other track loads normally. `{accession}` is unaffected: its character gate already turns such a value into `''`. |
+| Both the named `accession` attribute and `data-accession` are set                                                                 | The named attribute wins for `{accession}`. No warning. Changing `data-accession` does not reload. `data-accession` without an accession (named or config `accession:`) mounts nothing: `missing-accession`. The element never lets `data-accession` reach a URL.                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Design Invariants
 
@@ -1625,6 +1690,7 @@ The grant deliverable (P1 — the config schema) has no external cross-project d
 - [x] `adapters` set before the element is defined is applied before loading starts. Registering the same value again is a no-op, and a different one still throws. An object prop that React 19 stringified into an attribute produces a warning (`adapters-before-define.spec.ts`).
 - [x] The proteomics provider adapters pass the API's fields through as documented under [Provider adapter output](#provider-adapter-output) (`proteomics-adapters.spec.ts`).
 - [x] The package exposes exactly the entry points and types under [Package surface](#package-surface), and each resolves under publint and attw (`pnpm test:pack`, `public-types.spec.ts`).
+- [x] Any `{token}` in a data URL resolves against config `variables:` < host `data-*` attributes < the named `accession` attribute, URL-encoded on substitution. Changing a `data-*` attribute the config's URLs use re-runs the load once per animation frame; other attribute changes do not. A token defined nowhere is a `missing-variable` warning and its URL is not fetched (`variables.spec.ts`, `load-data-variables.spec.ts`, `data-variables-reactivity.spec.ts`, `validate.spec.ts`).
 
 ## Tests
 

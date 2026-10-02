@@ -38,6 +38,23 @@ Use `npm version minor` instead of `patch` if the release includes a feature. Cu
 
 ## Releasing `next` (v5 beta → `beta`)
 
+Write `RELEASE_NOTES.md` (git-ignored), then run:
+
+```bash
+git checkout next && git pull
+pnpm release:next                  # 5.0.0-beta.N -> 5.0.0-beta.N+1, or pass a version
+```
+
+`scripts/release-next.sh` does every step below. It checks the branch, the
+working tree, the release notes and your npm and GitHub logins first. It then
+bumps and repins, dates the CHANGELOG's `## Unreleased` heading, runs
+`pnpm test && pnpm validate` and commits `Release <version>`. Nothing leaves
+your machine until it asks you to confirm the publish. `--prepare-only` stops
+after the commit. If a publish step fails, fix the cause and run it again: it
+resumes from the release commit and skips whatever already happened.
+
+The manual steps, for reference:
+
 ```bash
 git checkout next && git pull
 # 1. Bump package.json version, then repin every jsDelivr @version reference:
@@ -48,8 +65,9 @@ git checkout next && git pull
 pnpm test && pnpm validate                  # the pin specs fail loudly on any missed reference
 npm publish                                 # prepack builds; prepublishOnly runs test:pack; -> beta
 npm dist-tag ls protvista-uniprot           # beta: 5.0.0-beta.N, latest: 4.9.x
-gh release create vX.Y.Z-beta.N --prerelease --notes-file RELEASE_NOTES.md
-pnpm cdn:clear                              # if jsDelivr cached a 404 for the new pin
+git commit -am "Release X.Y.Z-beta.N" && git push
+git tag vX.Y.Z-beta.N && git push origin vX.Y.Z-beta.N
+gh release create vX.Y.Z-beta.N --verify-tag --prerelease --title vX.Y.Z-beta.N --notes-file RELEASE_NOTES.md
 ```
 
 Notes for `next`:

@@ -127,6 +127,7 @@ export interface ProtvistaViewerConfig {
    * Merge rules:
    *
    *   - `sources`              — merged by key (child wins)
+   *   - `variables`            — merged by key (child wins)
    *   - `defaults`             — merged field-wise (child wins)
    *   - `rows`                 — merged by `id` (one shared namespace
    *                              across groups and standalone tracks);
@@ -148,6 +149,8 @@ export interface ProtvistaViewerConfig {
    * The primary accession or identifier for this viewer instance.
    * Used to interpolate `{accession}` placeholders in `sources`,
    * group/track `label`, and any other template string in the config.
+   * In data URLs, `{accession}` is one of the template variables (see
+   * `variables`); the element's `accession` attribute takes precedence.
    *
    * If no accession is supplied (attribute, setConfig, or config file)
    * and the config contains `{accession}` placeholders, validation
@@ -158,10 +161,40 @@ export interface ProtvistaViewerConfig {
   /**
    * Optional map of named URL templates. Tracks reference these by
    * key via `DataSourceDescriptor.source` (preferred) or implicitly
-   * via a bare string `data:` value. URLs support `{accession}`
-   * placeholder interpolation.
+   * via a bare string `data:` value. URLs support `{token}` template
+   * variables — see `variables`.
    */
   sources?: Record<string, string>;
+
+  /**
+   * Baseline values for `{token}` template variables in data URLs —
+   * `sources` values and any descriptor `url:`. Shared by every mount
+   * of this config.
+   *
+   * Every `{name}` in a data URL resolves against one merged dictionary
+   * built from three sources (lowest precedence first):
+   *
+   *   1. this block;
+   *   2. `data-*` attributes on the host element (`data-species="mouse"`
+   *      supplies `{species}`) — read at fetch time, and a change
+   *      re-runs the loader;
+   *   3. the element's named `accession` attribute, an alias for
+   *      `data-accession` that wins on conflict.
+   *
+   * Token names match `[A-Za-z][A-Za-z0-9_]*` and are case-sensitive.
+   * `data-*` names reach URLs camelCased by the DOM: `data-dataset-id`
+   * supplies `{datasetId}`. Values are URL-encoded when substituted.
+   *
+   * Every token a data URL uses must resolve against at least one of the
+   * three sources. One defined nowhere is reported by the validator as a
+   * `missing-variable` warning, and at fetch time the URL is skipped
+   * rather than requested half-built.
+   *
+   * @example
+   * variables: { species: 'human', build: 'v2024.12' }
+   * sources:   { features: 'https://api.example.org/{species}/{build}/features/{accession}' }
+   */
+  variables?: Record<string, string>;
 
   /**
    * Global defaults applied to every group/track unless overridden.

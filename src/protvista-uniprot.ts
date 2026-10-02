@@ -53,6 +53,11 @@ import filterConfig, { colorConfig } from './filter-config.js';
 // who pass a parsed `viewerConfig` object never pull in the parser.
 import defaultConfigYaml from './default-config.yaml?raw';
 import { loadConfigWithSource, type LoadedConfig } from './schema/load.js';
+import {
+  mergeVariables,
+  referencedTokens,
+  type Variables,
+} from './schema/variables.js';
 import { type Registry, createRegistry } from './schema/registry.js';
 import type {
   KnownComponentName,
@@ -129,7 +134,10 @@ import {
 // formatter is *not* imported here — it is pulled in lazily via
 // `await import('./errors/format.js')` only when a config error actually
 // occurs, so the happy path never downloads it.
-import { ConfigValidationError, type ValidationIssue } from './schema/errors.js';
+import {
+  ConfigValidationError,
+  type ValidationIssue,
+} from './schema/errors.js';
 import { RENDERABLE_COMPONENT_NAMES } from './schema/components.js';
 import type { ErrorPhase, ErrorContext } from './errors/report.js';
 import {
@@ -278,7 +286,10 @@ const isExpectedAbsence = (err: UrlFetchError, authored: boolean): boolean =>
  * *broken* service (retryable) from a *missing* accession (a 4xx).
  */
 type EntryResult =
-  | { entry: { sequence?: { sequence?: string } } | undefined; error?: undefined }
+  | {
+      entry: { sequence?: { sequence?: string } } | undefined;
+      error?: undefined;
+    }
   | {
       entry?: undefined;
       error: {
@@ -528,6 +539,30 @@ class ProtvistaUniprot extends LitElement {
     controller: AbortController;
     only?: Set<string>;
   }> = [];
+
+  /**
+   * Watches the host's attributes for `data-*` changes, which feed URL
+   * template variables. Installed in `connectedCallback`, disconnected in
+   * `disconnectedCallback`. No `attributeFilter`: `data-*` names are
+   * open-ended. The named `accession` attribute is *not* handled here —
+   * it is a Lit reactive property with its own `updated()` → `_init()`
+   * path, and reacting here too would double-load.
+   */
+  private _variablesObserver?: MutationObserver;
+
+  /**
+   * Pending `requestAnimationFrame` handle for a variables-driven reload,
+   * so a burst of `data-*` writes in one tick coalesces to one load.
+   */
+  private _variablesFrame?: number;
+
+  /**
+   * The URL-relevant variable values the most recent full `_loadData()`
+   * requested (see `_variablesKey`). A `data-*` change reloads only when
+   * this differs — so `data-testid`, a same-value write, or a
+   * `data-accession` shadowed by the named attribute costs nothing.
+   */
+  private _lastLoadVariables?: string;
 
   /**
    * Mount-level error state. When set, `render()` shows the alert panel
@@ -1261,13 +1296,21 @@ class ProtvistaUniprot extends LitElement {
     // full load is already re-fetching those tracks and will update their
     // badges when it lands. Superseding it instead would abort every *other*
     // track's result with it — a `setTrackData()` payload included — leaving
-    // them stale until some later full load.
+    // them stale (on the previous accession's or variables' data) until some
+    // later full load. Returning here also leaves `_lastLoadVariables` to the
+    // full load, which is the one that will commit it.
     if (only && this._loadBatches.some((b) => !b.only)) return;
 
     // A full (re)load means a new protein or config, so the plain-text label
     // cache (keyed by accession+source) is stale — drop it, bounding growth to
     // the current view. A targeted retry (`only`) leaves labels unchanged.
     if (!only) this._labelTextCache.clear();
+
+    // Read the template variables now, at fetch time, so a `data-*` set
+    // while the config was still loading is honoured, and record what this
+    // load requested for `_onVariablesChanged` to compare against.
+    const variables = this._variables();
+    if (!only) this._lastLoadVariables = this._variablesKey(variables);
 
     // Abort and forget every in-flight batch this call supersedes: one
     // whose key-set intersects ours (a full load — no `only` — intersects
@@ -1311,68 +1354,72 @@ class ProtvistaUniprot extends LitElement {
 
     const { rawData, data, hasData, trackUrls, trackFailures } =
       await loadProtvistaData(
-      accession,
-      this.config,
-      // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
-      // errors are swallowed with a warning, leaving a null in the
-      // per-URL slot. `AbortError` thrown by a later `_loadData()`
-      // re-entry is recognised and silently returned as `null` so it
-      // doesn't pollute the console.
-      async (url, responseType) => {
-        // Three distinct failure modes are recorded so the badge / event
-        // can tell "couldn't reach the server" from "server said 500"
-        // from "unparseable body". Each still returns `null` into the
-        // per-URL slot (legacy swallow-and-continue). `AbortError` from a
-        // superseding `_loadData()` re-entry is silently ignored.
-        let response: Response;
-        try {
-          response = await fetch(url, { signal });
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          fetchErrors.set(url, { url, kind: 'network', cause: error });
-          return null;
-        }
-        if (!response.ok) {
-          fetchErrors.set(url, { url, kind: 'http', status: response.status });
-          return null;
-        }
-        // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
-        // everything else — JSON files included — is parsed as JSON.
-        // `response.text()` does not reject on content, so the parse-failure
-        // branch below only guards the JSON path.
-        if (responseType === 'text') {
+        variables,
+        this.config,
+        // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
+        // errors are swallowed with a warning, leaving a null in the
+        // per-URL slot. `AbortError` thrown by a later `_loadData()`
+        // re-entry is recognised and silently returned as `null` so it
+        // doesn't pollute the console.
+        async (url, responseType) => {
+          // Three distinct failure modes are recorded so the badge / event
+          // can tell "couldn't reach the server" from "server said 500"
+          // from "unparseable body". Each still returns `null` into the
+          // per-URL slot (legacy swallow-and-continue). `AbortError` from a
+          // superseding `_loadData()` re-entry is silently ignored.
+          let response: Response;
           try {
-            return await response.text();
+            response = await fetch(url, { signal });
           } catch (error) {
             if (isAbortError(error)) return null;
-            fetchErrors.set(url, { url, kind: 'parse', cause: error });
+            fetchErrors.set(url, { url, kind: 'network', cause: error });
             return null;
           }
-        }
-        try {
-          return await response.json();
-        } catch (error) {
-          if (isAbortError(error)) return null;
-          // The parser's own text says where it gave up — on an author's
-          // malformed file, the one detail that makes it fixable.
-          fetchErrors.set(url, {
-            url,
-            kind: 'parse',
-            ...(error instanceof Error && error.message
-              ? { message: error.message }
-              : {}),
-            cause: error,
-          });
-          return null;
-        }
-      },
-      // Resolve adapter functions by name through the registry — the same
-      // source of truth config validation consults, so a consumer's
-      // `registerAdapter()` adapter both validates and runs.
-      (name) => this.registry.getAdapter(name),
-      this.customTrackData,
-      only ? { only, previousData: this.data } : undefined
-    );
+          if (!response.ok) {
+            fetchErrors.set(url, {
+              url,
+              kind: 'http',
+              status: response.status,
+            });
+            return null;
+          }
+          // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
+          // everything else — JSON files included — is parsed as JSON.
+          // `response.text()` does not reject on content, so the parse-failure
+          // branch below only guards the JSON path.
+          if (responseType === 'text') {
+            try {
+              return await response.text();
+            } catch (error) {
+              if (isAbortError(error)) return null;
+              fetchErrors.set(url, { url, kind: 'parse', cause: error });
+              return null;
+            }
+          }
+          try {
+            return await response.json();
+          } catch (error) {
+            if (isAbortError(error)) return null;
+            // The parser's own text says where it gave up — on an author's
+            // malformed file, the one detail that makes it fixable.
+            fetchErrors.set(url, {
+              url,
+              kind: 'parse',
+              ...(error instanceof Error && error.message
+                ? { message: error.message }
+                : {}),
+              cause: error,
+            });
+            return null;
+          }
+        },
+        // Resolve adapter functions by name through the registry — the same
+        // source of truth config validation consults, so a consumer's
+        // `registerAdapter()` adapter both validates and runs.
+        (name) => this.registry.getAdapter(name),
+        this.customTrackData,
+        only ? { only, previousData: this.data } : undefined
+      );
 
     // If a newer load started while we were awaiting, drop the result
     // on the floor — the newer call owns subsequent state writes.
@@ -1430,9 +1477,7 @@ class ProtvistaUniprot extends LitElement {
     const reloadedKeys =
       only ??
       new Set(
-        this.config.rows.flatMap((g) =>
-          g.tracks.map((t) => `${g.id}-${t.id}`)
-        )
+        this.config.rows.flatMap((g) => g.tracks.map((t) => `${g.id}-${t.id}`))
       );
     for (const key of reloadedKeys) {
       if (!(key in data)) delete merged[key];
@@ -1484,6 +1529,66 @@ class ProtvistaUniprot extends LitElement {
     // `this.data` reassignment above *is* tracked, but we issue the
     // explicit update anyway to keep a single notify site.
     this.requestUpdate();
+  }
+
+  /**
+   * The merged template-variables dictionary every data-URL `{token}`
+   * resolves against. Precedence, lowest first: the config's `variables:`
+   * block < the host's `data-*` attributes < the named `accession`
+   * attribute (an alias for `data-accession` that wins on conflict).
+   * `this.accession` is always set by the time this is read (`_loadData`
+   * won't run without it), so `data-accession` never reaches a URL here.
+   */
+  private _variables(): Variables {
+    return mergeVariables({
+      configVariables: this.config?.variables,
+      dataset: this.dataset,
+      accession: this.accession,
+    });
+  }
+
+  /**
+   * A comparable key for the values of the variables the config's data
+   * URLs actually reference — the only ones whose change can alter a
+   * fetch. Absent values are kept distinct from empty ones.
+   */
+  private _variablesKey(variables: Variables): string {
+    if (!this.config) return '';
+    const tokens = [...referencedTokens(this.config)].sort();
+    return JSON.stringify(
+      tokens.map((name) =>
+        Object.prototype.hasOwnProperty.call(variables, name)
+          ? [name, variables[name]]
+          : [name]
+      )
+    );
+  }
+
+  /**
+   * `MutationObserver` callback: schedule one reload per animation frame
+   * when any `data-*` attribute changes.
+   */
+  private _onAttributesMutated = (records: MutationRecord[]): void => {
+    if (this._variablesFrame !== undefined) return;
+    if (!records.some((r) => r.attributeName?.startsWith('data-'))) return;
+    this._variablesFrame = requestAnimationFrame(() => {
+      this._variablesFrame = undefined;
+      this._onVariablesChanged();
+    });
+  };
+
+  /**
+   * Re-run the full track-data load if a `data-*` change altered a
+   * variable the config's URLs use. Before the config has loaded there
+   * is nothing to do — the pending first `_loadData()` reads `dataset`
+   * at fetch time. The superseded batch is aborted by `_loadData()`.
+   */
+  private _onVariablesChanged(): void {
+    if (!this.config || this.suspend || !this.accession) return;
+    if (this._variablesKey(this._variables()) === this._lastLoadVariables) {
+      return;
+    }
+    this._loadData();
   }
 
   /**
@@ -2006,8 +2111,7 @@ class ProtvistaUniprot extends LitElement {
         // reporter so the user-facing alert panel and the
         // `protvista-error` event fire too. A config failure is always a
         // mount-level failure — there is no config to render past.
-        const issues =
-          err instanceof ConfigValidationError ? err.issues : [];
+        const issues = err instanceof ConfigValidationError ? err.issues : [];
         const panelSummary = issues.length
           ? `Config validation failed (${issues.length} issue${issues.length === 1 ? '' : 's'})`
           : `Failed to load config: ${err instanceof Error ? err.message : String(err)}`;
@@ -2191,10 +2295,17 @@ class ProtvistaUniprot extends LitElement {
    * the validator's `missing-accession` rule accepts template
    * configs (like the bundled default YAML) whose URLs carry
    * `{accession}` placeholders. `loadConfig` will ignore this when
-   * the config already declares its own accession.
+   * the config already declares its own accession. Likewise the host's
+   * `data-*` attributes, so `missing-variable` accepts their tokens.
    */
   private async resolveViewerConfig(): Promise<LoadedConfig> {
-    const loadOpts = { accession: this.accession, registry: this.registry };
+    // `data-*` names go along so `missing-variable` accepts the tokens this
+    // host supplies; values are read later, at fetch time.
+    const loadOpts = {
+      accession: this.accession,
+      registry: this.registry,
+      variables: { ...this.dataset },
+    };
     if (this.viewerConfig !== undefined) {
       return loadConfigWithSource(this.viewerConfig, loadOpts);
     }
@@ -2407,9 +2518,7 @@ class ProtvistaUniprot extends LitElement {
               /^\[protvista(?:-uniprot)?\] /,
               ''
             ),
-            ...(report.source !== undefined
-              ? { source: report.source }
-              : {}),
+            ...(report.source !== undefined ? { source: report.source } : {}),
             issues: opts.issues ?? [],
             context: { accession: this.accession, ...opts.context },
           },
@@ -2665,9 +2774,7 @@ class ProtvistaUniprot extends LitElement {
     for (const group of this.config.rows) {
       if (
         group.tracks.length > 0 &&
-        group.tracks.every((t) =>
-          this._trackErrors.has(`${group.id}-${t.id}`)
-        )
+        group.tracks.every((t) => this._trackErrors.has(`${group.id}-${t.id}`))
       ) {
         this._groupErrors.add(group.id);
       }
@@ -2772,7 +2879,10 @@ class ProtvistaUniprot extends LitElement {
    * re-evaluation of the whole set, so the three cannot route the same failure
    * differently.
    */
-  private _trackFailureReport(key: string, err: TrackFetchError): FailureReport {
+  private _trackFailureReport(
+    key: string,
+    err: TrackFetchError
+  ): FailureReport {
     if (err.kind === 'render') {
       return {
         severity: 'error',
@@ -2911,9 +3021,7 @@ class ProtvistaUniprot extends LitElement {
    */
   private _onChangeCapture = (e: Event): void => {
     const detail = (e as ProtvistaChangeEvent).detail as
-      | ProtvistaChangeEventDetail
-      | null
-      | undefined;
+      ProtvistaChangeEventDetail | null | undefined;
     if (!detail || typeof detail !== 'object') return;
 
     if (detail['display-start']) {
@@ -2949,9 +3057,7 @@ class ProtvistaUniprot extends LitElement {
    * the first id the renderer gave a track (`${CSS_PREFIX}-track-<key>`),
    * with the origin that key maps to.
    */
-  private _originOf(
-    e: Event
-  ):
+  private _originOf(e: Event):
     | {
         element: Element;
         key: string;
@@ -3070,11 +3176,21 @@ class ProtvistaUniprot extends LitElement {
       enabled: () => !this.notooltip,
     });
 
+    // `data-*` attributes feed URL template variables; re-load when one
+    // changes. See `_onAttributesMutated`.
+    this._variablesObserver = new MutationObserver(this._onAttributesMutated);
+    this._variablesObserver.observe(this, { attributes: true });
   }
 
   disconnectedCallback() {
     clearTimeout(this._movedTimer);
     clearTimeout(this._announceTimer);
+    this._variablesObserver?.disconnect();
+    this._variablesObserver = undefined;
+    if (this._variablesFrame !== undefined) {
+      cancelAnimationFrame(this._variablesFrame);
+      this._variablesFrame = undefined;
+    }
     this._tooltipController?.dispose();
     this._tooltipController = undefined;
     // Cancel every still-running fetch batch so the detached element
@@ -3168,35 +3284,40 @@ class ProtvistaUniprot extends LitElement {
           title="${track.description ?? ''}"
         >
           <span class="${CSS_PREFIX}-label-text"
-            >${(track.filterUI === 'nightingale-filter' &&
-              this.getFilterComponent(key)) ||
-            unsafeHTML(renderLabel(track.label, this.accession))}</span
+            >${
+              (track.filterUI === 'nightingale-filter' &&
+                this.getFilterComponent(key)) ||
+              unsafeHTML(renderLabel(track.label, this.accession))
+            }</span
           >${this._renderTrackBadge(key)}${this._renderRowControls(
             group,
             index,
             total
           )}
         </div>
-        ${trackHasData
-          ? html`<div
-              class="${CSS_PREFIX}-track-content ${track.component ===
-              'nightingale-colored-sequence'
-                ? `${CSS_PREFIX}-track-content__coloured-sequence`
-                : ''}"
-              data-id="${CSS_PREFIX}-track_${track.id}"
-            >
-              ${this.getTrack(
-                track.component,
-                'non-overlapping',
-                attrs.color,
-                attrs.shape,
-                key,
-                attrs.scale,
-                attrs.colorRange,
-                showsSeriesLabel([track])
-              )}
-            </div>`
-          : ''}
+        ${
+          trackHasData
+            ? html`<div
+                class="${CSS_PREFIX}-track-content ${
+                  track.component === 'nightingale-colored-sequence'
+                    ? `${CSS_PREFIX}-track-content__coloured-sequence`
+                    : ''
+                }"
+                data-id="${CSS_PREFIX}-track_${track.id}"
+              >
+                ${this.getTrack(
+                  track.component,
+                  'non-overlapping',
+                  attrs.color,
+                  attrs.shape,
+                  key,
+                  attrs.scale,
+                  attrs.colorRange,
+                  showsSeriesLabel([track])
+                )}
+              </div>`
+            : ''
+        }
       </div>
     `;
   }
@@ -3219,7 +3340,9 @@ class ProtvistaUniprot extends LitElement {
     const rows = this.config?.rows ?? [];
     return this._customizeMode
       ? rows.map((row) => ({ row, tracks: row.tracks }))
-      : displayRows(rows).filter((d) => this._rowRendersContent(d.row, d.tracks));
+      : displayRows(rows).filter((d) =>
+          this._rowRendersContent(d.row, d.tracks)
+        );
   }
 
   /**
@@ -3306,11 +3429,7 @@ class ProtvistaUniprot extends LitElement {
 
     // Collapsed with an error but no aggregate: header + badge only
     // (mirrors the previous group-error row).
-    if (
-      !this.openGroups.includes(group.id) &&
-      !groupHasData &&
-      groupHasError
-    ) {
+    if (!this.openGroups.includes(group.id) && !groupHasData && groupHasError) {
       return this.renderGroupErrorRow(group);
     }
 
@@ -3323,75 +3442,84 @@ class ProtvistaUniprot extends LitElement {
         )} ${this._movedClass(group.id)}"
         id="${CSS_PREFIX}-group_${group.id}"
       >
-        ${this._customizeMode
-          ? // While customizing, the label cell holds real buttons, so it
-            // cannot itself be one — nesting interactive controls is an axe
-            // violation and leaves the inner buttons unreachable to some
-            // assistive tech. Collapse/expand moves into the control cluster
-            // as its own button, which is a better affordance anyway.
-            html`<div
-              class="${CSS_PREFIX}-group-label"
-              title="${group.description ?? ''}"
-            >
-              ${this._collapseButton(
-                group,
-                this._labelText(group.label),
-                expanded
-              )}<span class="${CSS_PREFIX}-label-text"
-                >${unsafeHTML(renderLabel(group.label, this.accession))}</span
-              >${this._renderGroupBadge(group.id)}${this._renderRowControls(
-                group,
-                index,
-                total
-              )}
-            </div>`
-          : html`<div
-              class="${CSS_PREFIX}-group-label${expanded ? ' open' : ''}"
-              data-group-toggle="${group.id}"
-              role="button"
-              tabindex="0"
-              aria-expanded="${expanded}"
-              title="${group.description ?? ''}"
-              @click="${this.handleGroupClick}"
-              @keydown="${this.handleGroupKeydown}"
-            >
-              <span class="${CSS_PREFIX}-label-text"
-                >${unsafeHTML(renderLabel(group.label, this.accession))}</span
-              >${this._renderGroupBadge(group.id)}
-            </div>`}
+        ${
+          this._customizeMode
+            ? // While customizing, the label cell holds real buttons, so it
+              // cannot itself be one — nesting interactive controls is an axe
+              // violation and leaves the inner buttons unreachable to some
+              // assistive tech. Collapse/expand moves into the control cluster
+              // as its own button, which is a better affordance anyway.
+              html`<div
+                class="${CSS_PREFIX}-group-label"
+                title="${group.description ?? ''}"
+              >
+                ${this._collapseButton(
+                  group,
+                  this._labelText(group.label),
+                  expanded
+                )}<span class="${CSS_PREFIX}-label-text"
+                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                >${this._renderGroupBadge(group.id)}${this._renderRowControls(
+                  group,
+                  index,
+                  total
+                )}
+              </div>`
+            : html`<div
+                class="${CSS_PREFIX}-group-label${expanded ? ' open' : ''}"
+                data-group-toggle="${group.id}"
+                role="button"
+                tabindex="0"
+                aria-expanded="${expanded}"
+                title="${group.description ?? ''}"
+                @click="${this.handleGroupClick}"
+                @keydown="${this.handleGroupKeydown}"
+              >
+                <span class="${CSS_PREFIX}-label-text"
+                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                >${this._renderGroupBadge(group.id)}
+              </div>`
+        }
         <div
           data-id="${CSS_PREFIX}-group_${group.id}"
-          class="${CSS_PREFIX}-aggregate-track-content ${CSS_PREFIX}-track-content ${group.component ===
-          'nightingale-colored-sequence'
-            ? `${CSS_PREFIX}-track-content__coloured-sequence`
-            : ''}"
+          class="${CSS_PREFIX}-aggregate-track-content ${CSS_PREFIX}-track-content ${
+            group.component === 'nightingale-colored-sequence'
+              ? `${CSS_PREFIX}-track-content__coloured-sequence`
+              : ''
+          }"
           .style="${expanded ? 'opacity:0' : 'opacity:1'}"
         >
-          ${groupHasData
-            ? this.getTrack(
-                group.component,
-                'non-overlapping',
-                groupAttrs.color,
-                groupAttrs.shape,
-                group.id,
-                groupAttrs.scale,
-                groupAttrs.colorRange,
-                // Keyed off the track the aggregate actually draws: a graph
-                // group's payload is its first drawn track
-                // (`drawnAggregateTracks` — not `detailOnly`, not hidden, in
-                // the current order), not merely the first visible one.
-                showsSeriesLabel(drawnAggregateTracks(group.tracks).slice(0, 1))
-              )
-            : ''}
+          ${
+            groupHasData
+              ? this.getTrack(
+                  group.component,
+                  'non-overlapping',
+                  groupAttrs.color,
+                  groupAttrs.shape,
+                  group.id,
+                  groupAttrs.scale,
+                  groupAttrs.colorRange,
+                  // Keyed off the track the aggregate actually draws: a graph
+                  // group's payload is its first drawn track
+                  // (`drawnAggregateTracks` — not `detailOnly`, not hidden, in
+                  // the current order), not merely the first visible one.
+                  showsSeriesLabel(
+                    drawnAggregateTracks(group.tracks).slice(0, 1)
+                  )
+                )
+              : ''
+          }
         </div>
       </div>
-      ${expanded
-        ? html`${repeat(
-            tracks,
-            (t) => t.id,
-            (t, i) => this._renderExpandedTrack(group, t, i, tracks.length)
-          )}`
-        : ''}
+      ${
+        expanded
+          ? html`${repeat(
+              tracks,
+              (t) => t.id,
+              (t, i) => this._renderExpandedTrack(group, t, i, tracks.length)
+            )}`
+          : ''
+      }
     `;
   }
 
@@ -3463,11 +3591,16 @@ class ProtvistaUniprot extends LitElement {
         )} ${this._movedClass(trackKey(group.id, track.id))}"
         id="${CSS_PREFIX}-track_${track.id}"
       >
-        <div class="${CSS_PREFIX}-track-label" title="${track.description ?? ''}">
+        <div
+          class="${CSS_PREFIX}-track-label"
+          title="${track.description ?? ''}"
+        >
           <span class="${CSS_PREFIX}-label-text"
-            >${(track.filterUI === 'nightingale-filter' &&
-              this.getFilterComponent(key)) ||
-            unsafeHTML(renderLabel(track.label, this.accession))}</span
+            >${
+              (track.filterUI === 'nightingale-filter' &&
+                this.getFilterComponent(key)) ||
+              unsafeHTML(renderLabel(track.label, this.accession))
+            }</span
           >${this._renderTrackBadge(key)}${this._renderTrackControls(
             group,
             track,
@@ -3475,26 +3608,29 @@ class ProtvistaUniprot extends LitElement {
             total
           )}
         </div>
-        ${trackHasData
-          ? html`<div
-              class="${CSS_PREFIX}-track-content ${group.component ===
-              'nightingale-colored-sequence'
-                ? `${CSS_PREFIX}-track-content__coloured-sequence`
-                : ''}"
-              data-id="${CSS_PREFIX}-track_${track.id}"
-            >
-              ${this.getTrack(
-                track.component,
-                'non-overlapping',
-                attrs.color,
-                attrs.shape,
-                key,
-                attrs.scale,
-                attrs.colorRange,
-                showsSeriesLabel([track])
-              )}
-            </div>`
-          : ''}
+        ${
+          trackHasData
+            ? html`<div
+                class="${CSS_PREFIX}-track-content ${
+                  group.component === 'nightingale-colored-sequence'
+                    ? `${CSS_PREFIX}-track-content__coloured-sequence`
+                    : ''
+                }"
+                data-id="${CSS_PREFIX}-track_${track.id}"
+              >
+                ${this.getTrack(
+                  track.component,
+                  'non-overlapping',
+                  attrs.color,
+                  attrs.shape,
+                  key,
+                  attrs.scale,
+                  attrs.colorRange,
+                  showsSeriesLabel([track])
+                )}
+              </div>`
+            : ''
+        }
       </div>
     `;
   }
@@ -3522,21 +3658,25 @@ class ProtvistaUniprot extends LitElement {
         id="${CSS_PREFIX}-group_${row.id}"
       >
         <div class="${CSS_PREFIX}-track-label" title="${row.description ?? ''}">
-          ${collapsible
-            ? this._collapseButton(row, this._labelText(row.label), expanded)
-            : ''}<span class="${CSS_PREFIX}-label-text"
+          ${
+            collapsible
+              ? this._collapseButton(row, this._labelText(row.label), expanded)
+              : ''
+          }<span class="${CSS_PREFIX}-label-text"
             >${unsafeHTML(renderLabel(row.label, this.accession))}</span
           >${this._renderRowControls(row, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
       </div>
-      ${collapsible && expanded
-        ? html`${repeat(
-            row.tracks,
-            (t) => t.id,
-            (t, i) => this._renderTrackStub(row, t, i, row.tracks.length)
-          )}`
-        : ''}
+      ${
+        collapsible && expanded
+          ? html`${repeat(
+              row.tracks,
+              (t) => t.id,
+              (t, i) => this._renderTrackStub(row, t, i, row.tracks.length)
+            )}`
+          : ''
+      }
     `;
   }
 
@@ -3554,7 +3694,10 @@ class ProtvistaUniprot extends LitElement {
         )}"
         id="${CSS_PREFIX}-track_${track.id}"
       >
-        <div class="${CSS_PREFIX}-track-label" title="${track.description ?? ''}">
+        <div
+          class="${CSS_PREFIX}-track-label"
+          title="${track.description ?? ''}"
+        >
           <span class="${CSS_PREFIX}-label-text"
             >${unsafeHTML(renderLabel(track.label, this.accession))}</span
           >${this._renderTrackControls(group, track, index, total)}
@@ -3682,8 +3825,7 @@ class ProtvistaUniprot extends LitElement {
         (row) =>
           !row.standalone &&
           row.tracks.some(
-            (t) =>
-              (row.hidden || t.hidden) && !this._trackIsEmpty(row.id, t.id)
+            (t) => (row.hidden || t.hidden) && !this._trackIsEmpty(row.id, t.id)
           )
       )
       .map((row) => row.id);
@@ -3904,10 +4046,9 @@ class ProtvistaUniprot extends LitElement {
     return html`
       <button
         type="button"
-        class="${CSS_PREFIX}-row-control ${CSS_PREFIX}-row-control--move${dir ===
-        1
-          ? ` ${CSS_PREFIX}-row-control--down`
-          : ''}"
+        class="${CSS_PREFIX}-row-control ${CSS_PREFIX}-row-control--move${
+          dir === 1 ? ` ${CSS_PREFIX}-row-control--down` : ''
+        }"
         aria-label="Move ${name} ${dir === -1 ? 'up' : 'down'}"
         ?disabled="${atEnd}"
         @click="${(e: Event) => {
@@ -3915,7 +4056,9 @@ class ProtvistaUniprot extends LitElement {
           onClick(e.currentTarget as HTMLButtonElement);
         }}"
       >
-        <span aria-hidden="true">${svg`${unsafeHTML(inlineSvg(chevronUpIcon))}`}</span>
+        <span aria-hidden="true"
+          >${svg`${unsafeHTML(inlineSvg(chevronUpIcon))}`}</span
+        >
       </button>
     `;
   }
@@ -4071,11 +4214,7 @@ class ProtvistaUniprot extends LitElement {
       return this._renderNoResults();
     }
     return html`
-      <div
-        class="${CSS_PREFIX}-live-region"
-        role="status"
-        aria-live="polite"
-      >
+      <div class="${CSS_PREFIX}-live-region" role="status" aria-live="polite">
         ${this._announcement}
       </div>
       <nightingale-manager
@@ -4088,9 +4227,9 @@ class ProtvistaUniprot extends LitElement {
               ${this._renderCustomizeToggle()}
             </div>
             <div
-              class="${CSS_PREFIX}-toolbar-row ${this._customizeMode
-                ? ''
-                : `${CSS_PREFIX}-toolbar-row--reserved`}"
+              class="${CSS_PREFIX}-toolbar-row ${
+                this._customizeMode ? '' : `${CSS_PREFIX}-toolbar-row--reserved`
+              }"
             >
               ${this._renderCustomizeActions()}
             </div>
@@ -4111,9 +4250,11 @@ class ProtvistaUniprot extends LitElement {
             ></nightingale-sequence>
           </div>
         </div>
-        ${rows.length === 0 && this.config.rows.length > 0
-          ? this._renderAllHiddenNotice()
-          : ''}
+        ${
+          rows.length === 0 && this.config.rows.length > 0
+            ? this._renderAllHiddenNotice()
+            : ''
+        }
         ${repeat(
           // Keyed on the row id so a reorder *moves* the Nightingale DOM
           // nodes instead of re-binding canvases positionally, keeping
@@ -4138,13 +4279,15 @@ class ProtvistaUniprot extends LitElement {
             ></nightingale-sequence>
           </div>
         </div>
-        ${!this.nostructure
-          ? html`
-              <protvista-uniprot-structure
-                accession="${this.accession || ''}"
-              ></protvista-uniprot-structure>
-            `
-          : ''}
+        ${
+          !this.nostructure
+            ? html`
+                <protvista-uniprot-structure
+                  accession="${this.accession || ''}"
+                ></protvista-uniprot-structure>
+              `
+            : ''
+        }
       </nightingale-manager>
     `;
   }
@@ -4176,49 +4319,60 @@ class ProtvistaUniprot extends LitElement {
       <div class="${CSS_PREFIX}-error-panel" role="alert" tabindex="-1">
         <div class="${CSS_PREFIX}-error-panel__head">
           <p class="${CSS_PREFIX}-error-panel__summary">${err.summary}</p>
-          ${dismissible || retryable
-            ? html`<div class="${CSS_PREFIX}-error-panel__actions">
-                ${retryable
-                  ? html`<button
-                      type="button"
-                      class="${CSS_PREFIX}-error-retry"
-                      @click="${() => this._retryMount()}"
-                    >
-                      Retry
-                    </button>`
-                  : ''}
-                ${dismissible
-                  ? html`<button
-                      type="button"
-                      aria-label="Dismiss error"
-                      @click="${() => this._dismissError()}"
-                    >
-                      Dismiss
-                    </button>`
-                  : ''}
-              </div>`
-            : ''}
-        </div>
-        ${err.groups && err.groups.length
-          ? html`<details class="${CSS_PREFIX}-error-issues" open>
-              <summary>${count} issue${count === 1 ? '' : 's'}</summary>
-              ${err.groups.map(
-                (g) => html`
-                  <div class="${CSS_PREFIX}-error-issue">
-                    <div class="${CSS_PREFIX}-error-issue__path">${g.path}</div>
-                    ${g.items.map(
-                      (it) => html`<div>
-                        ${it.message}
-                        <span class="${CSS_PREFIX}-error-issue__code"
-                          >(${it.code})</span
+          ${
+            dismissible || retryable
+              ? html`<div class="${CSS_PREFIX}-error-panel__actions">
+                  ${
+                    retryable
+                      ? html`<button
+                          type="button"
+                          class="${CSS_PREFIX}-error-retry"
+                          @click="${() => this._retryMount()}"
                         >
-                      </div>`
-                    )}
-                  </div>
-                `
-              )}
-            </details>`
-          : ''}
+                          Retry
+                        </button>`
+                      : ''
+                  }
+                  ${
+                    dismissible
+                      ? html`<button
+                          type="button"
+                          aria-label="Dismiss error"
+                          @click="${() => this._dismissError()}"
+                        >
+                          Dismiss
+                        </button>`
+                      : ''
+                  }
+                </div>`
+              : ''
+          }
+        </div>
+        ${
+          err.groups && err.groups.length
+            ? html`<details class="${CSS_PREFIX}-error-issues" open>
+                <summary>${count} issue${count === 1 ? '' : 's'}</summary>
+                ${err.groups.map(
+                  (g) => html`
+                    <div class="${CSS_PREFIX}-error-issue">
+                      <div class="${CSS_PREFIX}-error-issue__path">
+                        ${g.path}
+                      </div>
+                      ${g.items.map(
+                        (it) =>
+                          html`<div>
+                            ${it.message}
+                            <span class="${CSS_PREFIX}-error-issue__code"
+                              >(${it.code})</span
+                            >
+                          </div>`
+                      )}
+                    </div>
+                  `
+                )}
+              </details>`
+            : ''
+        }
       </div>
     `;
   }
@@ -4273,22 +4427,25 @@ class ProtvistaUniprot extends LitElement {
         aria-describedby="${descId}"
         title="${detail}"
         >⚠</span
-      ><span id="${descId}" class="${CSS_PREFIX}-visually-hidden">${detail}</span
-      >${retryKeys.length
-        ? html`<button
-            type="button"
-            class="${CSS_PREFIX}-error-retry"
-            aria-label="${retryLabel}"
-            @click="${(e: Event) => {
-              // Don't let the click bubble to the group-label's collapse
-              // toggle — Retry should reload, not expand/collapse the group.
-              e.stopPropagation();
-              this._retry(retryKeys);
-            }}"
-          >
-            Retry
-          </button>`
-        : ''}`;
+      ><span id="${descId}" class="${CSS_PREFIX}-visually-hidden"
+        >${detail}</span
+      >${
+        retryKeys.length
+          ? html`<button
+              type="button"
+              class="${CSS_PREFIX}-error-retry"
+              aria-label="${retryLabel}"
+              @click="${(e: Event) => {
+                // Don't let the click bubble to the group-label's collapse
+                // toggle — Retry should reload, not expand/collapse the group.
+                e.stopPropagation();
+                this._retry(retryKeys);
+              }}"
+            >
+              Retry
+            </button>`
+          : ''
+      }`;
   }
 
   /**
@@ -4477,8 +4634,7 @@ class ProtvistaUniprot extends LitElement {
     if (!selectedFilters) return;
 
     const baseline = this.data[`${trackKey}${UNFILTERED_SUFFIX}`] as
-      | { sequence: string; variants: TransformedVariant[] }
-      | undefined;
+      { sequence: string; variants: TransformedVariant[] } | undefined;
     // `filterUI` is a generic opt-in, so guard against a baseline that is
     // absent (filter fired before the loader ran) or not a variant
     // bundle (e.g. a plain feature array) — either would be silently

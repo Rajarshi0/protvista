@@ -10,8 +10,10 @@
  *
  * Responsibilities (exactly what the legacy in-class `_loadData` did):
  *   1. Collect every `data[0].url` from every track, de-duplicate.
- *   2. Fetch each unique URL (substituting `{accession}`) via the caller-
- *      supplied fetch function.
+ *   2. Substitute every `{token}` in each unique URL template from the
+ *      merged variables dictionary (`src/schema/variables.ts`), then fetch
+ *      it via the caller-supplied fetch function. A template with a token
+ *      no variable supplies is skipped with a warning, not fetched.
  *   3. For each group: for each track: pluck the raw response, resolve
  *      the named adapter (the `adapter:` field carries the schema-level
  *      name — e.g. `uniprot-features-json` — which the injected resolver
@@ -54,6 +56,7 @@ import { resolveTooltip } from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
 import type { TooltipContext, TooltipSpec } from './tooltips/types.js';
 import { withFeatureSource, type FeatureSource } from './feature-source.js';
+import { substituteTemplate, type Variables } from './schema/variables.js';
 
 /**
  * Minimal shape the loader needs from an adapter: a function of the raw
@@ -368,36 +371,13 @@ function trackUrl(
   return (first.url ?? '') as string | string[];
 }
 
-/**
- * Constrains the characters `accession` can carry before we interpolate
- * it into URL templates. Upstream UniProt accessions match
- * `[OPQ][0-9][A-Z0-9]{3}[0-9]` (six-char) or `[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]`
- * (ten-char) — both comfortably ASCII. We accept the superset
- * `[A-Za-z0-9_-]{1,32}` so integration tests can use shapes like
- * `TEST-01` without loosening the gate for real-world input.
- *
- * Anything outside this character class (path separators, `?`, `#`,
- * `&`, `%`, whitespace, newline, control chars) is treated as
- * attacker-controlled and collapsed to an empty substitution: a
- * crafted value can't tack an extra path segment, query string, or
- * header-smuggling payload onto the fetch URL.
- */
-const ACCESSION_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
-
-/**
- * Interpolate a single `{accession}` placeholder in a URL template,
- * gating the substituted value through {@link ACCESSION_PATTERN}. The
- * loader is the single source of truth for this substitution; it exposes
- * the resulting per-track URLs via `LoadResult.trackUrls` so callers
- * never re-derive them.
- */
-function substituteAccession(template: string, accession: string): string {
-  const safe = ACCESSION_PATTERN.test(accession) ? accession : '';
-  return template.replace('{accession}', safe);
-}
-
 export async function loadProtvistaData(
-  accession: string,
+  /**
+   * The merged variables dictionary every `{token}` resolves against —
+   * see `mergeVariables()`. A bare string is shorthand for
+   * `{ accession: <string> }`.
+   */
+  variables: string | Variables,
   config: NormalizedConfig,
   fetchOne: FetchOne,
   getAdapter: AdapterResolver,
@@ -412,6 +392,9 @@ export async function loadProtvistaData(
    */
   reload?: { only: Set<string>; previousData: Record<string, unknown> }
 ): Promise<LoadResult> {
+  const vars: Variables =
+    typeof variables === 'string' ? { accession: variables } : variables;
+  const accession = vars.accession ?? '';
   const only = reload?.only;
   const previousData = reload?.previousData ?? {};
   const isReloading = (key: string): boolean => !only || only.has(key);
@@ -424,8 +407,38 @@ export async function loadProtvistaData(
   // re-deriving the substitution). `trackUrl()` yields an empty string for
   // `from: inline | custom`, so those are excluded; `from: file` sources
   // carry their path on `url`, so they are fetched here like any URL.
+  //
+  // A template with a token no variable supplies — or whose value is
+  // refused (`.` / `..` / malformed Unicode; see `substituteTemplate`) — is
+  // neither fetched nor recorded in `trackUrls`: requesting a half-built
+  // URL would at best 404 (silently hiding the track) and at worst hit an
+  // unintended endpoint. Its track renders empty, and the developer gets
+  // one warning per template naming the offending tokens.
   const templates = new Set<string>();
   const trackUrls: Record<string, string[]> = {};
+  const substituted = new Map<string, string>();
+  const skipped = new Set<string>();
+  const substitute = (template: string, trackPath: string): string | null => {
+    const known = substituted.get(template);
+    if (known !== undefined) return known;
+    if (skipped.has(template)) return null;
+    const result = substituteTemplate(template, vars);
+    if ('url' in result) {
+      substituted.set(template, result.url);
+      return result.url;
+    }
+    skipped.add(template);
+    const braced = (tokens: string[]) => tokens.map((t) => `{${t}}`).join(', ');
+    console.warn(
+      `[protvista-uniprot] Not fetching '${template}' for track ${trackPath}: ` +
+        ('unresolved' in result
+          ? `undefined variable(s) ${braced(result.unresolved)}. ` +
+            `Define them in top-level 'variables:' or as data-* attributes.`
+          : `invalid value for ${braced(result.invalid)} ` +
+            `('.', '..' and malformed Unicode are refused).`)
+    );
+    return null;
+  };
   // Per-template body type: `text` for the delimited generic-format
   // adapters, `json` (default) for everything else. Keyed by template so a
   // URL shared by two tracks resolves once; if any referencing track needs
@@ -443,14 +456,16 @@ export async function loadProtvistaData(
       const wantsText =
         source?.format !== undefined &&
         DATA_FORMATS[source.format].body === 'text';
+      const fetched: string[] = [];
       for (const t of list) {
+        const url = substitute(t, `${group.id}/${track.id}`);
+        if (url === null) continue;
+        fetched.push(url);
         templates.add(t);
         if (wantsText) bodyType.set(t, 'text');
         else if (!bodyType.has(t)) bodyType.set(t, 'json');
       }
-      if (list.length > 0) {
-        trackUrls[key] = list.map((u) => substituteAccession(u, accession));
-      }
+      if (fetched.length > 0) trackUrls[key] = fetched;
     }
   }
   const urls = [...templates];
@@ -459,10 +474,7 @@ export async function loadProtvistaData(
     await Promise.all(
       urls.map(async (url) => [
         url,
-        await fetchOne(
-          substituteAccession(url as string, accession),
-          bodyType.get(url) ?? 'json'
-        ),
+        await fetchOne(substituted.get(url)!, bodyType.get(url) ?? 'json'),
       ])
     )
   );
@@ -624,6 +636,20 @@ export async function loadProtvistaData(
             );
           }
 
+          // Every URL was skipped (an undefined or refused variable,
+          // already warned about): there is no body, so don't run the
+          // format pipeline or adapter just to have it warn a second time
+          // about an empty one. The track renders empty.
+          const templateList = (Array.isArray(url) ? url : [url ?? '']).filter(
+            (u) => u !== ''
+          );
+          if (
+            templateList.length > 0 &&
+            templateList.every((u) => skipped.has(u))
+          ) {
+            return;
+          }
+
           const trackData = (Array.isArray(url) ? url : [url ?? '']).map(
             (u) => rawData[u as string] || []
           );
@@ -653,7 +679,10 @@ export async function loadProtvistaData(
               first.format,
               trackData[0],
               // The author's own path, so a parse error names their file.
-              { source: substituteAccession(String(url ?? ''), accession) }
+              {
+                source:
+                  substituted.get(String(url ?? '')) ?? String(url ?? ''),
+              }
             );
           } else if (adapter) {
             // Resolved outside the guard: an unregistered name is a config

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour
 
@@ -21,6 +21,143 @@ generated from Nightingale: every recognised feature `type` with its default
 colour and shape, what an unrecognised type looks like (a black rectangle)
 and how to style one, and each of the 22 `rendering.shape` values as the
 canvas track draws it.
+
+### Changed: four provider-only kinds are renamed
+
+**Breaking.** A kind keeps a plain domain word only if you can bring your own
+data to it. Kinds that read one provider's feed now say which provider:
+
+| Old kind | New kind |
+| --- | --- |
+| `confidence-score` | `alphafold-confidence` |
+| `pathogenicity-score` | `alphamissense-pathogenicity` |
+| `pathogenicity-heatmap` | `alphamissense-heatmap` |
+| `features-interpro` | `interpro-features` |
+
+A config that uses an old name fails validation with a message giving the
+new one. The default config, examples and starter kit are updated.
+
+### Added: bring your own data to most track kinds
+
+A track's `kind` now decides what records it reads, and the file decides
+only how they are encoded. Three record shapes cover every kind that can
+take your data:
+
+- **Feature records** (`type`, `start`, `end`): `features`,
+  `interpro-features`, `peptides`, `peptides-ptm`, `structure-coverage`.
+- **Point records** (`position`, `value`): the new generic `kind: linegraph`,
+  plus `variant-counts` and `rna-editing-counts`, so a count you computed
+  renders on the same track the UniProt counts would.
+- **Variation records** (`position`, `variant`, optionally `wildType`,
+  `description`, `consequence`): `variants` and `rna-editing`. The viewer
+  supplies the protein sequence these tracks need, so your file doesn't have
+  to carry it.
+
+Each shape can be read from CSV, TSV or JSON (and feature records from BED),
+from a URL, a file, or `from: inline`. A track's `kind` used to be able to
+send a file to the wrong parser (for example `confidence-score` with
+`./plddt.json` was read as generic features); the extension now only picks
+an encoding within the kind's own shape. See
+[Load your own data](https://ebi-webcomponents.github.io/protvista/your-data).
+
+### Changed: `format:` replaces the file-format adapter names
+
+**Breaking.** A data descriptor declares how its source is encoded with
+`format: csv | tsv | json | bed`, and the track's kind supplies the record
+shape. The adapter names `features-csv`, `features-tsv`, `features-json` and
+`bed` are removed; a config that still names one is told what to write
+instead (`use format: csv`). `adapter:` is now only for provider transforms
+and adapters you register yourself; when a descriptor names one, its
+`format:` is not consulted.
+
+`format:` is read everywhere a source is: URLs, `sources:` entries (whose
+extension is now also used), `from: inline` and `setTrackData()`. You only
+need it where there's no extension to go on, or to override a misnamed
+file. Other rules:
+
+- A kind paired with a format it can't read is a config error
+  (`kind-format-mismatch`) that names the kinds that can, rather than a
+  silently empty track.
+- `alphafold-confidence`, `alphamissense-pathogenicity` and
+  `alphamissense-heatmap` need two API responses and a further fetch, so
+  they reject a file of any format.
+- Inline text with no `format:` is rejected; the viewer doesn't guess.
+- A `format:` that disagrees with the file's extension is allowed, and
+  reported as a warning saying which reading won.
+
+### Changed: parser errors name your file
+
+A malformed row used to be reported against the adapter that read it
+(`features-csv: row 3, …`). It now names the source and how it was read:
+
+```
+./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc".
+```
+
+### Changed: config warnings are marked as warnings
+
+Validation issues now carry `severity`. A config that is valid but has
+warnings still fires the `config` error event, with each issue marked
+`severity: 'warning'`, and logs with `console.warn` rather than
+`console.error`. Warnings never open the error panel, even under `strict`.
+
+### Fixed: bring-your-own-data loading
+
+- CSV and TSV files saved from a spreadsheet load. A trailing blank line, or
+  rows of empty cells left by cleared cells, used to reject the whole file
+  as ragged.
+- A header column named after an `Object.prototype` member (`toString`,
+  `__proto__`) is ignored like any other extra column instead of being
+  rejected or misread.
+- `setTrackData()` with the published record shape drew nothing or threw,
+  and the throw stopped every later track from receiving its data. It now
+  draws the records, and a component that can't render its payload fails
+  only its own track.
+
+### Added: `detailOnly` keeps a track out of its group's collapsed view
+
+Set `detailOnly: true` on the detail half of a summary-and-detail pair (for
+example a variants track beside its counts graph) and the group's collapsed
+view is drawn from the other tracks, both for choosing the component and
+for the data. The expanded track is unaffected. The default config uses it
+for VARIATION, RNA editing and AlphaMissense, replacing the explicit
+`component:` those groups needed. Marking every track in a group, or a
+standalone track, is a config warning.
+
+### Changed: the structure table links to every PDB provider again
+
+PDB rows link to PDBe, RCSB PDB and PDBj, as they did in 4.x, and PDB
+structures are listed in descending id order.
+
+### Added: template variables in data URLs
+
+Any `{token}` in a `sources` URL or a descriptor `url:` now resolves, not only
+`{accession}`. Values come from a new top-level `variables:` block (baseline
+defaults), then the element's `data-*` attributes (`data-species="mouse"` fills
+`{species}`; `data-dataset-id` fills `{datasetId}`), then the `accession`
+attribute, which also wins over `data-accession`. Changing a `data-*` attribute
+that a URL uses re-runs the data load once per animation frame. `variables:`
+merges by key across `extends`.
+
+A token that nothing defines is reported as a `missing-variable` validation
+warning (the config still loads). At fetch time that URL is skipped with a
+console warning rather than requested half-built.
+
+Substituted values are now URL-encoded, so a value can't add a path segment,
+query string or fragment. A value of exactly `.` or `..` (which would climb out
+of the URL's path) or one containing malformed Unicode is refused: that URL is
+skipped with a console warning, and other tracks load normally. `{accession}`
+keeps its existing `[A-Za-z0-9_-]{1,32}` gate. `data-accession` has no effect
+on the element, because `{accession}` always comes from the `accession`
+attribute or the config's `accession:`. Every occurrence of a token is replaced; previously
+only the first `{accession}` in a URL was.
+
+### Fixed: Retry during a full reload no longer leaves mixed data
+
+Clicking a track's Retry badge while a full reload was in flight (after an
+accession or `data-*` change) aborted that reload and refetched only the
+retried track, so every other track kept the previous accession's or
+variables' data. The retry now runs as a full load.
 
 ### Fixed: a collapsed group no longer draws its hidden tracks
 
@@ -70,12 +207,19 @@ Items are now always copied before tagging, so adapter output and
 function, registered as soon as it is set. It may be set before the element
 is defined — the value is applied on upgrade, before loading starts — so a
 host no longer needs to render with `suspend`, register, then clear it.
-Registering the same value under the same name again is now a no-op in every
-registry bucket instead of a `RegistryCollisionError`, which makes React
-StrictMode's double-invoked ref callbacks safe when the values are defined
-once at module scope. A different value under a taken name still throws, and
-"the same" means the same reference, so an inline function written in a
-component is a different value on every render.
+Each value set replaces the last one atomically: a name may take a new
+function, so an inline object re-created on every React render is fine, and
+a name the new value drops is unregistered, falling back to the built-in it
+overrode. A name already registered some other way (for example with
+`registerAdapter()`) throws `RegistryCollisionError` and leaves the element
+unchanged.
+
+Registering the same value under the same name again with
+`registerAdapter()` (or any other `register*` method) is now a no-op instead
+of a `RegistryCollisionError`, which makes React StrictMode's double-invoked
+ref callbacks safe when the values are defined once at module scope. A
+different value under a taken name still throws, and "the same" means the
+same reference.
 
 If React 19 renders the element before it is defined, it turns `adapters`,
 `viewerConfig` or the structure element's `data` into an attribute such as

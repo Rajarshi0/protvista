@@ -46,15 +46,42 @@ accession before loading any track, even for fully local data.
 
 ### `sources`
 
-A map of named URL templates. Use `{accession}` as a placeholder; it's filled in
-at fetch time. Tracks refer to a source by its key, so you write the URL once and
-reuse it:
+A map of named URL templates. Use `{accession}` (or any other
+[variable](#variables)) as a placeholder; it's filled in at fetch time. Tracks
+refer to a source by its key, so you write the URL once and reuse it:
 
 ```yaml
 sources:
   features: https://www.ebi.ac.uk/proteins/api/features/{accession}
   variation: https://www.ebi.ac.uk/proteins/api/variation/{accession}
 ```
+
+### `variables`
+
+Baseline values for other `{tokens}` in your data URLs. The page can override
+each one with a `data-*` attribute on the element, so one config can serve
+several species, builds or datasets:
+
+```yaml
+variables:
+  species: human
+sources:
+  features: https://api.example.org/{species}/features/{accession}
+```
+
+```html
+<protvista-uniprot accession="P05067" data-species="mouse" config-src="./my-config.yaml"></protvista-uniprot>
+```
+
+- Precedence, lowest first: `variables:`, then `data-*` attributes, then the
+  `accession` attribute. `{accession}` always comes from `accession`.
+- Multi-word attributes are camelCased: `data-dataset-id` fills `{datasetId}`.
+- Values are URL-encoded. A value of exactly `.` or `..`, or one with malformed
+  Unicode, is refused.
+- A token defined nowhere is a `missing-variable` warning. If nothing supplies
+  it when the data loads, that URL isn't fetched (a console warning says why)
+  and its track is empty.
+- Changing a `data-*` attribute on the live element reloads the data.
 
 ### `rows`
 
@@ -154,7 +181,7 @@ beyond local development, point `extends` at your own hosted copy of the config,
 or at the published package on a CDN:
 
 ```yaml
-extends: https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.2/dist/default-config.yaml
+extends: https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/default-config.yaml
 ```
 
 That path is served straight from the npm tarball, so pin an exact version — a

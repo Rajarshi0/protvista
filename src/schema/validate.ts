@@ -14,7 +14,7 @@
  *      `Registry` (adapters, kinds, components, themes) plus a
  *      handful of cross-field checks that the static schema cannot
  *      express (unknown `sources` key, `{accession}` placeholder
- *      without an accession, …).
+ *      without an accession, a URL `{token}` defined nowhere, …).
  *
  * Error messages are stable: adopters who grep their logs for
  * `"Unknown adapter"` continue to find the same string release over
@@ -60,6 +60,7 @@ import {
 import { formatCanProduce } from './adapters/pipeline.js';
 import { descriptorFrom } from './normalize.js';
 import { shapeLabel } from './shapes.js';
+import { dataAttributeFor, templateTokens } from './variables.js';
 import {
   isError,
   type ValidationIssue,
@@ -160,10 +161,15 @@ function getStructuralValidator(): ValidateFunction {
  *     inherited group component);
  *   - if `{accession}` is referenced anywhere, `accession` is set;
  *   - `version` is in the supported set.
+ *
+ * A data URL `{token}` defined nowhere is a `missing-variable` *warning*
+ * (it doesn't affect `valid`). Pass `opts.runtimeVariables` — the names
+ * the host will supply as `data-*` attributes — to accept those tokens.
  */
 export function validateConfig(
   config: unknown,
-  registry: Registry
+  registry: Registry,
+  opts: ValidateOptions = {}
 ): ValidationResult {
   const issues: ValidationIssue[] = [];
 
@@ -197,12 +203,23 @@ export function validateConfig(
   const c = config as ProtvistaViewerConfig;
   checkVersion(c, issues);
   checkAccessionPlaceholders(c, issues);
+  checkVariableReferences(c, opts.runtimeVariables, issues);
   checkRows(c, registry, issues);
 
   // `valid` tracks error-severity issues only: a warning names something
   // legal (an explicit `format:` overriding an extension) and must not make
   // the config unloadable.
   return { valid: !issues.some(isError), issues };
+}
+
+export interface ValidateOptions {
+  /**
+   * Template-variable names the caller will supply at runtime — for
+   * `<protvista-uniprot>`, the host's `data-*` attributes (camelCased,
+   * as `element.dataset` reports them). Only the names matter: values
+   * are read at fetch time.
+   */
+  runtimeVariables?: Iterable<string>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -433,6 +450,69 @@ function descriptorIncludes(
   if (typeof d.url === 'string' && d.url.includes(needle)) return true;
   if (Array.isArray(d.url) && d.url.some((u) => u.includes(needle))) return true;
   return false;
+}
+
+/**
+ * Warn on every data-URL `{token}` that no variables source defines.
+ *
+ * A token resolves against top-level `variables:`, the host's `data-*`
+ * attributes, or the named `accession` attribute. Only the first is
+ * part of the config; `data-*` is runtime state, known here only when the
+ * caller passes `runtimeVariables`. So this is a warning that names both
+ * remedies, not an error that would refuse a config whose values arrive
+ * at mount. `{accession}` is exempt — `missing-accession` covers it.
+ *
+ * Scans `sources` values (reported at `/sources/<name>`) and the URLs a
+ * track carries itself — a descriptor `url:` or a URL / path string
+ * shorthand (reported at the track path). A shorthand naming a sources
+ * key is skipped: that source is reported once, at its own path.
+ */
+function checkVariableReferences(
+  c: ProtvistaViewerConfig,
+  runtimeVariables: Iterable<string> | undefined,
+  issues: ValidationIssue[]
+): void {
+  const defined = new Set<string>([
+    'accession',
+    ...Object.keys(c.variables ?? {}),
+    ...(runtimeVariables ?? []),
+  ]);
+  const report = (path: string, subject: string, urls: string[]) => {
+    const tokens = new Set(urls.flatMap(templateTokens));
+    for (const token of tokens) {
+      if (defined.has(token)) continue;
+      issues.push({
+        path,
+        severity: 'warning',
+        message: `${subject} references undefined variable '{${token}}'. Define it in top-level 'variables:' or pass it as a ${dataAttributeFor(token)} attribute at runtime.`,
+        code: 'missing-variable',
+      });
+    }
+  };
+
+  const sources = c.sources ?? {};
+  for (const [name, url] of Object.entries(sources)) {
+    report(`/sources/${name}`, `Source '${name}'`, [url]);
+  }
+
+  const isSourceKey = (value: string) =>
+    Object.prototype.hasOwnProperty.call(sources, value);
+  for (const entry of c.rows) {
+    // Same path convention as `checkTrack`: `group/track`, or the bare id
+    // for a standalone track.
+    const groupId = isGroupConfig(entry) ? entry.id : undefined;
+    const tracks = isGroupConfig(entry) ? entry.tracks : [entry];
+    for (const track of tracks) {
+      const trackPath = groupId ? `${groupId}/${track.id}` : track.id;
+      const items = Array.isArray(track.data) ? track.data : [track.data];
+      const urls = items.flatMap((d: DataSourceDescriptor | string) => {
+        if (typeof d === 'string') return isSourceKey(d) ? [] : [d];
+        if (d.url === undefined) return [];
+        return Array.isArray(d.url) ? d.url : [d.url];
+      });
+      report(trackPath, `Track '${trackPath}'`, urls);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

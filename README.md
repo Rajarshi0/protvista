@@ -2,7 +2,7 @@
 
 A Web Component which uses [Nightingale](https://github.com/ebi-webcomponents/nightingale) components to display protein sequence information.
 
-> ⚠️ **v5 is a beta pre-release.** The current stable release is **`protvista-uniprot@4.9.x`** (npm `latest`) — use that in production. **`5.0.0-beta.2`** ships under the **`beta`** dist-tag for early testing: once released, install it with `npm install protvista-uniprot@beta`. Its schemas and APIs are still evolving; don't depend on them in production yet. Targeted stable release: early 2027.
+> ⚠️ **v5 is a beta pre-release.** The current stable release is **`protvista-uniprot@4.9.x`** (npm `latest`) — use that in production. **`5.0.0-beta.3`** ships under the **`beta`** dist-tag for early testing: once released, install it with `npm install protvista-uniprot@beta`. Its schemas and APIs are still evolving; don't depend on them in production yet. Targeted stable release: early 2027.
 
 **Branching model and v5**
 
@@ -216,6 +216,31 @@ Mount with:
 ```
 
 The viewer renders a single collapsible group "Domains" (label title-cased from the id), containing one track "Domain", populated by the `features` URL (with `{accession}` substituted at fetch time) and filtered to items with `type === "DOMAIN"`. No `version`, no explicit `component:` / `adapter:`, no `label:` — minimal configs collapse to the minimum.
+
+### Variables
+
+Any `{token}` in a data URL is filled in at fetch time — not just `{accession}`. Values come from three places, and later ones override earlier ones:
+
+1. a top-level `variables:` block in the config — baseline defaults shared by every page that mounts it;
+2. `data-*` attributes on the element — per-page values;
+3. the `accession` attribute (or the config's `accession:`), which always supplies `{accession}`. A `data-accession` attribute has no effect on the element.
+
+```yaml
+variables:
+  species: human # default when the page sets no data-species
+sources:
+  features: https://api.example.org/{species}/features/{accession}
+```
+
+```html
+<protvista-uniprot
+  accession="P05067"
+  data-species="mouse"
+  config-src="./my-config.yaml"
+></protvista-uniprot>
+```
+
+This fetches `https://api.example.org/mouse/features/P05067`. Changing `data-species` on the live element reloads the data. Multi-word attributes are camelCased, as `element.dataset` reports them: `data-dataset-id` fills `{datasetId}`. Values are URL-encoded. A value of exactly `.` or `..`, or one containing malformed Unicode, is refused: its URL is not fetched, and a console warning names the token. A token that nothing defines is a `missing-variable` validation warning, and its URL is not fetched.
 
 ### Learning more
 
