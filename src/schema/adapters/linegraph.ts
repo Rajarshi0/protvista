@@ -134,6 +134,13 @@ export const linegraph: AdapterFunction = (raw, labelArg) => {
         );
       }
     }
+    // A position is a residue coordinate, so it must be a whole number;
+    // `value` stays any finite number.
+    if (!Number.isInteger(rec.position)) {
+      throw new Error(
+        `${label}: row ${i}: expected 'position' and 'value' (both numbers); got ${rowRendering} — 'position' is not a whole number.`
+      );
+    }
     values.push({
       position: rec.position as number,
       value: rec.value as number,

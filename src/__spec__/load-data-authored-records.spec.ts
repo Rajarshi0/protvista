@@ -318,3 +318,53 @@ describe('a track that cannot render its data does not take the others down', ()
     expect(error.mock.calls.flat().join(' ')).toContain("track 'G-bad'");
   });
 });
+
+describe('authored coordinates must be whole numbers', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const NOT_WHOLE =
+    /inline data \(parsed as JSON\): row 0: .*'position' is not a whole number/;
+
+  it('rejects a fractional position in inline point records', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { data } = await load(
+      inlineConfig('linegraph', [{ position: 1.5, value: 2 }])
+    );
+    expect(data['G-t']).toBeUndefined();
+    expect(warn.mock.calls.flat().join(' ')).toMatch(NOT_WHOLE);
+  });
+
+  it('rejects a fractional position in inline variation records', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { data } = await load(
+      inlineConfig('variants', [{ position: 4.5, variant: 'K' }])
+    );
+    expect(data['G-t']).toBeUndefined();
+    expect(warn.mock.calls.flat().join(' ')).toMatch(NOT_WHOLE);
+  });
+
+  it('rejects a fractional position in setTrackData() point records', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { data } = await loadCustom('linegraph', [{ position: 1.5, value: 2 }]);
+    expect(data['G-t']).toBeUndefined();
+    expect(warn.mock.calls.flat().join(' ')).toMatch(NOT_WHOLE);
+  });
+
+  it('rejects a fractional position in setTrackData() variation records', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { data } = await loadCustom('variants', [
+      { position: 4.5, variant: 'K' },
+    ]);
+    expect(data['G-t']).toBeUndefined();
+    expect(warn.mock.calls.flat().join(' ')).toMatch(NOT_WHOLE);
+  });
+
+  it('leaves inline feature arrays unchecked (they bypass the validator)', async () => {
+    const { data } = await load(
+      inlineConfig('features', [{ type: 'DOMAIN', start: 5, end: 4 }])
+    );
+    // `toMatchObject`, not `toEqual`: the tooltip resolver annotates the
+    // payload. This pins the bypass `adaptAuthoredRecords` leaves in place.
+    expect(data['G-t']).toMatchObject([{ type: 'DOMAIN', start: 5, end: 4 }]);
+  });
+});

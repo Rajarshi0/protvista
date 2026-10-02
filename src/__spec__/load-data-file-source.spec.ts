@@ -235,4 +235,26 @@ describe('loadProtvistaData — from: file (features-json)', () => {
     const result = await loadProtvistaData('P05067', config, fetchOne, resolveAdapter);
     expect(result.hasData).toBe(false);
   });
+
+  it('renders a JSON file with an inverted interval empty, naming the file and record', async () => {
+    const config = await loadConfig({
+      rows: [
+        {
+          id: 'MY',
+          tracks: [{ id: 'hits', kind: 'features', data: './features.json' }],
+        },
+      ],
+    });
+    const fetchOne = vi.fn(async () => [{ type: 'DOMAIN', start: 5, end: 4 }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await loadProtvistaData('P05067', config, fetchOne, resolveAdapter);
+      expect(result.data['MY-hits']).toBeUndefined();
+      expect(warn.mock.calls.flat().join(' ')).toContain(
+        './features.json (parsed as JSON): record 0: end (4) is before start (5).'
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
