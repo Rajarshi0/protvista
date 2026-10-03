@@ -187,6 +187,13 @@ export default defineConfig({
             '@nightingale-elements/nightingale-variation-canvas',
             '@floating-ui/dom',
             '@markdoc/markdoc',
+            // The playground's editor, for the local-data spec that drives
+            // the real page controller.
+            '@codemirror/lang-json',
+            '@codemirror/lang-yaml',
+            '@codemirror/lint',
+            '@codemirror/state',
+            'codemirror',
             'ajv/dist/2020',
             'color-hash',
             'js-yaml',
@@ -239,10 +246,15 @@ export default defineConfig({
         // Playground DOM / CodeMirror wiring — integration-level, not
         // unit-tested. The unit-testable logic is factored into the
         // sibling modules (format, url-state, presets, lint,
-        // diagnostics-view), which ARE covered by __spec__.
+        // diagnostics-view, local-files, config-edit), which ARE covered by
+        // __spec__.
         'src/playground/index.ts',
         'src/playground/editor.ts',
         'src/playground/splitter.ts',
+        // The "Load data file…" control's DOM wiring, likewise; it is driven
+        // by playground-local-data.browser.spec.ts, and the logic it calls
+        // lives in the covered local-files / config-edit modules.
+        'src/playground/local-data-control.ts',
       ],
       // Coverage ratchet (#162): a fixed floor, seeded ~1% below the
       // measured baseline. CI runs `pnpm test:coverage`, so a PR that
