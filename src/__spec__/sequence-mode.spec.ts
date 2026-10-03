@@ -295,6 +295,25 @@ describe('sequence mode — config failures reach the routed config report', () 
       {},
       ['missing-protein'],
     ],
+    [
+      'a track whose data URL uses {accession}',
+      seqConfig({
+        rows: [
+          {
+            id: 'g',
+            tracks: [
+              {
+                id: 'u',
+                kind: 'features',
+                data: 'https://x.example/{accession}.json',
+              },
+            ],
+          },
+        ],
+      }),
+      {},
+      ['needs-accession'],
+    ],
   ])('%s', async (_name, viewerConfig, props, codes) => {
     const fetchFn = stubEntry();
     const error = vi
@@ -370,6 +389,85 @@ describe('sequence mode — config failures reach the routed config report', () 
       "An accession ('P05067') was supplied by the host"
     );
   });
+
+  it('rejects an accession set while a sequence config is still resolving', async () => {
+    const fetchFn = stubEntry();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = mountEl({ viewerConfig: seqConfig() });
+    const events = collect(el);
+    // Right after append: `_init()` has already handed the loader no
+    // accession, and `updated()` ignores `undefined → value`.
+    el.accession = 'P05067';
+
+    await vi.waitFor(() => {
+      if (!el.querySelector(ISSUES)) throw new Error('panel not ready');
+    });
+    await settle();
+    const config = events.filter((e) => e.detail.phase === 'config');
+    expect(config).toHaveLength(1);
+    expect(config[0].detail.issues.map((i) => i.code)).toEqual([
+      'accession-and-sequence',
+    ]);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('loads the entry for an accession set while an accession-less config resolves', async () => {
+    const fetchFn = stubEntry();
+    const el = mountEl({ viewerConfig: { rows: accConfig().rows } });
+    const events = collect(el);
+    el.accession = 'P05067';
+
+    await ready(el);
+    await vi.waitFor(() => expect(el.sequence).toHaveLength(770));
+    expect(fetchedUrls(fetchFn).some((u) => u.includes(ENTRY))).toBe(true);
+    expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
+  });
+
+  it('raises accession-and-sequence after a suspended setConfig to a sequence config', async () => {
+    stubEntry();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = mountEl({ viewerConfig: accConfig() });
+    const events = collect(el);
+    await ready(el);
+    expect(el.accession).toBe('P05067');
+
+    // `suspend` short-circuits `updated()`; the clear `setConfig()` makes
+    // must still not swallow the later, real accession change.
+    (el as unknown as { suspend: boolean }).suspend = true;
+    await el.setConfig(seqConfig());
+    await el.updateComplete;
+    (el as unknown as { suspend: boolean }).suspend = false;
+    await el.updateComplete;
+    await settle();
+    await el.updateComplete;
+
+    el.accession = 'P05067';
+    await vi.waitFor(() => {
+      const codes = events
+        .filter((e) => e.detail.phase === 'config')
+        .flatMap((e) => e.detail.issues.map((i) => i.code));
+      expect(codes).toEqual(['accession-and-sequence']);
+    });
+  });
+
+  it('withholds a data-accession or variables accession from the variables', async () => {
+    stubEntry();
+    const el = document.createElement('protvista-uniprot') as unknown as El;
+    el.dataset.accession = 'P05067';
+    el.viewerConfig = seqConfig({ variables: { accession: 'Q1' } });
+    const events = collect(el);
+    document.body.append(el);
+    appended.push(el);
+    await ready(el);
+
+    const variables = (
+      el as unknown as { _variables(): Record<string, string> }
+    )._variables();
+    expect(Object.prototype.hasOwnProperty.call(variables, 'accession')).toBe(
+      false
+    );
+    expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
+  });
 });
 
 describe('sequence mode — authored coordinates', () => {
@@ -434,6 +532,7 @@ describe('sequence mode — setConfig between the modes', () => {
     await ready(el);
     expect(el.accession).toBe('P05067');
     expect(el.sequence).toHaveLength(770);
+    expect(el._sequenceAccession).toBe('P05067');
     expect(init).toHaveBeenCalledTimes(1);
 
     // → sequence: the backfilled accession is the old config's, not the
@@ -444,6 +543,7 @@ describe('sequence mode — setConfig between the modes', () => {
     expect(init).toHaveBeenCalledTimes(2);
     expect(el.accession).toBeUndefined();
     expect(el.sequence).toBe(RESIDUES);
+    expect(el._sequenceAccession).toBe('\u0000sequence');
     expect(el.querySelector('protvista-uniprot-structure')).toBeNull();
     const entryFetches = () =>
       fetchedUrls(fetchFn).filter((u) => u.includes(ENTRY)).length;
@@ -482,5 +582,30 @@ describe('sequence mode — setConfig between the modes', () => {
     await ready(el);
     expect(el.querySelector(LOADER)).toBeNull();
     expect(el.sequence).toBe(RESIDUES);
+  });
+
+  it('drops the config sequence while the entry for the switch back is on the wire', async () => {
+    // The entry for the switch back never answers.
+    let entryCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: unknown) => {
+        if (!String(input).includes(ENTRY)) return Promise.resolve(ok({}));
+        entryCalls += 1;
+        return new Promise<Response>(() => undefined);
+      })
+    );
+    const el = mountEl({ viewerConfig: seqConfig() });
+    await ready(el);
+    expect(el._sequenceAccession).toBe('\u0000sequence');
+
+    void el.setConfig(accConfig());
+    await settle();
+    await el.updateComplete;
+    expect(entryCalls).toBe(1);
+    // The config's residues are not this accession's: nothing stale renders
+    // while the entry loads.
+    expect(el.sequence).toBeUndefined();
+    expect(el._sequenceAccession).toBeUndefined();
   });
 });

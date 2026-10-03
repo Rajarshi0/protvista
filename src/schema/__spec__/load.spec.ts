@@ -391,7 +391,8 @@ describe('loadConfigWithSource — sequence mode', () => {
 
   it('names the status of a 404 through the default fetcher', async () => {
     const fetchMock = vi.fn(
-      async () => ({ ok: false, status: 404, statusText: 'Not Found' }) as Response
+      async () =>
+        ({ ok: false, status: 404, statusText: 'Not Found' }) as Response
     );
     vi.stubGlobal('fetch', fetchMock);
     try {
@@ -450,7 +451,9 @@ describe('loadConfigWithSource — sequence mode', () => {
 
   it('adds a start-from-blank summary when extended tracks need UniProt', async () => {
     const base = {
-      sources: { features: 'https://www.ebi.ac.uk/proteins/api/features/{accession}' },
+      sources: {
+        features: 'https://www.ebi.ac.uk/proteins/api/features/{accession}',
+      },
       rows: [
         { id: 'a', tracks: [{ id: 'x', kind: 'features', data: 'features' }] },
         { id: 'b', tracks: [{ id: 'y', kind: 'features', data: 'features' }] },
@@ -473,9 +476,8 @@ describe('loadConfigWithSource — sequence mode', () => {
   });
 
   it('reports missing-protein alone for a protein-less default config', async () => {
-    const { default: defaultConfigYaml } = await import(
-      '../../default-config.yaml?raw'
-    );
+    const { default: defaultConfigYaml } =
+      await import('../../default-config.yaml?raw');
     const issues = await issuesOf(
       loadConfigWithSource(defaultConfigYaml, { requireProtein: true })
     );

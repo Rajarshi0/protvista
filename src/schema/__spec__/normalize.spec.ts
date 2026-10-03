@@ -1565,7 +1565,9 @@ describe('normalizeConfig — hidden default', () => {
 
 describe('normalizeConfig — sequence', () => {
   const config: ProtvistaViewerConfig = {
-    rows: [{ id: 'g', tracks: [{ id: 't', kind: 'features', data: './x.csv' }] }],
+    rows: [
+      { id: 'g', tracks: [{ id: 't', kind: 'features', data: './x.csv' }] },
+    ],
   };
 
   it('passes a resolved sequence through', () => {

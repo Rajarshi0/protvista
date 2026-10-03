@@ -284,12 +284,15 @@ describe('initial loading state', () => {
     const el = mountEl({
       viewerConfig: {
         sequence: 'MSEQENCEKR',
-        rows: [{ id: 'g', tracks: [{ id: 'y', kind: 'features', data: './y.csv' }] }],
+        rows: [
+          { id: 'g', tracks: [{ id: 'y', kind: 'features', data: './y.csv' }] },
+        ],
       },
     });
 
     await vi.waitFor(() => {
-      if (fetchFn.mock.calls.length === 0) throw new Error('no track fetch yet');
+      if (fetchFn.mock.calls.length === 0)
+        throw new Error('no track fetch yet');
     });
     await settle(el);
     // The sequence is already known, but the track is still on the wire.
