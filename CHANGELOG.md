@@ -68,6 +68,26 @@ that is present but empty is not missing. Correctly authored configs see no
 change, and tooltip HTML is unchanged. See
 [When a field is missing](https://ebi-webcomponents.github.io/protvista/data-tooltip#when-a-field-is-missing).
 
+### Added: delimiter hints for CSV/TSV header errors
+
+A CSV or TSV file whose header uses a different separator from the one its
+format implies — a semicolon "CSV" from Excel in many European locales, a
+tab file named `.csv`, a comma file named `.tsv` — used to fail with only
+`missing required header column "type"`, which sent authors hunting for a
+typo. The message now names the separator the header seems to use and the
+fix:
+
+```
+./hits.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks tab-separated — read it as TSV: set `format: tsv` (or rename the file to .tsv).
+```
+
+A semicolon header is pointed at Excel's "Text (Tab delimited)" export read
+as TSV, since no `format:` reads semicolons. The hint is part of the
+decoder's message, so it appears wherever that message already does: the
+track's `⚠` badge, the `protvista-error` event's `message` and the console.
+Parsing is unchanged — the format alone still picks the delimiter — and a
+column that is genuinely missing keeps its message exactly as before.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

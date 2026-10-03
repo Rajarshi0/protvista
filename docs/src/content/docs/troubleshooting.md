@@ -183,6 +183,21 @@ number, got "abc"` — and fires a `track-fetch` event with `errorKind:
 that one track degrades. No Retry is offered, because re-running the same
 decoder over the same bytes gives the same answer: fix the file.
 
+When the header is the problem because the file uses a different separator
+from the one its format implies — a semicolon export from Excel, a tab file
+named `.csv`, a comma file named `.tsv` — the message names the separator the
+header seems to use and the fix:
+
+```
+./hits.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks tab-separated — read it as TSV: set `format: tsv` (or rename the file to .tsv).
+```
+
+`format:` always works, because it wins over the extension; a rename is
+offered only when the extension chose the reading. No `format:` reads
+semicolons, so for those save the sheet from Excel as "Text (Tab delimited)"
+and read it as TSV, or re-export it comma-separated. The viewer never switches
+separator by itself: only the message changes.
+
 ### A tooltip is missing rows or shows blanks
 
 A field a tooltip names that a record does not have renders as nothing: a

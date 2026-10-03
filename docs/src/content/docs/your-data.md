@@ -106,6 +106,30 @@ rows:
         data: ./hotspots.tsv
 ```
 
+#### Spreadsheet exports
+
+ProtVista reads commas (`.csv`) and tabs (`.tsv`) only, and the format alone
+decides which — it never guesses from the content. Excel's "CSV" export in many
+European locales writes semicolons instead, so save the sheet as **Text (Tab
+delimited)** and give the file a `.tsv` name (Excel names it `.txt`), or keep
+the name and say the encoding outright:
+
+```yaml
+data:
+  url: ./hotspots.txt
+  format: tsv
+```
+
+If a file's header looks like it uses a different separator from the one its
+format implies, the error says so rather than reporting a missing column:
+
+```
+./hotspots.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks semicolon-separated, which ProtVista does not read. …
+```
+
+The same locales also write decimal commas (`0,5`). Those still fail as
+`expected a number, got "0,5"`, so change them to `0.5`.
+
 ### JSON
 
 An array of feature-record objects. Use a `.json` extension:
