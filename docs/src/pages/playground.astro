@@ -249,6 +249,14 @@ const versionTooltip = isPrerelease
       input#accession {
         width: 7rem;
       }
+      input#accession:disabled {
+        opacity: 0.6;
+      }
+      /* Added by the controller while the config sets `sequence:`. */
+      .accession-hint {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
       button#run {
         cursor: pointer;
         font-weight: 700;

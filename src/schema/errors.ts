@@ -51,12 +51,20 @@ export const isError = (issue: ValidationIssue): boolean =>
 
 /**
  * Closed set of validation issue codes. Every semantic check in
- * `validateConfig` emits one of these (`coordinate-out-of-range`,
- * `data-field-ignored` and `unpaintable-color` are the exceptions, emitted
- * at runtime on `phase: 'track-data'`, as is `tooltip-field-miss`, on its
- * own phase); structural Ajv errors are
- * bucketed under `schema` so consumers can distinguish structural
- * from semantic failures without string-matching the message.
+ * `validateConfig` emits one of these, with two classes of exception:
+ *
+ *   - codes emitted at runtime, once the data loads: `coordinate-out-of-range`,
+ *     `data-field-ignored` and `unpaintable-color` on `phase: 'track-data'`,
+ *     and `tooltip-field-miss` on its own phase;
+ *   - codes the loader (`load.ts`) raises at config-load time, because only
+ *     it knows the host, the `extends:` chain or a fetched file:
+ *     `missing-protein`, `cannot-resolve-sequence`, the host-attribute form
+ *     of `accession-and-sequence`, and the `extends:` summary form of
+ *     `needs-accession`.
+ *
+ * Structural Ajv errors are bucketed under `schema` so consumers can
+ * distinguish structural from semantic failures without string-matching
+ * the message.
  */
 export type ValidationIssueCode =
   | 'schema'
@@ -70,6 +78,36 @@ export type ValidationIssueCode =
   | 'invalid-color-scale'
   | 'unsupported-version'
   | 'missing-accession'
+  // ── Sequence-only mode (`sequence:`) ───────────────────
+  /**
+   * The config sets both `accession:` and `sequence:`, or the element's
+   * `accession` attribute supplies an accession for a config that declares
+   * `sequence:`. A viewer shows a UniProt entry or your own protein, never
+   * both: a foreign sequence under UniProt annotations is a coordinate trap.
+   */
+  | 'accession-and-sequence'
+  /**
+   * A mounted viewer has neither an accession (attribute or config) nor a
+   * `sequence:`, so there is no protein to show. Raised by the loader only
+   * for the element (`requireProtein`): a bare `validateConfig` accepts a
+   * protein-less template such as the default config.
+   */
+  | 'missing-protein'
+  /**
+   * A `sequence:` value — inline, or the FASTA file it names — is not one
+   * protein sequence: no residues, more than one FASTA record, a character
+   * outside A–Z, or an inline value that looks like a path written without
+   * its `./`.
+   */
+  | 'invalid-sequence'
+  /**
+   * A track can't work from a `sequence:` because it needs UniProt data: a
+   * data URL that uses `{accession}`, a kind or adapter that reads a
+   * provider's data for a UniProt entry (AlphaFold, AlphaMissense), or a
+   * label that links to a UniProt-keyed URL. One per track. The loader adds
+   * one summary issue at `/extends` when the tracks came from an `extends:`.
+   */
+  | 'needs-accession'
   /**
    * A data URL (a `sources` value or a descriptor `url:`) uses a
    * `{token}` that top-level `variables:` doesn't define and that isn't
@@ -165,6 +203,12 @@ export type ValidationIssueCode =
   | 'circular-extends'
   /** A name in `extends` could not be resolved via the resolver or fetched as a URL/path. */
   | 'cannot-resolve-extends'
+  /**
+   * The FASTA file a `sequence:` names could not be fetched: an HTTP error,
+   * a network failure, a body over the 2 MiB ceiling, or no fetch
+   * implementation (a relative path under Node with no `sequenceFetcher`).
+   */
+  | 'cannot-resolve-sequence'
   /** A fetched `extends` target failed to parse as JSON/YAML. The
    *  issue message names the target (by preset name or URL) so the
    *  author can find the malformed file in a multi-level chain. */

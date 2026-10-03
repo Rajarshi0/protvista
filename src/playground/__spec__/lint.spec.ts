@@ -5,7 +5,7 @@
  * codes (so the editor and `src/schema/validate.ts` never drift).
  */
 import { describe, it, expect } from 'vitest';
-import { computeDiagnostics } from '../lint.js';
+import { computeDiagnostics, lintConfig } from '../lint.js';
 
 const VALID = `accession: P05067
 rows:
@@ -123,5 +123,45 @@ rows:
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0].code).toBe('format-overrides-extension');
     expect(diagnostics[0].severity).toBe('warning');
+  });
+});
+
+describe('lintConfig — sequence mode', () => {
+  const SEQUENCE = `sequence: |
+  >my construct v2
+  MKTAYIAKQRQISFVKSHFSRQ
+rows:
+  - id: sites
+    kind: features
+    label: Sites on {accession}
+    data:
+      from: inline
+      inlineData:
+        - type: BINDING
+          start: 4
+          end: 9
+`;
+
+  it('validates a sequence config without the default accession', async () => {
+    // The page always has an accession to offer; injecting it here would
+    // turn a clean sequence config into "both".
+    expect(await lintConfig(SEQUENCE, 'P05067')).toEqual({
+      diagnostics: [],
+      declaresSequence: true,
+    });
+    expect(await computeDiagnostics(SEQUENCE, 'P05067')).toEqual([]);
+  });
+
+  it('says an accession config declares no sequence', async () => {
+    const { declaresSequence } = await lintConfig(VALID, 'P05067');
+    expect(declaresSequence).toBe(false);
+  });
+
+  it('still reports an accession written beside the sequence', async () => {
+    const { diagnostics } = await lintConfig(
+      `accession: P05067\n${SEQUENCE}`,
+      'P05067'
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(['accession-and-sequence']);
   });
 });

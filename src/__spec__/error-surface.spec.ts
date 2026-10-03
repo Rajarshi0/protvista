@@ -377,6 +377,28 @@ describe('mount-level error panel — config validation', () => {
     expect(raise.mock.calls.map(([phase]) => phase)).not.toContain('config');
   });
 
+  it('reports missing-protein for a mount with neither an accession nor a sequence', async () => {
+    // Before sequence-only mode this mounted blank and silent: nothing asked
+    // for, nothing said. Now the loader rejects it, and the existing config
+    // report carries the one issue to the panel and the event.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const events: ErrorEvent[] = [];
+    const el = mountEl({ viewerConfig: VALID_CONFIG });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await vi.waitFor(() => {
+      if (!el.querySelector(ISSUES)) throw new Error('panel not ready');
+    });
+
+    const config = events.filter((e) => e.detail.phase === 'config');
+    expect(config).toHaveLength(1);
+    expect(config[0].detail.severity).toBe('error');
+    expect(config[0].detail.message).toBe('Config validation failed (1 issue)');
+    expect(config[0].detail.issues.map((i) => i.code)).toEqual(['missing-protein']);
+    expect(el.querySelector(PANEL)?.textContent).toContain('Nothing to show');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('offers no dismiss control for a fatal config error (nothing to reveal)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const el = mountEl({ viewerConfig: INVALID_CONFIG, accession: 'P05067' });

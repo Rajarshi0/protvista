@@ -51,6 +51,7 @@ type ProtvistaUniprotLike = HTMLElement & {
   accession: string | undefined;
   data: Record<string, unknown>;
   customTrackData: Record<string, unknown>;
+  _clearingAccession: boolean;
   _init(): Promise<void>;
   _loadDataInComponents(): Promise<void>;
   updated(changedProperties: Map<string, unknown>): void;
@@ -162,6 +163,39 @@ describe('<protvista-uniprot> — accession-change handling', () => {
     );
 
     expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+  it('a programmatic clear by setConfig() does not re-run _init()', () => {
+    // `setConfig()` clears an accession the previous config supplied and
+    // runs `_init()` itself. Lit delivers the clear a microtask later, as an
+    // ordinary defined → undefined change, so `setConfig()` flags it and this
+    // hook consumes the flag instead of starting a second `_init()`.
+    el._clearingAccession = true;
+    el.accession = undefined;
+    el.updated(new Map<string, unknown>([['accession', 'P05067']]));
+
+    expect(initSpy).not.toHaveBeenCalled();
+    expect(el._clearingAccession).toBe(false);
+
+    // The flag is spent: a real change afterwards re-runs `_init()`.
+    el.accession = 'P12345';
+    el.updated(new Map<string, unknown>([['accession', 'P05067']]));
+    expect(initSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('an accession set on a sequence-mode element re-resolves its config', () => {
+    // `undefined → value` is normally the mount transition, but a
+    // sequence-mode config was resolved without an accession: dropping it
+    // makes `_init()` re-resolve, which reports `accession-and-sequence`.
+    el.config = {
+      ...buildConfig(),
+      sequence: { residues: 'MKT' },
+    };
+    el.accession = 'P05067';
+    el.updated(new Map<string, unknown>([['accession', undefined]]));
+
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(el.config).toBeUndefined();
     expect(pushSpy).not.toHaveBeenCalled();
   });
 });

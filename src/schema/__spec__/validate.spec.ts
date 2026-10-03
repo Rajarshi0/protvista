@@ -1539,3 +1539,301 @@ describe('validateConfig — missing-variable', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Sequence-only mode (`sequence:`)
+// ─────────────────────────────────────────────────────────────
+
+describe('validateConfig — sequence mode', () => {
+  /** A `sequence:` config around the given rows. */
+  const seqConfig = (
+    rows: ProtvistaViewerConfig['rows'],
+    extra: Partial<ProtvistaViewerConfig> = {}
+  ): ProtvistaViewerConfig => ({ sequence: 'MKTAYIAKQR', rows, ...extra });
+  const track = (t: Partial<TrackConfig> & { id: string }): TrackConfig =>
+    ({ kind: 'features', data: './x.csv', ...t }) as TrackConfig;
+  const codes = (issues: ValidationIssue[]) => issues.map((i) => i.code);
+  const needs = (issues: ValidationIssue[]) =>
+    issues.filter((i) => i.code === 'needs-accession');
+
+  it('accepts a sequence config with file and inline tracks', () => {
+    const result = validateConfig(
+      seqConfig([
+        { id: 'g', tracks: [track({ id: 'file' })] },
+        track({
+          id: 'inline',
+          data: { from: 'inline', inlineData: [{ start: 1, end: 3 }] },
+        }),
+        track({ id: 'custom', data: { from: 'custom' } }),
+      ]),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects accession: beside sequence:', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't' })], { accession: 'P05067' }),
+      freshRegistry()
+    );
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      {
+        path: '/',
+        code: 'accession-and-sequence',
+        message:
+          "This config sets both 'accession:' and 'sequence:'. Use 'accession:' to show a UniProt entry, or 'sequence:' to show your own protein — not both.",
+      },
+    ]);
+  });
+
+  it('parses an inline sequence and names a bad residue', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't' })], { sequence: 'MKT1AY' }),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([
+      {
+        path: '/sequence',
+        code: 'invalid-sequence',
+        message:
+          "inline sequence: invalid character '1' at residue 4. A protein sequence uses the one-letter codes A–Z, optionally ending in '*'.",
+      },
+    ]);
+  });
+
+  it('rejects multi-record inline FASTA', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't' })], { sequence: '>a\nMKT\n>b\nMKT\n' }),
+      freshRegistry()
+    );
+    expect(codes(result.issues)).toEqual(['invalid-sequence']);
+    expect(result.issues[0].message).toContain('contains 2 records');
+  });
+
+  it('leaves a file reference to the loader', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't' })], { sequence: './protein.fasta' }),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([]);
+  });
+
+  it('rejects an empty sequence through the schema', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't' })], { sequence: '' }),
+      freshRegistry()
+    );
+    expect(result.valid).toBe(false);
+    expect(codes(result.issues)).toEqual(['schema']);
+  });
+
+  it('flags a sources key whose URL uses {accession}', () => {
+    const result = validateConfig(
+      seqConfig([{ id: 'g', tracks: [track({ id: 't', data: 'features' })] }], {
+        sources: { features: 'https://www.ebi.ac.uk/proteins/api/features/{accession}' },
+      }),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([
+      {
+        path: 'g/t',
+        code: 'needs-accession',
+        message:
+          "Track g/t needs UniProt data: its data URL uses {accession}. With 'sequence:' only file, inline and custom sources work.",
+      },
+    ]);
+  });
+
+  it('flags {accession} in a url: list, a source: list and a shorthand URL', () => {
+    const result = validateConfig(
+      seqConfig(
+        [
+          track({
+            id: 'urls',
+            data: { url: ['https://a.test/x', 'https://a.test/{accession}'] },
+          }),
+          track({ id: 'sources', data: { source: ['plain', 'keyed'] } }),
+          track({ id: 'short', data: 'https://a.test/f/{accession}' }),
+        ],
+        { sources: { plain: 'https://a.test/p', keyed: 'https://a.test/{accession}' } }
+      ),
+      freshRegistry()
+    );
+    expect(needs(result.issues).map((i) => i.path)).toEqual([
+      'urls',
+      'sources',
+      'short',
+    ]);
+  });
+
+  it('flags a label that links to an {accession} URL, but not plain label text', () => {
+    const result = validateConfig(
+      seqConfig([
+        {
+          id: 'g',
+          label: '[Group](https://x.test/{accession})',
+          tracks: [
+            track({ id: 'link', label: '[AF](https://alphafold.ebi.ac.uk/entry/{accession})' }),
+            track({ id: 'text', label: 'Hotspots on {accession}' }),
+          ],
+        },
+        track({ id: 'tag', label: '{% help slug="{accession}" %}x{% /help %}' }),
+      ]),
+      freshRegistry()
+    );
+    expect(needs(result.issues).map((i) => i.path)).toEqual(['g', 'g/link', 'tag']);
+    expect(needs(result.issues)[1].message).toBe(
+      "Track g/link needs UniProt data: its label links to a UniProt-keyed URL ({accession}). With 'sequence:' only file, inline and custom sources work."
+    );
+  });
+
+  it('flags an explicit UniProt-keyed adapter', () => {
+    const result = validateConfig(
+      seqConfig([
+        track({
+          id: 't',
+          data: { url: 'https://my.test/plddt.json', adapter: 'alphafold-prediction-json' },
+        }),
+      ]),
+      freshRegistry()
+    );
+    expect(needs(result.issues).map((i) => i.message)).toEqual([
+      "Track t needs UniProt data: adapter 'alphafold-prediction-json' reads AlphaFold DB data for a UniProt entry. With 'sequence:' only file, inline and custom sources work.",
+    ]);
+  });
+
+  it('reports one issue per track when several reasons apply', () => {
+    const result = validateConfig(
+      seqConfig(
+        [
+          track({
+            id: 'af',
+            kind: 'alphafold-confidence',
+            label: '[AF](https://alphafold.ebi.ac.uk/entry/{accession})',
+            data: { source: ['alphafoldPrediction', 'proteins'] },
+          }),
+        ],
+        {
+          sources: {
+            alphafoldPrediction: 'https://alphafold.ebi.ac.uk/api/prediction/{accession}',
+            proteins: 'https://www.ebi.ac.uk/proteins/api/proteins/{accession}',
+          },
+        }
+      ),
+      freshRegistry()
+    );
+    // The first reason wins: the URL rule, ahead of the kind and the label.
+    expect(needs(result.issues).map((i) => i.message)).toEqual([
+      "Track af needs UniProt data: its data URL uses {accession}. With 'sequence:' only file, inline and custom sources work.",
+    ]);
+  });
+
+  describe.each([
+    ['alphafold-confidence', 'AlphaFold DB'],
+    ['alphamissense-pathogenicity', 'AlphaMissense'],
+    ['alphamissense-heatmap', 'AlphaMissense'],
+  ])('built-in shapeless kind %s', (kind, provider) => {
+    const expected = `Track t needs UniProt data: kind '${kind}' reads ${provider} data for a UniProt entry. With 'sequence:' only file, inline and custom sources work.`;
+
+    it.each([
+      ['a file', './scores.json'],
+      ['inline data', { from: 'inline', inlineData: [{ position: 1, value: 1 }] }],
+      ['a custom source', { from: 'custom' }],
+    ])('is flagged on %s', (_label, data) => {
+      const result = validateConfig(
+        seqConfig([track({ id: 't', kind, data } as TrackConfig)]),
+        createRegistry()
+      );
+      expect(needs(result.issues).map((i) => i.message)).toEqual([expected]);
+    });
+  });
+
+  it('reports needs-accession beside the existing file mismatch error', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't', kind: 'alphafold-confidence', data: './plddt.csv' })]),
+      createRegistry()
+    );
+    expect(codes(result.issues).sort()).toEqual([
+      'kind-format-mismatch',
+      'needs-accession',
+    ]);
+  });
+
+  it('does not flag a consumer-registered shapeless kind', () => {
+    const registry = createRegistry();
+    registry.registerAdapter('my-feed', () => []);
+    registry.registerSemanticKind('my-kind', {
+      component: 'nightingale-track-canvas',
+      adapter: 'my-feed',
+    });
+    const result = validateConfig(
+      seqConfig([track({ id: 't', kind: 'my-kind', data: 'https://lab.test/feed' })]),
+      registry
+    );
+    expect(needs(result.issues)).toEqual([]);
+  });
+
+  it("allows the author's own extensionless URL", () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't', data: 'https://lab.example/feed' })]),
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([]);
+  });
+
+  it('does not raise missing-accession in sequence mode', () => {
+    const result = validateConfig(
+      seqConfig([track({ id: 't', label: 'On {accession}' })], {
+        sources: { f: 'https://a.test/{accession}' },
+      }),
+      freshRegistry()
+    );
+    expect(codes(result.issues)).not.toContain('missing-accession');
+  });
+
+  describe('UNIPROT_KEYED_ADAPTERS drift guard', () => {
+    it('lists every built-in shapeless kind’s adapter', async () => {
+      const { UNIPROT_KEYED_ADAPTERS } = await import('../sequence.js');
+      const registry = createRegistry();
+      const shapeless = registry
+        .listSemanticKinds()
+        .map((k) => registry.getSemanticKind(k))
+        .filter((def) => def && def.shape === undefined && def.adapter);
+      expect(shapeless.length).toBeGreaterThan(0);
+      for (const def of shapeless) {
+        expect(Object.keys(UNIPROT_KEYED_ADAPTERS)).toContain(def!.adapter);
+      }
+    });
+
+    it('lists every built-in adapter whose module calls fetch', async () => {
+      const { UNIPROT_KEYED_ADAPTERS } = await import('../sequence.js');
+      const { readFileSync } = await import('node:fs');
+      const { resolve, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+      const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../adapters');
+      const index = readFileSync(resolve(dir, 'index.ts'), 'utf8');
+      // `import { fooAdapter } from './foo.js'` and `['name', fooAdapter]`.
+      const modules = new Map(
+        [...index.matchAll(/import \{ (\w+) \} from '\.\/([\w-]+)\.js'/g)].map(
+          ([, fn, file]) => [fn, file]
+        )
+      );
+      const entries = [...index.matchAll(/\['([\w-]+)', (\w+)\]/g)];
+      expect(entries.length).toBeGreaterThan(0);
+      const fetching = entries
+        .filter(([, , fn]) => {
+          const file = modules.get(fn);
+          expect(file, `module for ${fn}`).toBeDefined();
+          const src = readFileSync(resolve(dir, `${file}.ts`), 'utf8');
+          return /\bfetch\s*\(/.test(src);
+        })
+        .map(([, name]) => name);
+      expect(fetching.length).toBeGreaterThan(0);
+      for (const name of fetching) {
+        expect(Object.keys(UNIPROT_KEYED_ADAPTERS)).toContain(name);
+      }
+    });
+  });
+});

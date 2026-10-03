@@ -95,10 +95,13 @@ export function coordinateHint(shape: ShapeName, format: DataFormat): string {
  *   residues); first: row 7, end 812. Coordinates must be 1-based …
  *
  * The wording is fixed, so the count always reads "rows".
+ *
+ * `protein` is the protein's display label: its accession, or — in
+ * sequence-only mode — the FASTA header or "your sequence".
  */
 export function formatOutOfRangeWarning(
   coords: Pick<TrackCoordinates, 'label' | 'shape' | 'format'>,
-  accession: string,
+  protein: string,
   length: number,
   found: OutOfRange
 ): string {
@@ -107,7 +110,7 @@ export function formatOutOfRangeWarning(
     .join(', ');
   return (
     `${coords.label}: ${found.count} of ${found.total} rows fall outside ` +
-    `${accession} (${length} residues); first: row ${found.first.row}, ` +
+    `${protein} (${length} residues); first: row ${found.first.row}, ` +
     `${fields}. ${coordinateHint(coords.shape, coords.format)}`
   );
 }

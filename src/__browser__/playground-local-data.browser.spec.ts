@@ -693,3 +693,43 @@ rows:
     });
   });
 });
+
+describe('playground: a sequence-only config', () => {
+  const SEQUENCE_CONFIG = `sequence: |
+  >my construct v2
+  MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQ
+rows:
+  - id: sites
+    label: Sites on {accession}
+    kind: features
+    data:
+      from: inline
+      inlineData:
+        - { type: DOMAIN, start: 4, end: 30 }
+`;
+
+  it('previews without an accession and disables the accession input', async () => {
+    setEditorText(SEQUENCE_CONFIG);
+    byId('run').click();
+
+    await vi.waitFor(() =>
+      expect(preview()?.textContent).toContain('Sites on my construct v2')
+    );
+    // The page's accession is not handed to a config with its own protein.
+    expect(preview()?.hasAttribute('accession')).toBe(false);
+    expect(listItems()).toEqual([]);
+    const input = byId<HTMLInputElement>('accession');
+    expect(input.disabled).toBe(true);
+    const hint = byId('accession-hint');
+    expect(input.getAttribute('aria-describedby')).toBe('accession-hint');
+    expect(hint.hidden).toBe(false);
+    expect(hint.textContent).toContain('sequence:');
+
+    // Back to an accession config: the input is live again.
+    setEditorText(CONFIG);
+    byId('run').click();
+    await vi.waitFor(() => expect(input.disabled).toBe(false));
+    expect(input.hasAttribute('aria-describedby')).toBe(false);
+    expect(hint.hidden).toBe(true);
+  });
+});

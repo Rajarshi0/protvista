@@ -148,6 +148,10 @@ import {
 } from './schema/adapters/coordinates.js';
 import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import {
+  escapeMarkdocInline,
+  sequenceDisplayLabel,
+} from './schema/sequence.js';
+import {
   routeFailure,
   type FailureChannels,
   type FailureReport,
@@ -310,6 +314,14 @@ type EntryResult =
 /** The Proteins API entry `loadEntry` reads the sequence from. */
 const entryUrl = (accession: string): string =>
   `https://www.ebi.ac.uk/proteins/api/proteins/${accession}`;
+
+/**
+ * The protein key for a `sequence:` config, which has no accession: what the
+ * authored-coordinate check compares `_sequenceAccession` and each pending
+ * check against. Not a valid accession (`ACCESSION_PATTERN` admits no NUL), so
+ * it can never collide with one.
+ */
+const SEQUENCE_MODE_KEY = '\u0000sequence';
 
 const isAbortError = (e: unknown): boolean =>
   (e as { name?: string } | null)?.name === 'AbortError';
@@ -489,7 +501,11 @@ class ProtvistaUniprot extends LitElement {
   suspend?: boolean;
   /** The UniProt accession to show (`accession` attribute). */
   accession?: string;
-  /** The protein sequence, fetched from `accession` when not given. */
+  /**
+   * The protein sequence the viewer draws: fetched for `accession`, or taken
+   * from the config's `sequence:` in sequence-only mode. Set by the element;
+   * a host that sets it is overwritten by the next load.
+   */
   sequence?: string;
   /**
    * Fully-resolved config consumed by the renderer and
@@ -627,17 +643,34 @@ class ProtvistaUniprot extends LitElement {
   private _groupErrors: Set<string> = new Set();
 
   /**
-   * The accession `this.sequence` was fetched for. An accession change
-   * re-runs `_init()` without clearing `sequence`, so the new protein's
-   * track data can land while the old protein's sequence is still stored;
-   * the coordinate check must not run against it.
+   * The protein key `this.sequence` belongs to: the accession it was fetched
+   * for, or `SEQUENCE_MODE_KEY` when it came from the config's `sequence:`.
+   * An accession change re-runs `_init()` without clearing `sequence`, so the
+   * new protein's track data can land while the old protein's sequence is
+   * still stored; the coordinate check must not run against it.
    */
   private _sequenceAccession: string | undefined;
 
   /**
+   * The accession `_applyConfig` backfilled from the config's `accession:`
+   * (the host left the attribute blank). While `this.accession` still holds
+   * it, it is the config's, not the host's: `setConfig()` clears it, so a
+   * switch to a `sequence:` config isn't mistaken for a host accession.
+   */
+  private _backfilledAccession: string | undefined;
+
+  /**
+   * Set by `setConfig()` just before it clears a backfilled accession, and
+   * consumed by `updated()` when that change arrives (Lit delivers it a
+   * microtask later), so the clear doesn't re-run `_init()` on its own.
+   */
+  private _clearingAccession = false;
+
+  /**
    * Authored tracks' decoded coordinates still waiting for the
    * sequence-bounds check, keyed by `${groupId}-${trackId}`, with the
-   * accession their batch loaded. Filled by `_loadData` and drained by
+   * protein key their batch loaded (`_proteinKey`: the accession, or
+   * `SEQUENCE_MODE_KEY` in sequence mode). Filled by `_loadData` and drained by
    * `_checkCoordinates`, so each track is checked once per data load. A
    * load drops the entries it supersedes when it starts — so a sequence
    * landing mid-load can't check the data being replaced — and queues its
@@ -660,7 +693,7 @@ class ProtvistaUniprot extends LitElement {
   private _anyVisibleError = false;
 
   /**
-   * Plain-text labels, keyed by `accession\nsource`. `_labelText` is called
+   * Plain-text labels, keyed by `protein label\nsource`. `_labelText` is called
    * per row and per track on every customize-mode render (and on the moved-key
    * clear timer), and the derived text is stable for a given label + protein,
    * so it is parsed once rather than on every frame. Cleared on every full
@@ -1322,8 +1355,10 @@ class ProtvistaUniprot extends LitElement {
    * path. Without it, every track is loaded.
    */
   async _loadData(only?: Set<string>) {
-    const accession = this.accession;
-    if (!accession || !this.config) {
+    // An accession, or in sequence mode the config's own sequence: either is
+    // a protein to load tracks for.
+    const protein = this._proteinKey;
+    if (!protein || !this.config) {
       this._tracksPending = false;
       this.loading = false;
       this.requestUpdate();
@@ -1565,7 +1600,10 @@ class ProtvistaUniprot extends LitElement {
     // replacing any unchecked entry a reloaded track left behind.
     for (const key of reloadedKeys) this._pendingCoordinateChecks.delete(key);
     for (const [key, coordinates] of Object.entries(trackCoordinates)) {
-      this._pendingCoordinateChecks.set(key, { accession, coordinates });
+      this._pendingCoordinateChecks.set(key, {
+        accession: protein,
+        coordinates,
+      });
     }
 
     // Recompute each reloaded group's aggregate from the LIVE merged
@@ -1622,15 +1660,59 @@ class ProtvistaUniprot extends LitElement {
    * resolves against. Precedence, lowest first: the config's `variables:`
    * block < the host's `data-*` attributes < the named `accession`
    * attribute (an alias for `data-accession` that wins on conflict).
-   * `this.accession` is always set by the time this is read (`_loadData`
-   * won't run without it), so `data-accession` never reaches a URL here.
+   * In accession mode `this.accession` is always set by the time this is
+   * read (`_loadData` won't run without a protein), so `data-accession`
+   * never reaches a URL here.
+   *
+   * In sequence mode there is no accession at all: one merged in from a
+   * config `variables:` entry or a `data-accession` attribute is dropped, so
+   * `$ctx.accession` in a tooltip stays `''` and no tooltip builds a UniProt
+   * link from a stray attribute. (Validation already rejects `{accession}`
+   * data URLs in this mode.)
    */
   private _variables(): Variables {
-    return mergeVariables({
+    const variables = mergeVariables({
       configVariables: this.config?.variables,
       dataset: this.dataset,
-      accession: this.accession,
+      accession: this.config?.sequence ? undefined : this.accession,
     });
+    if (this.config?.sequence) delete variables.accession;
+    return variables;
+  }
+
+  /**
+   * The key the loaded protein is known by: its accession, or
+   * `SEQUENCE_MODE_KEY` when the config shows its own `sequence:`.
+   * `undefined` with neither — there is nothing to load.
+   */
+  private get _proteinKey(): string | undefined {
+    if (this.config?.sequence) return SEQUENCE_MODE_KEY;
+    return this.accession || undefined;
+  }
+
+  /**
+   * The protein's name as plain text, wherever the viewer shows it: the
+   * accession, or in sequence mode the FASTA header (cut at 80 characters)
+   * or "your sequence". `undefined` with neither. Used for the label cache
+   * key, the no-results message and the coordinate warning.
+   */
+  private get _proteinLabel(): string | undefined {
+    const sequence = this.config?.sequence;
+    if (sequence) return sequenceDisplayLabel(sequence);
+    return this.accession || undefined;
+  }
+
+  /**
+   * `_proteinLabel` as it is substituted for `{accession}` in a label's
+   * Markdoc source. A FASTA header is author data, not markup, so in sequence
+   * mode it is escaped: a header can't inject a link or a tag. An accession
+   * is passed through unchanged, exactly as before.
+   */
+  private get _labelAccession(): string | undefined {
+    const label = this._proteinLabel;
+    return this.config?.sequence && label !== undefined
+      ? escapeMarkdocInline(label)
+      : this.accession;
   }
 
   /**
@@ -1670,7 +1752,7 @@ class ProtvistaUniprot extends LitElement {
    * at fetch time. The superseded batch is aborted by `_loadData()`.
    */
   private _onVariablesChanged(): void {
-    if (!this.config || this.suspend || !this.accession) return;
+    if (!this.config || this.suspend || !this._proteinKey) return;
     if (this._variablesKey(this._variables()) === this._lastLoadVariables) {
       return;
     }
@@ -1726,7 +1808,8 @@ class ProtvistaUniprot extends LitElement {
    *
    * The sequence and a track's data come from independent fetches and can
    * land in either order, so this runs after each: a track is checked only
-   * once both are present for the current accession. If no usable sequence
+   * once both are present for the current protein (its accession, or the
+   * config's own `sequence:`). If no usable sequence
    * loads, nothing runs — the `sequence` phase already reports that. Each
    * pending entry is drained when checked, so a re-render never re-emits;
    * a reload queues the track again.
@@ -1745,7 +1828,7 @@ class ProtvistaUniprot extends LitElement {
         if (!pending) continue;
         if (
           pending.accession !== this._sequenceAccession ||
-          pending.accession !== this.accession
+          pending.accession !== this._proteinKey
         ) {
           continue;
         }
@@ -1753,9 +1836,11 @@ class ProtvistaUniprot extends LitElement {
         const { coordinates } = pending;
         const found = findOutOfRange(coordinates.rows, sequence.length);
         if (!found) continue;
+        // Named by its display label, so a sequence-mode message reads
+        // "outside my construct v2 (240 residues)", not the private key.
         const message = formatOutOfRangeWarning(
           coordinates,
-          pending.accession,
+          this._proteinLabel ?? pending.accession,
           sequence.length,
           found
         );
@@ -2257,12 +2342,27 @@ class ProtvistaUniprot extends LitElement {
     // schedule, each firing another `updated()` cycle that will hit
     // the gate below. Running the push on THIS tick would inject
     // stale (old-accession) data into components.
-    if (
-      changedProperties.has('accession') &&
-      changedProperties.get('accession') !== undefined
-    ) {
-      this._init();
-      return;
+    //
+    // `setConfig()` clearing an accession the previous config supplied is not
+    // such a change — it re-runs `_init()` itself — so its flag is consumed
+    // here and the change otherwise ignored.
+    //
+    // A sequence-mode element given an accession after mount is the other
+    // exception: `undefined → value` is ignored above, but here the config
+    // was resolved without one and must be re-resolved, which fails with
+    // `accession-and-sequence` rather than silently keeping a config never
+    // checked against the attribute.
+    if (changedProperties.has('accession')) {
+      if (this._clearingAccession) {
+        this._clearingAccession = false;
+      } else if (changedProperties.get('accession') !== undefined) {
+        this._init();
+        return;
+      } else if (this.config?.sequence && this.accession) {
+        this.config = undefined;
+        this._init();
+        return;
+      }
     }
 
     // Only push data into Nightingale when something that could
@@ -2316,6 +2416,11 @@ class ProtvistaUniprot extends LitElement {
    *   1. HTML attribute (`<protvista-uniprot accession="P05067">`)
    *   2. `viewerConfig.accession` (programmatic)
    *   3. `accession:` field in the YAML/JSON config file
+   *
+   * A config that sets `sequence:` instead takes no accession from anywhere
+   * (an attribute is an `accession-and-sequence` config error): its
+   * sequence comes from the config, `loadEntry` never runs, and only the
+   * track data loads.
    *
    * Re-entrancy: a consumer that calls `_init()` while a previous
    * call's `loadConfig` promise is in flight gets the later input's
@@ -2402,14 +2507,41 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    // No accession means nothing to fetch, and `_loadData()` — the only other
+    // Sequence-only mode: the config carries the protein itself, so there is
+    // no entry to fetch — the viewer makes no request of its own, and only the
+    // track data loads. The flags are set explicitly: a superseded
+    // accession-mode `loadEntry` is dropped by the generation guard *before*
+    // it clears `_sequencePending`, so an accession → sequence `setConfig()`
+    // mid-fetch would otherwise leave the spinner up for good. The generation
+    // bump above also keeps that late result from overwriting this sequence.
+    const resolved = this.config?.sequence;
+    if (resolved) {
+      this._sequencePending = false;
+      this._tracksPending = true;
+      this.sequence = resolved.residues;
+      this._sequenceAccession = SEQUENCE_MODE_KEY;
+      this.displayCoordinates = { start: 1, end: resolved.residues.length };
+      if (this._mountError?.phase === 'sequence') this._mountError = null;
+      this._loadData();
+      return;
+    }
+    // Back from sequence mode: the stored sequence was the config's, not
+    // this accession's, so it must not render while the entry loads. An
+    // accession → accession switch keeps today's behaviour.
+    if (this._sequenceAccession === SEQUENCE_MODE_KEY) {
+      this.sequence = undefined;
+      this._sequenceAccession = undefined;
+      this.displayCoordinates = {};
+    }
+
+    // No protein means nothing to fetch, and `_loadData()` — the only other
     // place `loading` is cleared — is below this return, so leaving the flag
-    // set spun the loader forever. Harmless while the readiness gate hid it;
-    // now that the spinner covers the whole initial load, a misconfigured
-    // element would sit under a permanent spinner, which reads as "working on
-    // it" rather than "nothing was asked for". Clear it and render what the
-    // gate in `render()` produces: an empty element, or — when the host
-    // supplied `sequence` itself — the no-results message.
+    // set spun the loader forever. A freshly resolved config can't get here:
+    // the loader rejects a mount with neither an accession nor a `sequence:`
+    // (`missing-protein`), and that reaches the panel through the catch
+    // above. What remains is an already-loaded config re-initialised without
+    // one (a Retry after the host cleared the attribute): clear the spinner
+    // and render what the gate in `render()` produces.
     if (!this.accession) {
       this.loading = false;
       this.requestUpdate();
@@ -2491,6 +2623,7 @@ class ProtvistaUniprot extends LitElement {
     // from the config when the author left the attribute blank.
     if (!this.accession && normalized.accession) {
       this.accession = normalized.accession;
+      this._backfilledAccession = normalized.accession;
     }
     this._authoredConfig = loaded.authored;
     // The pristine rows, kept before any layout edit: the baseline "reset to
@@ -2534,6 +2667,19 @@ class ProtvistaUniprot extends LitElement {
    */
   async setConfig(config: ProtvistaViewerConfig | string): Promise<void> {
     this.viewerConfig = config;
+    // An accession the previous config supplied is that config's, not the
+    // host's: left in place, it would be passed to the loader as the host
+    // accession, and a switch to a `sequence:` config would fail as "both".
+    // The new config re-supplies it if it has one. The flag stops `updated()`
+    // treating the clear as a post-mount accession change (another `_init()`).
+    if (
+      this._backfilledAccession !== undefined &&
+      this.accession === this._backfilledAccession
+    ) {
+      this._clearingAccession = true;
+      this.accession = undefined;
+    }
+    this._backfilledAccession = undefined;
     // Drop the current config so `_init` re-resolves rather than
     // short-circuiting, and so a failure can't leave a half-swapped state.
     this.config = undefined;
@@ -2556,16 +2702,22 @@ class ProtvistaUniprot extends LitElement {
    * the validator's `missing-accession` rule accepts template
    * configs (like the bundled default YAML) whose URLs carry
    * `{accession}` placeholders. `loadConfig` will ignore this when
-   * the config already declares its own accession. Likewise the host's
-   * `data-*` attributes, so `missing-variable` accepts their tokens.
+   * the config already declares its own accession, and rejects it
+   * (`accession-and-sequence`) for a config that declares `sequence:`.
+   * Likewise the host's `data-*` attributes, so `missing-variable`
+   * accepts their tokens.
    */
   private async resolveViewerConfig(): Promise<LoadedConfig> {
     // `data-*` names go along so `missing-variable` accepts the tokens this
     // host supplies; values are read later, at fetch time.
+    // `requireProtein`: a viewer with neither an accession nor a `sequence:`
+    // has nothing to show, so it says so (`missing-protein`) in the panel
+    // rather than mounting blank.
     const loadOpts = {
       accession: this.accession,
       registry: this.registry,
       variables: { ...this.dataset },
+      requireProtein: true,
     };
     if (this.viewerConfig !== undefined) {
       return loadConfigWithSource(this.viewerConfig, loadOpts);
@@ -3548,7 +3700,7 @@ class ProtvistaUniprot extends LitElement {
             >${
               (track.filterUI === 'nightingale-filter' &&
                 this.getFilterComponent(key)) ||
-              unsafeHTML(renderLabel(track.label, this.accession))
+              unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
           >${this._renderTrackBadge(key)}${this._renderRowControls(
             group,
@@ -3719,7 +3871,7 @@ class ProtvistaUniprot extends LitElement {
                   this._labelText(group.label),
                   expanded
                 )}<span class="${CSS_PREFIX}-label-text"
-                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                  >${unsafeHTML(renderLabel(group.label, this._labelAccession))}</span
                 >${this._renderGroupBadge(group.id)}${this._renderRowControls(
                   group,
                   index,
@@ -3737,7 +3889,7 @@ class ProtvistaUniprot extends LitElement {
                 @keydown="${this.handleGroupKeydown}"
               >
                 <span class="${CSS_PREFIX}-label-text"
-                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                  >${unsafeHTML(renderLabel(group.label, this._labelAccession))}</span
                 >${this._renderGroupBadge(group.id)}
               </div>`
         }
@@ -3786,9 +3938,12 @@ class ProtvistaUniprot extends LitElement {
 
   /** The empty-state message: nothing to draw, and nothing hidden. */
   private _renderNoResults() {
-    // No accession is reachable here when a host supplies `sequence` itself,
-    // so the "for …" clause is dropped rather than left dangling.
-    const forWhat = this.accession ? ` for ${this.accession}` : '';
+    // The clause names the protein: its accession, or in sequence mode the
+    // FASTA header (or "your sequence"). With neither — only reachable for an
+    // already-loaded config re-initialised without an accession — it is
+    // dropped rather than left dangling.
+    const label = this._proteinLabel;
+    const forWhat = label ? ` for ${label}` : '';
     return html`<div class="protvista-no-results">
       No feature data available${forWhat}
     </div>`;
@@ -3860,7 +4015,7 @@ class ProtvistaUniprot extends LitElement {
             >${
               (track.filterUI === 'nightingale-filter' &&
                 this.getFilterComponent(key)) ||
-              unsafeHTML(renderLabel(track.label, this.accession))
+              unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
           >${this._renderTrackBadge(key)}${this._renderTrackControls(
             group,
@@ -3924,7 +4079,7 @@ class ProtvistaUniprot extends LitElement {
               ? this._collapseButton(row, this._labelText(row.label), expanded)
               : ''
           }<span class="${CSS_PREFIX}-label-text"
-            >${unsafeHTML(renderLabel(row.label, this.accession))}</span
+            >${unsafeHTML(renderLabel(row.label, this._labelAccession))}</span
           >${this._renderRowControls(row, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
@@ -3960,7 +4115,7 @@ class ProtvistaUniprot extends LitElement {
           title="${track.description ?? ''}"
         >
           <span class="${CSS_PREFIX}-label-text"
-            >${unsafeHTML(renderLabel(track.label, this.accession))}</span
+            >${unsafeHTML(renderLabel(track.label, this._labelAccession))}</span
           >${this._renderTrackControls(group, track, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
@@ -3970,10 +4125,10 @@ class ProtvistaUniprot extends LitElement {
 
   /** Plain-text label (Markdoc → text), for `aria-label`s and announcements. */
   private _labelText(source: string): string {
-    const key = `${this.accession}\n${source}`;
+    const key = `${this._proteinLabel}\n${source}`;
     const cached = this._labelTextCache.get(key);
     if (cached !== undefined) return cached;
-    const html = renderLabel(source, this.accession);
+    const html = renderLabel(source, this._labelAccession);
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const text = (doc.body.textContent || '').trim() || source;
     this._labelTextCache.set(key, text);
@@ -4541,7 +4696,9 @@ class ProtvistaUniprot extends LitElement {
           </div>
         </div>
         ${
-          !this.nostructure
+          // A `sequence:` protein has no UniProt entry, so no structure to
+          // look up: the panel is omitted rather than shown empty.
+          !this.nostructure && !this.config?.sequence
             ? html`
                 <protvista-uniprot-structure
                   accession="${this.accession || ''}"
@@ -4651,7 +4808,7 @@ class ProtvistaUniprot extends LitElement {
           title="${group.description ?? ''}"
         >
           ${unsafeHTML(
-            renderLabel(group.label, this.accession)
+            renderLabel(group.label, this._labelAccession)
           )}${this._renderGroupBadge(group.id)}
         </div>
       </div>

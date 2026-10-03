@@ -123,38 +123,70 @@ export async function computeDiagnostics(
   text: string,
   accession?: string
 ): Promise<PlaygroundDiagnostic[]> {
-  if (text.trim() === '') return [];
+  return (await lintConfig(text, accession)).diagnostics;
+}
+
+/** {@link lintConfig}'s result. */
+export interface LintResult {
+  diagnostics: PlaygroundDiagnostic[];
+  /**
+   * Whether the config declares `sequence:` — a protein of its own, so the
+   * preview must not be given an accession (that is an error) and the
+   * accession input has nothing to do.
+   */
+  declaresSequence: boolean;
+}
+
+/**
+ * {@link computeDiagnostics}, plus what the page needs to know about the
+ * config without parsing it a second time: whether it declares `sequence:`.
+ * A `sequence:` config is validated without the accession, exactly as the
+ * element's loader treats it.
+ */
+export async function lintConfig(
+  text: string,
+  accession?: string
+): Promise<LintResult> {
+  if (text.trim() === '') return { diagnostics: [], declaresSequence: false };
 
   let parsed: unknown;
   try {
     parsed = await parseConfigText(text);
   } catch (error) {
     const at = Math.min(offsetFromParseError(error, text), text.length);
-    return [
-      {
-        from: at,
-        to: Math.min(at + 1, text.length),
-        severity: 'error',
-        code: 'syntax',
-        message: (error as Error).message || 'Could not parse config',
-      },
-    ];
+    return {
+      diagnostics: [
+        {
+          from: at,
+          to: Math.min(at + 1, text.length),
+          severity: 'error',
+          code: 'syntax',
+          message: (error as Error).message || 'Could not parse config',
+        },
+      ],
+      declaresSequence: false,
+    };
   }
 
+  const isObject =
+    parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+  const declaresSequence =
+    isObject && (parsed as { sequence?: unknown }).sequence != null;
+
   // Only when the config declares no accession itself — an authored
-  // `accession:` takes precedence, exactly as the element treats it.
+  // `accession:` takes precedence, exactly as the element treats it — and
+  // no `sequence:`, which shows a protein of its own.
   if (
     accession &&
-    parsed !== null &&
-    typeof parsed === 'object' &&
-    !Array.isArray(parsed) &&
+    isObject &&
+    !declaresSequence &&
     (parsed as { accession?: unknown }).accession == null
   ) {
     parsed = { ...(parsed as object), accession };
   }
 
   const result = validateConfig(parsed, createRegistry());
-  return result.issues.map((issue) => ({
+  const diagnostics = result.issues.map((issue) => ({
     ...locate(text, issue.path),
     // An issue's own severity, not a blanket 'error': a warning names
     // something legal (an explicit `format:` overriding an extension) and
@@ -165,4 +197,5 @@ export async function computeDiagnostics(
     path: issue.path,
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
+  return { diagnostics, declaresSequence };
 }

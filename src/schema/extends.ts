@@ -85,7 +85,8 @@
  *     `opts.resolver` the embedder supplies, so there is no way for
  *     an author to inject a URL fetch via a surprise preset.
  *   - The default fetcher enforces a 2 MiB ceiling on response
- *     bodies (`MAX_EXTENDS_BYTES` below) to cap the worst case for
+ *     bodies (`MAX_FETCH_TEXT_BYTES` in `fetch-text.ts`, shared with
+ *     the `sequence:` fetcher) to cap the worst case for
  *     an attacker-controlled server. Adopters who need larger
  *     configs pass their own `opts.fetcher` and own the size policy.
  *   - YAML is parsed with the `SAFE` schema (cf. `parse.ts`), so
@@ -111,6 +112,7 @@ import { isGroupConfig } from './discriminate.js';
 import { ConfigValidationError } from './errors.js';
 import { parseConfigText } from './parse.js';
 import { isPlainObject } from './shape.js';
+import { fetchTextCapped, FetchTextError } from './fetch-text.js';
 
 // ─────────────────────────────────────────────────────────────
 // Public surface
@@ -202,51 +204,31 @@ function normalizeResolver(
 }
 
 /**
- * Maximum size (in bytes, post-UTF-8 encoding) that the default
- * fetcher will accept from an `extends` target. Real-world shipped
- * configs sit well under 200 KiB; 2 MiB is a loose-but-bounded
- * ceiling that refuses obviously-hostile payloads (e.g. a server
- * streaming a multi-gigabyte response that the parser would
- * nevertheless try to hold in memory) while leaving room for
- * comment-heavy authoring styles.
+ * The default fetcher: `globalThis.fetch` with the shared 2 MiB ceiling
+ * (`MAX_FETCH_TEXT_BYTES` in `fetch-text.ts`). Real-world shipped configs sit
+ * well under 200 KiB, so the ceiling only refuses obviously-hostile payloads.
  *
- * This only applies to the built-in fetcher; adopters who supply
- * their own `fetcher` are on the hook for their own size discipline.
+ * This only applies to the built-in fetcher; adopters who supply their own
+ * `fetcher` are on the hook for their own size discipline.
  */
-const MAX_EXTENDS_BYTES = 2 * 1024 * 1024;
-
 async function defaultFetcher(url: string): Promise<string> {
-  const fetchImpl = (globalThis as { fetch?: typeof fetch }).fetch;
-  if (typeof fetchImpl !== 'function') {
-    throw new Error(
-      `mergeExtends: no fetch implementation available to retrieve '${url}'. Pass opts.fetcher or run in an environment with global fetch.`
-    );
+  let refused: FetchTextError;
+  try {
+    return await fetchTextCapped(url);
+  } catch (err) {
+    if (!(err instanceof FetchTextError)) throw err;
+    refused = err;
   }
-  const res = await fetchImpl(url);
-  if (!res.ok) {
-    throw new Error(
-      `mergeExtends: fetch failed for '${url}': HTTP ${res.status} ${res.statusText}.`
-    );
-  }
-  // Cheap upper-bound check before we spool the body into memory.
-  // `Content-Length` is advisory (a malicious server can lie) but
-  // rejecting the obviously-oversized case here avoids buffering a
-  // multi-gigabyte response just to throw afterwards.
-  const declared = Number(res.headers?.get?.('content-length') ?? '');
-  if (Number.isFinite(declared) && declared > MAX_EXTENDS_BYTES) {
-    throw new Error(
-      `mergeExtends: '${url}' declared Content-Length ${declared} bytes exceeds the ${MAX_EXTENDS_BYTES}-byte ceiling.`
-    );
-  }
-  const text = await res.text();
-  // Post-decode guard. UTF-8 re-expansion can inflate byte counts, so
-  // we measure the decoded string against the same ceiling.
-  if (text.length > MAX_EXTENDS_BYTES) {
-    throw new Error(
-      `mergeExtends: '${url}' response body is ${text.length} bytes, exceeding the ${MAX_EXTENDS_BYTES}-byte ceiling. Supply an explicit opts.fetcher to opt in to larger configs.`
-    );
-  }
-  return text;
+  // Re-worded here, outside the catch: the shared helper's message names the
+  // URL and the reason, and this prefix says which loader step refused it.
+  const { failure } = refused;
+  const advice =
+    failure.reason === 'no-fetch'
+      ? ' Pass opts.fetcher or run in an environment with global fetch.'
+      : failure.reason === 'too-large' && !failure.declared
+        ? ' Supply an explicit opts.fetcher to opt in to larger configs.'
+        : '';
+  throw new Error(`mergeExtends: ${refused.message}.${advice}`);
 }
 
 /**

@@ -103,6 +103,9 @@ export type AuthoredTooltipSpec =
  *   1. HTML attribute:  <protvista-uniprot accession="P05067">
  *   2. setConfig() call with `accession` in the config object
  *   3. YAML/JSON config file field
+ *
+ * A protein that isn't in UniProt is shown with `sequence:` instead of an
+ * accession, from the config only — never both (see `sequence`).
  */
 export interface ProtvistaViewerConfig {
   /** JSON Schema URI for editor tooling (VS Code autocomplete etc.). */
@@ -155,8 +158,34 @@ export interface ProtvistaViewerConfig {
    * If no accession is supplied (attribute, setConfig, or config file)
    * and the config contains `{accession}` placeholders, validation
    * fails with a clear message.
+   *
+   * Required unless `sequence` is set; the two are mutually exclusive.
    */
   accession?: string;
+
+  /**
+   * Show your own protein instead of a UniProt entry: the alternative to
+   * `accession`. One of
+   *
+   *   - raw residues: `sequence: MKTAYIAKQRQISFVKSHFSRQ`;
+   *   - inline FASTA, written as a YAML literal block (`sequence: |`, not
+   *     the folded `>`, which would join the header and residues into one
+   *     line);
+   *   - a path or URL to a one-record FASTA file: `sequence: ./protein.fasta`.
+   *     Paths resolve against the page, as data files do, and the file is
+   *     fetched when the config loads.
+   *
+   * With `sequence` set the viewer makes no request of its own — no UniProt
+   * entry, no structure panel — and renders the tracks that read your own
+   * data (file, inline or `from: custom`). A track that needs UniProt (an
+   * `{accession}` URL, an AlphaFold / AlphaMissense kind, or an
+   * `{accession}` label link) fails validation (`needs-accession`). The
+   * FASTA header, or "your sequence", is shown wherever the accession was.
+   *
+   * Setting both `accession` and `sequence` — in the config, or via the
+   * element's `accession` attribute — is an error (`accession-and-sequence`).
+   */
+  sequence?: string;
 
   /**
    * Optional map of named URL templates. Tracks reference these by

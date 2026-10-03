@@ -39,6 +39,7 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from '../schema/load.js';
+import { parseConfigText } from '../schema/parse.js';
 import { loadProtvistaData } from '../load-data.js';
 import { validateConfig } from '../schema/validate.js';
 import { createRegistry } from '../schema/registry.js';
@@ -141,11 +142,12 @@ it('discovers every shipped config', () => {
       'examples/variation-csv',
       'examples/extend-default',
       'examples/csv-styled',
+      'examples/sequence-only',
       'starter-kit/config.yaml',
       'src/default-config.yaml',
     ])
   );
-  expect(CASES.length).toBeGreaterThanOrEqual(13);
+  expect(CASES.length).toBeGreaterThanOrEqual(14);
 });
 
 function fetchersFor(root: string) {
@@ -161,6 +163,8 @@ function fetchersFor(root: string) {
       /^https?:\/\//i.test(ref)
         ? readFile(join(REPO_ROOT, 'src/default-config.yaml'), 'utf8')
         : readFile(resolveRef(ref), 'utf8'),
+    // A `sequence:` FASTA file, read from the case's own directory.
+    sequenceFetcher: async (ref: string) => readFile(resolveRef(ref), 'utf8'),
     fetchOne: async (url: string, responseType: 'json' | 'text') => {
       if (/^https?:\/\//i.test(url)) {
         return responseType === 'json' ? CANNED_FEATURES_RESPONSE : '';
@@ -196,29 +200,39 @@ function resolutionOf(config: NormalizedConfig) {
   return rows;
 }
 
+/**
+ * Load one case the way the element would. `src/default-config.yaml` declares
+ * no accession of its own — the element supplies it at mount — so every case
+ * gets the same one, and the shipped config is covered rather than skipped.
+ * Except a `sequence:` config, which shows its own protein: an accession
+ * beside it is an error, so it gets none, and its FASTA file is read from
+ * disk. Returns the accession the data load should use.
+ */
+async function loadCase(configPath: string, root: string) {
+  const text = await readFile(configPath, 'utf8');
+  const parsed = (await parseConfigText(text)) as { sequence?: unknown };
+  const sequenceMode = parsed.sequence !== undefined;
+  const { extendsFetcher, sequenceFetcher } = fetchersFor(root);
+  const config = await loadConfig(text, {
+    registry,
+    extendsFetcher,
+    sequenceFetcher,
+    ...(sequenceMode ? {} : { accession: ACCESSION }),
+  });
+  return { config, accession: sequenceMode ? '' : ACCESSION };
+}
+
 describe.each(CASES)('golden: $name', ({ configPath, root }) => {
   it('resolution (expected to change with the refactor)', async () => {
-    const { extendsFetcher } = fetchersFor(root);
-    const config = await loadConfig(await readFile(configPath, 'utf8'), {
-      registry,
-      extendsFetcher,
-      // `src/default-config.yaml` declares no accession of its own — the
-      // element supplies it at mount. Pass the same one every other case
-      // uses so the shipped config is covered rather than skipped.
-      accession: ACCESSION,
-    });
+    const { config } = await loadCase(configPath, root);
     expect(resolutionOf(config)).toMatchSnapshot();
   });
 
   it('payloads (must survive the refactor byte-identically)', async () => {
-    const { extendsFetcher, fetchOne } = fetchersFor(root);
-    const config = await loadConfig(await readFile(configPath, 'utf8'), {
-      registry,
-      extendsFetcher,
-      accession: ACCESSION,
-    });
+    const { fetchOne } = fetchersFor(root);
+    const { config, accession } = await loadCase(configPath, root);
     const { data, hasData } = await loadProtvistaData(
-      ACCESSION,
+      accession,
       config,
       fetchOne,
       (name) => registry.getAdapter(name),
