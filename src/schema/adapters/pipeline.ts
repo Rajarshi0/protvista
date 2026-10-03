@@ -30,12 +30,15 @@
 
 import type { DataFormat, ShapeName } from '../types.js';
 import { SHAPES } from '../shapes.js';
-import { DATA_FORMATS } from '../file-formats.js';
+import { DATA_FORMATS, formatForPath } from '../file-formats.js';
 import {
+  MissingHeaderColumnError,
   parseDelimited,
   rowsToFeatureRecords,
   rowsToPointRecords,
   rowsToVariationRecords,
+  suspectDelimiter,
+  type Delimiter,
   type FeatureRecord,
   type PointRecord,
 } from './dsv.js';
@@ -207,7 +210,9 @@ function fromJson(
  * The "(parsed as …)" half earns its place when the two disagree — a
  * `./readings.txt` with `format: csv`, or a `.tsv` the author overrode. It
  * states the reading the viewer chose, which is exactly what an author
- * debugging an unexpected parse error needs to see.
+ * debugging an unexpected parse error needs to see. When a header fails
+ * because the file seems to use another delimiter, `runPipeline` appends a
+ * hint after the message (see {@link delimiterHint}).
  */
 export function sourceLabel(
   source: string | undefined,
@@ -215,6 +220,47 @@ export function sourceLabel(
 ): string {
   const what = source === undefined || source === '' ? 'inline data' : source;
   return `${what} (parsed as ${format.toUpperCase()})`;
+}
+
+/**
+ * The sentence appended to a missing-column error whose header seems to use
+ * `suspected` rather than the delimiter `declared` implies.
+ *
+ * `format:` is always the first remedy: an explicit `format:` wins over the
+ * extension, so it is the one fix that works for every source. Renaming is
+ * offered as well only when the source is a path whose extension implies the
+ * format it was read as — then the extension chose the reading, and a new
+ * one changes it. Inline data and extensionless URLs get `format:` alone.
+ *
+ * No `format:` value reads semicolons, so that hint points at Excel's
+ * locale-independent "Text (Tab delimited)" export instead; its "CSV" export
+ * uses the locale's list separator and would write semicolons again.
+ */
+function delimiterHint(
+  suspected: Delimiter,
+  declared: DataFormat,
+  source: string | undefined
+): string {
+  const renamable =
+    source !== undefined &&
+    source !== '' &&
+    formatForPath(source)?.name === declared;
+  if (suspected === ';') {
+    const how = renamable
+      ? 'a .tsv name or `format: tsv` — Excel names that export .txt'
+      : '`format: tsv`';
+    return (
+      'The header looks semicolon-separated, which ProtVista does not read. ' +
+      'If it came from Excel, save it as "Text (Tab delimited)" and read it ' +
+      `as TSV (${how}), or re-export it comma-separated.`
+    );
+  }
+  const [name, format] = suspected === '\t' ? ['tab', 'tsv'] : ['comma', 'csv'];
+  const rename = renamable ? ` (or rename the file to .${format})` : '';
+  return (
+    `The header looks ${name}-separated — read it as ` +
+    `${format.toUpperCase()}: set \`format: ${format}\`${rename}.`
+  );
 }
 
 export interface PipelineOptions {
@@ -246,7 +292,10 @@ export interface PipelineOptions {
  *
  * Throws `ShapeFormatMismatchError` when the format cannot produce the
  * shape's records, and the decoder's own row/column-named error when the
- * bytes are malformed.
+ * bytes are malformed. A delimited header missing a required column throws
+ * `MissingHeaderColumnError`; when the header looks like it uses another
+ * delimiter, the message gains a one-line hint naming it and the fix. The
+ * delimiter itself is never switched — only the message changes.
  */
 export function runPipeline(
   shape: ShapeName,
@@ -283,14 +332,27 @@ export function runPipeline(
       );
       return wrap(shape, []);
     }
-    const records = fromDelimited(
-      shape,
-      body,
-      delimiter,
-      formatLabel,
-      rowNumbers,
-      opts.warnings
-    );
+    let records: unknown[];
+    try {
+      records = fromDelimited(
+        shape,
+        body,
+        delimiter,
+        formatLabel,
+        rowNumbers,
+        opts.warnings
+      );
+    } catch (err) {
+      if (!(err instanceof MissingHeaderColumnError)) throw err;
+      const suspected = suspectDelimiter(body, delimiter, err.required);
+      if (suspected === undefined) throw err;
+      throw new MissingHeaderColumnError(
+        `${err.message} ${delimiterHint(suspected, format, opts.source)}`,
+        err.column,
+        err.required,
+        suspected
+      );
+    }
     collect(records);
     return wrap(shape, records);
   }

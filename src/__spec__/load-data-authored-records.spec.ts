@@ -259,6 +259,21 @@ describe('inline text is read the way its format says', () => {
     expect(trackFailures['G-t'].message).toMatch(/inline data \(parsed as CSV\)/);
   });
 
+  it('diagnoses inline semicolon text read as CSV instead of a missing column', async () => {
+    const { data, trackFailures } = await load(
+      inlineText(
+        'features',
+        'type;start;end;description\nDOMAIN;1;9;kinase\n',
+        'csv'
+      )
+    );
+    expect(data['G-t']).toBeUndefined();
+    expect(trackFailures['G-t'].severity).toBe('error');
+    expect(trackFailures['G-t'].message).toMatch(
+      /^inline data \(parsed as CSV\): missing required header column "type".*semicolon-separated/
+    );
+  });
+
   it('reads a structured payload as records even under a text format', async () => {
     // `setTrackData()` with the published record contract keeps working on a
     // descriptor that also declares a text format — the payload is already

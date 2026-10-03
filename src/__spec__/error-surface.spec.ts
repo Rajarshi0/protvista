@@ -795,6 +795,45 @@ describe('parse / adapter failures on screen', () => {
     expect(el._trackErrors.get('g-hits')!.message).toBe(detail);
   });
 
+  it('shows a delimiter hint on the badge and the event for a semicolon CSV', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([
+      [
+        '/hits.csv',
+        {
+          ok: true,
+          status: 200,
+          body: 'type;start;end;description\nDOMAIN;10;25;Kinase domain',
+        },
+      ],
+    ]);
+    const events: ErrorEvent[] = [];
+
+    const el = buildLoaded(normConfig([fileTrack('hits', './hits.csv')]), {
+      openGroups: ['g'],
+    });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    const detail = target.querySelector(`[id="${descId}"]`)!.textContent!;
+    expect(detail).toMatch(
+      /missing required header column "type".*semicolon-separated/
+    );
+
+    // The hint is part of the decoder's message, so it reaches the event
+    // verbatim through the existing route — nothing reports it separately.
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf.detail.message).toBe(detail);
+    expect(tf.detail.context.errorKind).toBe('adapter');
+    expect(tf.detail.source).toBe('./hits.csv');
+    expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
+  });
+
   it('offers no Retry for a parse failure (re-running is deterministic)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);

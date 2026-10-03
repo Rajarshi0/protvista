@@ -261,3 +261,33 @@ describe('loadProtvistaData — from: file (features-json)', () => {
     );
   });
 });
+
+describe('loadProtvistaData — from: file (delimiter mismatch)', () => {
+  it('renders a tab file named .csv empty, naming the delimiter and the fix', async () => {
+    const config = await loadConfig({
+      rows: [
+        {
+          id: 'MY',
+          tracks: [{ id: 'hits', kind: 'features', data: './hits.csv' }],
+        },
+      ],
+    });
+    const fetchOne = vi.fn(
+      async () => 'type\tstart\tend\tdescription\nDOMAIN\t5\t9000\tKinase\n'
+    );
+    const result = await loadProtvistaData(
+      'P05067',
+      config,
+      fetchOne,
+      resolveAdapter
+    );
+    expect(result.data['MY-hits']).toBeUndefined();
+    // The header fails before any row is decoded, so no coordinates are
+    // collected for the bounds check either.
+    expect(result.trackCoordinates['MY-hits']).toBeUndefined();
+    const { message } = result.trackFailures['MY-hits'];
+    expect(message).toContain('./hits.csv (parsed as CSV)');
+    expect(message).toContain('tab-separated');
+    expect(message).toContain('`format: tsv`');
+  });
+});

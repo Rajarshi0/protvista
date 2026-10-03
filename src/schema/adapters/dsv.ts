@@ -21,6 +21,11 @@
  *     share no columns and nothing but the validation grammar.
  *   - `parseDecimal()` is the shared strict-number validator, reused by
  *     `bed` for its `score` column so the number grammars can't drift.
+ *   - `suspectDelimiter()` diagnoses a header that fails the required-columns
+ *     check because the file uses a different delimiter from the one its
+ *     format implies. It is diagnosis only: the format alone picks the
+ *     delimiter (`DELIMITERS` in `./pipeline`), and nothing here ever
+ *     re-reads a file with another one.
  *
  * We deliberately hand-roll the tokenizer rather than pull in
  * `d3-dsv`/`papaparse`: it is small and stable, the shipped web-component
@@ -66,6 +71,30 @@ export type AuthoredFeatureRecord = FeatureRecord & {
   opacity?: number;
   [field: string]: unknown;
 };
+
+/** A delimiter a header may turn out to use, for {@link suspectDelimiter}. */
+export type Delimiter = ',' | '\t' | ';';
+
+/**
+ * Raised when a delimited header lacks a column its shape requires.
+ *
+ * Typed so `runPipeline` can recognise this one failure — and only this one —
+ * and append a delimiter hint without matching on message text. `required`
+ * is the shape's full required list; `suspectedDelimiter` is set only on the
+ * hinted rethrow, never by the builders that raise it first.
+ */
+export class MissingHeaderColumnError extends Error {
+  constructor(
+    message: string,
+    public readonly column: string,
+    public readonly required: readonly string[],
+    public readonly suspectedDelimiter?: Delimiter
+  ) {
+    super(message);
+    this.name = 'MissingHeaderColumnError';
+    Object.setPrototypeOf(this, MissingHeaderColumnError.prototype);
+  }
+}
 
 /**
  * Tokenize delimited text into rows of string fields per RFC 4180.
@@ -147,6 +176,56 @@ export function parseDelimited(text: string, delimiter: string): string[][] {
   }
 
   return rows;
+}
+
+const CANDIDATE_DELIMITERS: readonly Delimiter[] = [',', '\t', ';'];
+
+/**
+ * The delimiter `text`'s header seems to use instead of `used`, or
+ * `undefined` when nothing points to a mismatch.
+ *
+ * Called only after a header has failed the required-columns check. Each
+ * other candidate (comma, tab, semicolon) re-tokenises the header through
+ * {@link parseDelimited}, so quoting rules hold — Excel's
+ * `"type";"start";…` splits cleanly under `;`. A candidate qualifies when
+ * either:
+ *
+ *   (a) its header contains every `required` column; or
+ *   (b) `used` read the header as a single cell and the candidate splits it
+ *       into two or more. A one-cell header that another delimiter splits is
+ *       near-conclusive, and this is what catches `Type;Start;End;Description`,
+ *       which (a) misses on case.
+ *
+ * A candidate passing (a) wins, then the one giving more cells, then
+ * candidate order. A genuinely missing column under the right delimiter
+ * qualifies no candidate, so it never gets a misleading hint.
+ */
+export function suspectDelimiter(
+  text: string,
+  used: string,
+  required: readonly string[]
+): Delimiter | undefined {
+  const headerOf = (delimiter: string) =>
+    (parseDelimited(text, delimiter)[0] ?? []).map((cell) => cell.trim());
+  const declaredCells = headerOf(used).length;
+
+  let best:
+    { delimiter: Delimiter; complete: boolean; cells: number } | undefined;
+  for (const delimiter of CANDIDATE_DELIMITERS) {
+    if (delimiter === used) continue;
+    const header = headerOf(delimiter);
+    const complete = required.every((col) => header.includes(col));
+    const splits = declaredCells === 1 && header.length >= 2;
+    if (!complete && !splits) continue;
+    if (
+      best === undefined ||
+      (complete && !best.complete) ||
+      (complete === best.complete && header.length > best.cells)
+    ) {
+      best = { delimiter, complete, cells: header.length };
+    }
+  }
+  return best?.delimiter;
 }
 
 /**
@@ -234,6 +313,10 @@ function wholeNumber(
  * — so the author sees which row and column to fix without opening the
  * console.
  *
+ * A missing required column throws {@link MissingHeaderColumnError}, which
+ * `runPipeline` extends with a delimiter hint when the header looks like it
+ * uses a different delimiter (see {@link suspectDelimiter}).
+ *
  * Every other column is kept on the record, keyed by its trimmed header
  * name, in header order after the canonical fields (`./feature-fields` has
  * the rule):
@@ -289,9 +372,11 @@ export function rowsToFeatureRecords(
 
   for (const col of REQUIRED_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain type, start, end, description[, score].`
+          `Header must contain type, start, end, description[, score].`,
+        col,
+        REQUIRED_COLUMNS
       );
     }
   }
@@ -503,9 +588,11 @@ export function rowsToPointRecords(
 
   for (const col of POINT_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain position, value.`
+          `Header must contain position, value.`,
+        col,
+        POINT_COLUMNS
       );
     }
   }
@@ -619,9 +706,11 @@ export function rowsToVariationRecords(
 
   for (const col of VARIATION_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain ${VARIATION_COLUMNS.join(', ')}.`
+          `Header must contain ${VARIATION_COLUMNS.join(', ')}.`,
+        col,
+        VARIATION_COLUMNS
       );
     }
   }
