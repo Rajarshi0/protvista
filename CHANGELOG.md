@@ -103,6 +103,47 @@ diagnostics, naming your file. Dropping a file on the editor no longer pastes
 its text into the config, and dropping one elsewhere on the page no longer
 navigates away.
 
+### Added: view a protein that isn't in UniProt (`sequence:`)
+
+A config can set `sequence:` instead of `accession:` to show a predicted
+protein, a construct or any other protein with no UniProt entry. It takes raw
+residues, inline FASTA (a YAML `sequence: |` block) or a path or URL to a
+one-record FASTA file, fetched relative to the page when the config loads:
+
+```yaml
+sequence: ./my-protein.fasta
+rows:
+  - id: hotspots
+    kind: features
+    data: ./hotspots.csv
+```
+
+The viewer then draws the navigation, the sequence and every track that reads
+your own data (file, inline or `from: custom`), and makes no request of its
+own — no UniProt entry, no structure panel — so it also works offline. The
+FASTA header, or "your sequence", appears wherever the accession did, and the
+authored-coordinate check names it. A track that needs UniProt — an
+`{accession}` data URL, an AlphaFold or AlphaMissense kind, an `{accession}`
+label link — fails validation by name (`needs-accession`), as do both or
+neither of `accession:` / `sequence:` (`accession-and-sequence`,
+`missing-protein`), a multi-record or malformed sequence (`invalid-sequence`)
+and a FASTA file that can't be fetched (`cannot-resolve-sequence`). Each is a
+`phase: 'config'` error in the panel and on the `protvista-error` event. The
+playground disables its accession box for such a config. Accession-mode
+configs are unchanged. See
+[Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
+
+### Fixed: a config with no accession now reports `missing-protein` instead of mounting blank
+
+An element with neither an accession (attribute or config) nor a `sequence:`
+used to render nothing at all, with no message, unless its config happened to
+use `{accession}` (then it reported `missing-accession`). It now shows the
+config panel with one issue, `missing-protein`, and fires a `phase: 'config'`
+error; `missing-protein` replaces `missing-accession` in that case. An
+embedder that sets the `accession` attribute only after the element has
+mounted should hold the load with `suspend` until then, which was already the
+supported path.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

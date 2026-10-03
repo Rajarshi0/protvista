@@ -90,9 +90,11 @@ The samples all use [`P05067`](https://www.uniprot.org/uniprotkb/P05067) — amy
 
 For TSV, JSON and BED files, and for embedding data directly in the config, see [Load your own data](https://ebi-webcomponents.github.io/protvista/your-data).
 
-## This kit needs internet access
+## This kit needs internet access — unless you use `sequence:`
 
-Even with all your data in local files. The viewer is built around a UniProt accession and fetches that protein's sequence before it draws anything, so there is always one network request. It is not an offline tool.
+As shipped, yes, even with all your data in local files. The config is built around a UniProt accession, and the viewer fetches that protein's sequence before it draws anything, so there is always one network request.
+
+If your protein isn't in UniProt — or the page must not reach the internet — replace `accession:` with `sequence:` and give the viewer the protein itself: a FASTA file in `data/` (`sequence: ./data/my-protein.fasta`) or the residues written into the config. The viewer then makes no request of its own; only your own files are loaded, from the same folder as the page. The component itself still comes from the CDN unless you host it too. See [Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
 
 ## When something doesn't show up
 

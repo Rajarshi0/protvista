@@ -47,6 +47,7 @@ here surfaces immediately rather than silently:
 | [`bed/`](./bed) | Bring-your-own BED file — the one format that fixes its own records (feature records only) |
 | [`variation-csv/`](./variation-csv) | Your own variants on `kind: variants` — the same kind the UniProt viewer uses, reading a `position,variant` CSV instead of the variation API |
 | [`extend-default/`](./extend-default) | `extends:` the shipped canonical UniProt config and layers one custom CSV-backed track on top |
+| [`sequence-only/`](./sequence-only) | A protein that isn't in UniProt: `sequence: ./protein.fasta` instead of an accession, with a CSV track on top. The viewer makes no request of its own |
 
 Which records each `kind` reads, and which encodings can carry them, are
 documented in the "Shape and format" section of
@@ -59,23 +60,26 @@ The full config schema is documented in
 [`specs/config-approach.md`](../specs/config-approach.md), which is
 the normative source these examples are drawn from.
 
-## Why every example declares `accession: P05067`
+## Why the examples declare `accession: P05067`
 
-`<protvista-uniprot>` gates its entire load pipeline — including
-purely local or inline track data — behind a truthy `accession`
-(the element fetches the sequence for the accession before loading
-any track). Without an `accession`, even a fully-offline example like
-`inline-data/` would render nothing when mounted standalone. Every
-example here bakes in `P05067` (Amyloid precursor protein — the
-reference accession used across this repo's test suite) purely so it
-is genuinely runnable on its own.
+`<protvista-uniprot>` needs a protein: an `accession` for a UniProt entry,
+or a `sequence:` for one of your own. With an accession, the element fetches
+that entry's sequence before loading any track — including purely local or
+inline track data. Every example except `sequence-only/` bakes in `P05067`
+(Amyloid precursor protein — the reference accession used across this
+repo's test suite) so it is genuinely runnable on its own, and so its tracks
+sit on a real UniProt sequence.
 
-One consequence worth knowing: because of this, mounting even the
-"offline" examples (`inline-data/`, `csv/`, `tsv/`, `json/`, `bed/`)
-for real still performs one network call — the element's top-level
-sequence fetch for `P05067` — even though their own track data never
-touches the network. This is an existing architectural characteristic
-of the element, not something specific to these examples.
+One consequence worth knowing: mounting even the "offline" examples
+(`inline-data/`, `csv/`, `tsv/`, `json/`, `bed/`) for real still performs
+one network call — the element's top-level sequence fetch for `P05067` —
+even though their own track data never touches the network.
+
+[`sequence-only/`](./sequence-only) is the no-network example: its
+`sequence: ./protein.fasta` gives the viewer the protein itself, so it makes
+no request of its own — no UniProt entry, no structure panel — and fetches
+only its own two files. See
+[Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
 
 ## Running an example
 
