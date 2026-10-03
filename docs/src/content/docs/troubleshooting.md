@@ -49,10 +49,10 @@ viewer.addEventListener('protvista-error', (event) => {
 | `phase` | Fires when | Useful `context` |
 | --- | --- | --- |
 | `config` | The config fails to parse or validate, or it loads with warnings. `detail.severity` says which. `detail.issues` lists what's wrong when the validator raised it, and a warning's issue has `severity: 'warning'`; a warning raised after validation (an unresolvable `theme:` colour, a component with no renderer) has empty `issues`. | — |
-| `sequence` | No usable sequence was found for the accession. | `accession`, plus (on a fetch failure) `errorKind` / `status` / `url` |
+| `sequence` | No usable sequence was found for the accession. Never fires for a [`sequence:`](/protvista/sequence-only) config, which fetches no entry; a problem with its sequence is a `config` error. | `accession`, plus (on a fetch failure) `errorKind` / `status` / `url` |
 | `track-fetch` | A track's data failed in a way that breaks it — a network error, a 5xx response, an unparseable body, a malformed file the decoder rejected, a 4xx on a path or URL to your own data, or a payload the track could not draw. A 4xx from a *provider endpoint* is treated as "missing, not broken" and does *not* fire this event. | `groupId`, `trackId`, `url`, `status`, `errorKind` |
 | `set-track-data` | Misuse of the `setTrackData()` programmatic API. | `groupId`, `trackId` |
-| `track-data` | A bring-your-own-data track loaded and renders as written, but something in its data is worth knowing: rows whose coordinates fall outside the entry's sequence — a start below 1, or a position past the last residue — or, for a feature file, columns that were ignored (`tooltipContent`, `locations`, `residuesToHighlight`, names like `toString`), `shape` values that were ignored because they name a JavaScript built-in (`valueOf`, `constructor`, …), or `color` / `fill` values the canvas cannot paint. `detail.issues` holds one issue with `severity: 'warning'` and `code` set to `coordinate-out-of-range`, `data-field-ignored` or `unpaintable-color`. | `groupId`, `trackId`, `url` (file and URL tracks) |
+| `track-data` | A bring-your-own-data track loaded and renders as written, but something in its data is worth knowing: rows whose coordinates fall outside the protein's sequence (the UniProt entry's, or your `sequence:`) — a start below 1, or a position past the last residue — or, for a feature file, columns that were ignored (`tooltipContent`, `locations`, `residuesToHighlight`, names like `toString`), `shape` values that were ignored because they name a JavaScript built-in (`valueOf`, `constructor`, …), or `color` / `fill` values the canvas cannot paint. `detail.issues` holds one issue with `severity: 'warning'` and `code` set to `coordinate-out-of-range`, `data-field-ignored` or `unpaintable-color`. | `groupId`, `trackId`, `url` (file and URL tracks) |
 | `tooltip-field-miss` | A track's authored `dataTooltip` references a field that none of the track's records carries, so that part of every tooltip is blank. The track still renders. Fires once per track per load, listing every such field. `detail.issues` holds one issue with `code: 'tooltip-field-miss'` and `severity: 'warning'`. | `groupId`, `trackId`, `fields` |
 
 ### Where a failure shows up
@@ -141,13 +141,16 @@ Every field is optional; the reporter fills in what's relevant to the phase.
 
 ### Nothing renders at all
 
-The viewer gates its whole pipeline on a truthy `accession`, and fetches that
-sequence first. If `accession` is missing or wrong, even fully local data won't
-show. Set a valid `accession` (e.g. `P05067`).
+The viewer needs a protein: an `accession` (the attribute, or `accession:` in
+the config) for a UniProt entry, or a [`sequence:`](/protvista/sequence-only)
+for your own. With neither, it shows the config panel with one issue,
+`missing-protein`: "Nothing to show: set 'accession:' (a UniProt entry) or
+'sequence:' (your own protein), or the element's accession attribute." Set one
+of them. A wrong accession shows the "No UniProt entry found" panel instead.
 
-While that first load is in flight you see a spinner, and screen readers hear
+While the first load is in flight you see a spinner, and screen readers hear
 "Loading protein data…" — so a region that stays *blank* is not a slow load.
-Check that `accession` is set, and that `suspend` is not still on the element.
+Check that `suspend` is not still on the element.
 
 ### A track shows up empty
 
@@ -250,6 +253,10 @@ A `track-data` warning reads like this:
 ./hits.csv (parsed as CSV): 12 of 340 rows fall outside P05067 (770 residues); first: row 7, end 812. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.
 ```
 
+With a [`sequence:`](/protvista/sequence-only) config the check runs against
+your sequence, and the message names its FASTA header (or "your sequence")
+where the accession would be: `… fall outside my construct v2 (240 residues) …`.
+
 ### Features are all black, or show a ?
 
 A feature whose `type` ProtVista doesn't recognise — `HOTSPOT`, or `BED` for
@@ -266,6 +273,24 @@ your config as you write it in the [playground](/protvista/playground/) (and
 check your data files there with **Load data file…**), or point
 your editor at the schema for inline checking — see
 [Author a config](/protvista/configure#editor-autocomplete).
+
+### "needs UniProt data", or "both 'accession:' and 'sequence:'"
+
+These come from a [`sequence:`](/protvista/sequence-only) config, which shows
+your own protein with no UniProt entry behind it.
+
+- `needs-accession` — a track can't work without a UniProt entry: a data URL
+  with `{accession}`, an AlphaFold or AlphaMissense kind, or a label that links
+  to an `{accession}` URL. Point the track at your own file, inline data or a
+  `from: custom` source, or remove it. A config that `extends:` the UniProt
+  default gets one of these per inherited track, plus a summary: start from a
+  blank config instead.
+- `accession-and-sequence` — the config sets both, or the element's
+  `accession` attribute is set on a `sequence:` config. Keep one.
+- `invalid-sequence` / `cannot-resolve-sequence` — the sequence itself is not
+  one protein (several FASTA records, a character outside A–Z, no residues),
+  or the FASTA file could not be fetched. The message names the file and,
+  for a bad residue, its position.
 
 ### A URL track fails to load
 

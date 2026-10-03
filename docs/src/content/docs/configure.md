@@ -41,8 +41,31 @@ directory.
 
 ### `accession`
 
-The protein to display. Required — the viewer fetches the sequence for this
-accession before loading any track, even for fully local data.
+The UniProt entry to display. Required unless [`sequence`](#sequence) is set —
+the viewer fetches the sequence for this accession before loading any track.
+Set one or the other, never both. With neither, the viewer shows a
+`missing-protein` error instead of mounting blank.
+
+### `sequence`
+
+Your own protein, for one that isn't in UniProt: use it instead of
+`accession`. It takes raw residues, inline FASTA, or a path or URL to a
+one-record FASTA file:
+
+```yaml
+sequence: ./my-protein.fasta   # fetched relative to the page, like data files
+```
+
+```yaml
+sequence: |                    # `|`, not `>`: `>` folds the lines into one
+  >my construct v2
+  MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQ
+```
+
+The viewer then makes no request of its own (no UniProt entry, no structure
+panel) and shows the FASTA header wherever it would show the accession. Only
+tracks that read your own data work; see
+[Proteins outside UniProt](/protvista/sequence-only).
 
 ### `sources`
 

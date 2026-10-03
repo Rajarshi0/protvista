@@ -23,6 +23,9 @@ Kinds named for a provider — `alphafold-confidence`,
 `alphamissense-pathogenicity`, `alphamissense-heatmap` — read that provider's
 feed only; see [Built-in track kinds](/protvista/track-kinds).
 
+Your protein isn't in UniProt? Give the config a `sequence:` instead of an
+`accession:` — see [Proteins outside UniProt](/protvista/sequence-only).
+
 ## The feature record
 
 A `features` track draws a list of **feature records**. Each record has:
@@ -414,7 +417,8 @@ The same records work as `.tsv`, or as `.json` with one object per change:
 
 Your file doesn't carry the protein sequence — the viewer already fetched it for
 `accession:` and supplies it, which is what lets the track lay out one row per
-residue.
+residue. With a [`sequence:`](/protvista/sequence-only) config, the residues
+come from your `sequence:` instead.
 
 `kind: rna-editing` reads exactly the same shape.
 
@@ -476,6 +480,7 @@ name it on the track. See [Escape hatches](/protvista/escape-hatches).
 - [Configuration vs data](/protvista/configuration-vs-data) — the boundary this page sits on.
 - [Adapter reference](/protvista/adapter-reference) — exact payload shapes.
 - [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) — what each `type` looks like, and every `shape`.
+- [Proteins outside UniProt](/protvista/sequence-only) — your own sequence instead of an accession.
 - [Troubleshoot errors](/protvista/troubleshooting) — when a track won't load.
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._
