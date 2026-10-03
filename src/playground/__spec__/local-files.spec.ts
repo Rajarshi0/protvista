@@ -27,6 +27,7 @@ import {
   type RuntimeDetail,
 } from '../local-files.js';
 import type { DataFormat } from '../../schema/types.js';
+import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../../schema/file-formats.js';
 
 // Wrap the real pipeline in a spy, so memoisation can be counted.
 vi.mock('../../schema/adapters/pipeline.js', async (importOriginal) => {
@@ -286,6 +287,17 @@ describe('findLocalReferences / withLocalFiles', () => {
     ) as ReturnType<typeof standalone>;
     expect(out.rows[0].data).toEqual({ url: f.url, format: 'tsv' });
   });
+
+  it('reads a shorthand by its extension, whatever the file was loaded as', () => {
+    // The normaliser and the pre-flight read `./a/hits.csv` as CSV; the
+    // preview must too, or it would disagree with the config it was given.
+    const { store } = makeStore();
+    const f = load(store, './a/hits.csv', 'type\tstart\tend', 'tsv');
+    const out = withLocalFiles(standalone('./a/hits.csv'), store) as ReturnType<
+      typeof standalone
+    >;
+    expect(out.rows[0].data).toEqual({ url: f.url, format: 'csv' });
+  });
 });
 
 describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
@@ -297,6 +309,13 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     expect(guessShape('{not json', 'json')).toBe('feature');
     expect(guessShape('[]', 'json')).toBe('feature');
     expect(guessShape('chr1\t1\t2', 'bed')).toBe('feature');
+  });
+
+  it('gives a format that declares its records that shape, whatever its columns', () => {
+    for (const name of DATA_FORMAT_NAMES) {
+      const emits = DATA_FORMATS[name].emitsShape;
+      if (emits) expect(guessShape('position,value\n1,2', name)).toBe(emits);
+    }
   });
 
   it('counts records in each built payload', () => {

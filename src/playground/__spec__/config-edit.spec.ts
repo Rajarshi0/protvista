@@ -117,6 +117,17 @@ describe('appendTrack', () => {
     ]);
   });
 
+  it('returns a snippet, not a config of only the new row, for JSON that does not parse', async () => {
+    const text =
+      '{"accession":"P05067","rows":[{"id":"a","kind":"features","data":"./a.csv",}]}';
+    await expect(parse(text)).rejects.toThrow();
+    const result = await appendTrack(text, undefined, ROW);
+    expect(result).toEqual({
+      error: expect.stringContaining("doesn't parse") as unknown,
+      snippet: JSON.stringify(ROW, null, 2),
+    });
+  });
+
   it('refuses a config that is not a mapping, or whose rows is not a list', async () => {
     expect(await appendTrack('- a', ['a'], ROW)).toMatchObject({
       error: expect.any(String),

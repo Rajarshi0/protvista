@@ -119,6 +119,17 @@ async function addAsNewTrack(): Promise<void> {
   await userEvent.tab(); // → Add
   expect(document.activeElement?.textContent).toBe('Add');
   await userEvent.keyboard('{Enter}');
+  // The form is gone; focus is back on the button that opened it.
+  expect(byId('data-attach').hidden).toBe(true);
+  expect(document.activeElement).toBe(byId('load-data'));
+}
+
+/** Replace the whole editor text, as typing or pasting would. */
+function setEditorText(text: string): void {
+  const view = editorView();
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+  });
 }
 
 /** A drag carrying one file, as the browser builds it. */
@@ -213,6 +224,8 @@ describe('playground: load a local data file', () => {
     const warned = nextError((d) => d.phase === 'track-data');
     const before = editorText();
     await pick('hits.csv', OUT_OF_RANGE);
+    // The input was reset, so picking the same file again fires `change`.
+    expect(byId<HTMLInputElement>('data-file').value).toBe('');
     // Same name, same reference: replaced in place, no form, no edit.
     expect(byId('data-attach').hidden).toBe(true);
     await warned;
@@ -326,5 +339,100 @@ describe('playground: load a local data file', () => {
       ).toBe(true)
     );
     expect(byId('preview-stale').hidden).toBe(false);
+  });
+
+  it('answers a Starter Kit path with the same file name, with no form and no edit', async () => {
+    const kit = `accession: P05067
+rows:
+  - id: kit
+    kind: features
+    data: ./data/hits.csv
+`;
+    setEditorText(kit);
+    await pick('hits.csv', GOOD);
+    expect(byId('data-attach').hidden).toBe(true);
+
+    await vi.waitFor(() =>
+      expect(byId('data-status').textContent).toMatch(
+        /Loaded hits\.csv as \.\/data\/hits\.csv\. 2 records/
+      )
+    );
+    expect(editorText()).toBe(kit);
+    await vi.waitFor(() =>
+      expect((preview()?.data?.['kit-kit'] as unknown[])?.length).toBe(2)
+    );
+    expect(
+      listItems().some((li) => li.dataset.code === 'local-file-missing')
+    ).toBe(false);
+  });
+
+  it('writes the chosen format into the config for an extension that says nothing', async () => {
+    await pick('x.txt', GOOD);
+    const format = await vi.waitFor(() => {
+      const select = byId<HTMLSelectElement>('data-attach-format');
+      if (!select) throw new Error('attach form not open');
+      return select;
+    });
+    await userEvent.selectOptions(format, 'csv');
+    byId('data-attach-target').focus();
+    await addAsNewTrack();
+
+    await vi.waitFor(() => expect(editorText()).toContain('url: ./x.txt'));
+    expect(editorText()).toContain('format: csv');
+    await vi.waitFor(() =>
+      expect((preview()?.data?.['x-x'] as unknown[])?.length).toBe(2)
+    );
+  });
+
+  it('writes a format chosen for a named path into the config, so the share link reads it the same', async () => {
+    const twoPaths = `accession: P05067
+rows:
+  - id: a
+    kind: features
+    data: ./a/hits.csv
+  - id: b
+    kind: features
+    data: ./b/hits.csv
+`;
+    setEditorText(twoPaths);
+    // Two paths name hits.csv: the form asks, preselecting the first.
+    await pick('hits.csv', GOOD.replaceAll(',', '\t'));
+    const target = await vi.waitFor(() => {
+      const select = byId<HTMLSelectElement>('data-attach-target');
+      if (!select) throw new Error('attach form not open');
+      return select;
+    });
+    expect(target.value).toBe('a');
+    await userEvent.selectOptions(byId('data-attach-format'), 'tsv');
+    target.focus();
+    await userEvent.tab(); // → Add
+    await userEvent.keyboard('{Enter}');
+
+    await vi.waitFor(() =>
+      expect(editorText()).toContain('data: { url: ./a/hits.csv, format: tsv }')
+    );
+    expect(editorText()).toContain('data: ./b/hits.csv');
+    await vi.waitFor(() =>
+      expect((preview()?.data?.['a-a'] as unknown[])?.length).toBe(2)
+    );
+    expect(
+      document.querySelector('#errors li[data-code="data-parse"]')
+    ).toBeNull();
+  });
+
+  it('gives a different file whose name sanitises the same a reference of its own', async () => {
+    await pick('a(b.csv', GOOD);
+    await addAsNewTrack();
+    await vi.waitFor(() => expect(editorText()).toContain('data: ./a-b.csv'));
+
+    // `a b.csv` also sanitises to `a-b.csv`, but that reference is taken by
+    // another file: it must not silently replace it.
+    await pick('a b.csv', GOOD);
+    await addAsNewTrack();
+    await vi.waitFor(() => expect(editorText()).toContain('data: ./a-b-2.csv'));
+    expect(editorText()).toContain('data: ./a-b.csv');
+    const listed = byId('data-files').textContent ?? '';
+    expect(listed).toContain('a(b.csv as ./a-b.csv');
+    expect(listed).toContain('a b.csv as ./a-b-2.csv');
   });
 });

@@ -279,7 +279,9 @@ export function createLocalDataControl(
         cancelOpen = undefined;
         panel.hidden = true;
         panel.replaceChildren();
-        if (!choice) button.focus();
+        // Whatever closed it, the focused control is gone: return focus to
+        // the button that opened the form, not to <body>.
+        button.focus();
         resolve(choice);
       };
       form.addEventListener('submit', (event) => {

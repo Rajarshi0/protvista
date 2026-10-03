@@ -34,6 +34,7 @@ import {
   relabelRuntime,
   sanitiseName,
   withLocalFiles,
+  type LocalDataResult,
   type RuntimeDetail,
 } from './local-files.js';
 import {
@@ -45,10 +46,9 @@ import {
   type DataValue,
   type EditResult,
 } from './config-edit.js';
-import {
-  createLocalDataControl,
-  type ReadFile,
-} from './local-data-control.js';
+import { createLocalDataControl, type ReadFile } from './local-data-control.js';
+import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../schema/file-formats.js';
+import type { DataFormat } from '../schema/types.js';
 import {
   PRESETS,
   DEV_PRESETS,
@@ -107,7 +107,7 @@ let lastRendered: { text: string; accession: string; files: number } | null =
  */
 let preflightFailed: ReadonlySet<string> = new Set();
 /** The latest validation's pre-flight of the loaded files, if it ran. */
-let lastLocal: Awaited<ReturnType<typeof localDataDiagnostics>> | undefined;
+let lastLocal: LocalDataResult | undefined;
 
 /** Files the user loaded — read in this browser, never uploaded. */
 const store = createLocalFileStore();
@@ -262,13 +262,18 @@ type ValidateResult = {
   files: number;
 } | null;
 
+/** A data-file extension (from the format table) or a `format:` anywhere. */
+const LOCAL_FILE_HINT = new RegExp(
+  `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b|\\bformat:`,
+  'i'
+);
+
 /**
- * Whether the text could name a local data file: a data-file extension or a
- * `format:` anywhere. A cheap test, so the default config is not parsed a
- * second time on every keystroke when nothing is loaded.
+ * Whether the text could name a local data file. A cheap test, so the
+ * default config is not parsed a second time on every keystroke when nothing
+ * is loaded.
  */
-const mayNameLocalFile = (text: string): boolean =>
-  /\.(?:csv|tsv|json|bed)\b|\bformat:/i.test(text);
+const mayNameLocalFile = (text: string): boolean => LOCAL_FILE_HINT.test(text);
 
 /**
  * Shared validation step for both pipeline entry points: cancel any
@@ -295,7 +300,7 @@ async function validateCurrent(): Promise<ValidateResult> {
   const valid = !configDiagnostics.some((d) => d.severity === 'error');
 
   let parsed: unknown;
-  let local: Awaited<ReturnType<typeof localDataDiagnostics>> | undefined;
+  let local: LocalDataResult | undefined;
   if (valid && (store.list().length > 0 || mayNameLocalFile(text))) {
     try {
       parsed = await parseConfigText(text);
@@ -419,11 +424,7 @@ async function parseEditor(): Promise<unknown> {
   }
 }
 
-function registerFile(
-  file: ReadFile,
-  ref: string,
-  format: NonNullable<ReturnType<typeof inferFormat>>
-): void {
+function registerFile(file: ReadFile, ref: string, format: DataFormat): void {
   store.register({
     ref,
     name: file.name,
@@ -443,7 +444,11 @@ async function runWithFile(
   const result = await run();
   const as = ref === `./${file.name}` ? '' : ` as ${ref}`;
   let outcome: string;
-  if (!result || !result.valid) {
+  if (!result) {
+    // A newer validation (an edit made meanwhile) superseded this run, and
+    // the preview was not re-rendered.
+    outcome = 'Press Run to see it in the preview.';
+  } else if (!result.valid) {
     outcome = 'Fix the config problems listed below, then press Run.';
   } else if (lastLocal?.failedRefs.has(ref)) {
     outcome = "It couldn't be read — see the problem listed below.";
@@ -469,8 +474,13 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   const note =
     skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
   const names = new Set([file.name, sanitiseName(file.name)]);
-  const answers = (value: string | undefined) =>
-    value !== undefined && names.has(basename(value));
+  // A reference already registered to a *different* file (`a(b.csv` under
+  // `./a-b.csv`, now loading `a b.csv`) is that file's: the new one goes
+  // through the form and gets a reference of its own.
+  const answers = (value: string | undefined): value is string =>
+    value !== undefined &&
+    names.has(basename(value)) &&
+    (store.get(value)?.name ?? file.name) === file.name;
   const inferred = inferFormat(file.name);
 
   const parsed = await parseEditor();
@@ -512,9 +522,22 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
     return;
   }
   // The chosen track already names a path with this file's name: answer it.
-  if (target?.ref && answers(target.ref)) {
-    registerFile(file, target.ref, choice.format);
-    await runWithFile(file, target.ref, note);
+  // When the format chosen is not the one the config reads it with, say so
+  // in the config, so the share link (and a hosted viewer) reads it the same.
+  if (target && answers(target.ref)) {
+    const ref = target.ref;
+    const stated = findLocalReferences(current).find(
+      (r) => r.trackPath === target.path
+    );
+    const reads = stated?.format ?? inferFormat(ref);
+    const edit =
+      stated?.adapter === undefined && reads !== choice.format
+        ? await attachToTrack(text, current, target, {
+            url: ref,
+            format: choice.format,
+          })
+        : undefined;
+    await finishLoad(file, ref, choice.format, edit, note);
     return;
   }
 
@@ -532,21 +555,35 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
     : await appendTrack(text, current, {
         id: rowIdFor(file.name, current),
         label: rowLabelFor(file.name),
-        // BED carries feature records whatever its columns say.
-        kind:
-          choice.format === 'bed'
-            ? KIND_FOR_SHAPE.feature
-            : KIND_FOR_SHAPE[guessShape(file.text, choice.format)],
+        // A format that declares its records (BED) gets that shape.
+        kind: KIND_FOR_SHAPE[guessShape(file.text, choice.format)],
         data: value,
       });
-  registerFile(file, ref, choice.format);
-  if ('error' in edit) {
-    control.setStatus(`${note}Loaded ${file.name} as ${ref}. ${edit.error}`);
-    control.setSnippet(edit.snippet);
-    void refreshDiagnostics();
-    return;
+  await finishLoad(file, ref, choice.format, edit, note);
+}
+
+/**
+ * Register the file under `ref`, apply the config edit (if any), and run. An
+ * edit that could not be made leaves the file loaded and shows the snippet
+ * to paste.
+ */
+async function finishLoad(
+  file: ReadFile,
+  ref: string,
+  format: DataFormat,
+  edit: EditResult | undefined,
+  note: string
+): Promise<void> {
+  registerFile(file, ref, format);
+  if (edit !== undefined) {
+    if ('error' in edit) {
+      control.setStatus(`${note}Loaded ${file.name} as ${ref}. ${edit.error}`);
+      control.setSnippet(edit.snippet);
+      void refreshDiagnostics();
+      return;
+    }
+    editor.setText(edit.text);
   }
-  editor.setText(edit.text);
   await runWithFile(file, ref, note);
 }
 

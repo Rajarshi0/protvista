@@ -26,7 +26,11 @@
  * reads the viewer's events: no `console` call, no event of its own — the
  * element's router stays the one place a failure is logged or emitted.
  */
-import type { DataFormat, ShapeName } from '../schema/types.js';
+import type {
+  DataFormat,
+  ProtvistaViewerConfig,
+  ShapeName,
+} from '../schema/types.js';
 import {
   DATA_FORMATS,
   formatForPath,
@@ -37,11 +41,11 @@ import { parseDelimited } from '../schema/adapters/dsv.js';
 import { runPipeline, sourceLabel } from '../schema/adapters/pipeline.js';
 import { normalizeConfig } from '../schema/normalize.js';
 import { createRegistry } from '../schema/registry.js';
-import type { ProtvistaViewerConfig } from '../schema/types.js';
+import { isPlainObject } from '../schema/shape.js';
 import type { ErrorContext } from '../errors/report.js';
 import type { PlaygroundDiagnostic } from './lint.js';
 
-/** The largest file the playground reads (the pre-flight decodes it twice). */
+/** The largest file the playground reads (it is decoded twice: once by the pre-flight, once by the preview). */
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 /** How much of a file {@link looksBinary} inspects before the full read. */
@@ -238,9 +242,6 @@ export interface LocalReference {
 
 type Obj = Record<string, unknown>;
 
-const isObj = (value: unknown): value is Obj =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 /**
  * Every track data reference in a raw (un-normalised) config that names a
  * local path: string shorthand, a descriptor's `url` (or the first of a `url`
@@ -252,8 +253,8 @@ const isObj = (value: unknown): value is Obj =>
  * `extends:` child, whose tracks may only make sense after the merge.
  */
 export function findLocalReferences(config: unknown): LocalReference[] {
-  if (!isObj(config) || !Array.isArray(config.rows)) return [];
-  const sources = isObj(config.sources) ? config.sources : {};
+  if (!isPlainObject(config) || !Array.isArray(config.rows)) return [];
+  const sources = isPlainObject(config.sources) ? config.sources : {};
   const sourceValue = (key: unknown): string | undefined => {
     if (
       typeof key !== 'string' ||
@@ -293,7 +294,7 @@ export function findLocalReferences(config: unknown): LocalReference[] {
       }
       return;
     }
-    if (!isObj(entry)) return;
+    if (!isPlainObject(entry)) return;
     const d = entry;
     if (
       d.from === 'inline' ||
@@ -350,10 +351,10 @@ export function findLocalReferences(config: unknown): LocalReference[] {
   };
 
   for (const row of config.rows) {
-    if (!isObj(row) || typeof row.id !== 'string') continue;
+    if (!isPlainObject(row) || typeof row.id !== 'string') continue;
     if (Array.isArray(row.tracks)) {
       for (const track of row.tracks) {
-        if (isObj(track) && typeof track.id === 'string') {
+        if (isPlainObject(track) && typeof track.id === 'string') {
           visit(track, `${row.id}-${track.id}`, `${row.id}/${track.id}`);
         }
       }
@@ -374,11 +375,15 @@ export function withLocalFiles(
   config: unknown,
   store: LocalFileStore
 ): unknown {
-  if (!isObj(config)) return config;
+  if (!isPlainObject(config)) return config;
   const copy = structuredClone(config);
   for (const ref of findLocalReferences(copy)) {
     const file = store.get(ref.value);
-    if (file) ref.apply(file.url, ref.format ?? file.format);
+    // The format the normaliser and the pre-flight read it with: a stated
+    // `format:`, else the reference's extension, else the one it was loaded as.
+    if (file) {
+      ref.apply(file.url, ref.format ?? inferFormat(ref.value) ?? file.format);
+    }
   }
   return copy;
 }
@@ -395,10 +400,12 @@ export const KIND_FOR_SHAPE: Readonly<Record<ShapeName, string>> = {
 /**
  * Which records a file seems to hold, from its header row (CSV/TSV) or its
  * first record's keys (JSON): the first shape whose required fields are all
- * present, checked most specific first. Defaults to `feature`, which BED
- * always is.
+ * present, checked most specific first. A format that declares the records
+ * it emits (`emitsShape`, as BED does) gets that shape. Defaults to `feature`.
  */
 export function guessShape(text: string, format: DataFormat): ShapeName {
+  const emits = DATA_FORMATS[format].emitsShape;
+  if (emits) return emits;
   let fields: string[] = [];
   if (format === 'csv' || format === 'tsv') {
     const firstLine = text.slice(0, text.search(/\r?\n|$/));
@@ -409,7 +416,7 @@ export function guessShape(text: string, format: DataFormat): ShapeName {
     try {
       const body = JSON.parse(text) as unknown;
       const first = Array.isArray(body) ? body[0] : undefined;
-      if (isObj(first)) fields = Object.keys(first);
+      if (isPlainObject(first)) fields = Object.keys(first);
     } catch {
       // Malformed JSON: the pre-flight says so; any shape will do here.
     }
@@ -620,7 +627,7 @@ function normalisedTracks(
   parsed: unknown
 ): Map<string, { shape?: ShapeName; format?: DataFormat }> {
   const tracks = new Map<string, { shape?: ShapeName; format?: DataFormat }>();
-  if (!isObj(parsed)) return tracks;
+  if (!isPlainObject(parsed)) return tracks;
   try {
     const normalised = normalizeConfig(
       { ...parsed, extends: undefined } as unknown as ProtvistaViewerConfig,

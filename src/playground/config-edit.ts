@@ -14,6 +14,7 @@
 import type { DataFormat } from '../schema/types.js';
 import { parseConfigText } from '../schema/parse.js';
 import { createRegistry } from '../schema/registry.js';
+import { isPlainObject } from '../schema/shape.js';
 import { detectFormat } from './format.js';
 import { findLocalReferences, sanitiseName } from './local-files.js';
 
@@ -45,9 +46,6 @@ export type EditResult = { text: string } | { error: string; snippet: string };
 
 type Obj = Record<string, unknown>;
 
-const isObj = (value: unknown): value is Obj =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 /**
  * The tracks a file can be attached to: those with no `kind` (a file there is
  * read as feature records) and those whose kind declares a record shape. A
@@ -55,7 +53,7 @@ const isObj = (value: unknown): value is Obj =>
  * `extends:` config only the child's own tracks are listed.
  */
 export function listTargetTracks(parsed: unknown): TrackTarget[] {
-  if (!isObj(parsed) || !Array.isArray(parsed.rows)) return [];
+  if (!isPlainObject(parsed) || !Array.isArray(parsed.rows)) return [];
   const registry = createRegistry();
   const refs = new Map(
     findLocalReferences(parsed).map((r) => [r.trackPath, r.value])
@@ -71,10 +69,14 @@ export function listTargetTracks(parsed: unknown): TrackTarget[] {
 
   const targets: TrackTarget[] = [];
   parsed.rows.forEach((row, rowIndex) => {
-    if (!isObj(row) || typeof row.id !== 'string') return;
+    if (!isPlainObject(row) || typeof row.id !== 'string') return;
     if (Array.isArray(row.tracks)) {
       row.tracks.forEach((track, trackIndex) => {
-        if (!isObj(track) || typeof track.id !== 'string' || !accepts(track)) {
+        if (
+          !isPlainObject(track) ||
+          typeof track.id !== 'string' ||
+          !accepts(track)
+        ) {
           return;
         }
         const path = `${row.id}/${track.id}`;
@@ -109,8 +111,8 @@ export function rowIdFor(fileName: string, parsed: unknown): string {
   const dot = clean.lastIndexOf('.');
   const stem = (dot > 0 ? clean.slice(0, dot) : clean).replace(/\./g, '-');
   const taken = new Set(
-    isObj(parsed) && Array.isArray(parsed.rows)
-      ? parsed.rows.map((r) => (isObj(r) ? r.id : undefined))
+    isPlainObject(parsed) && Array.isArray(parsed.rows)
+      ? parsed.rows.map((r) => (isPlainObject(r) ? r.id : undefined))
       : []
   );
   for (let n = 1; ; n += 1) {
@@ -170,7 +172,7 @@ function sameData(a: unknown, b: unknown): boolean {
       a.every((item, i) => sameData(item, b[i]))
     );
   }
-  if (!isObj(a) || !isObj(b)) return false;
+  if (!isPlainObject(a) || !isPlainObject(b)) return false;
   const keys = Object.keys(a);
   return (
     keys.length === Object.keys(b).length &&
@@ -246,15 +248,17 @@ export async function attachToTrack(
   const snippet = `data: ${yamlValue(value)}`;
   const expected = structuredClone(parsed);
   const rows =
-    isObj(expected) && Array.isArray(expected.rows) ? expected.rows : [];
+    isPlainObject(expected) && Array.isArray(expected.rows)
+      ? expected.rows
+      : [];
   const row = rows[target.rowIndex];
   const track =
     target.trackIndex === undefined
       ? row
-      : isObj(row) && Array.isArray(row.tracks)
+      : isPlainObject(row) && Array.isArray(row.tracks)
         ? row.tracks[target.trackIndex]
         : undefined;
-  if (!isObj(track)) {
+  if (!isPlainObject(track)) {
     return { error: `Track ${target.path} is not in the config.`, snippet };
   }
   track.data = value;
@@ -329,7 +333,18 @@ export async function appendTrack(
   const snippet = isJson
     ? JSON.stringify(row, null, 2)
     : rowYaml(row, '').join('\n');
-  if (parsed !== undefined && !isObj(parsed)) {
+  // Re-serialising JSON would keep only what parsed; with nothing parsed, it
+  // would replace the whole config with the new row. (A YAML splice is
+  // verified below, and a comments-only YAML document still gets `rows:`.)
+  if (isJson && parsed === undefined) {
+    return {
+      error:
+        "The config doesn't parse, so the track can't be added automatically — " +
+        'fix it, or add this under rows: by hand:',
+      snippet,
+    };
+  }
+  if (parsed !== undefined && !isPlainObject(parsed)) {
     return {
       error: 'The config is not a mapping, so no track can be added:',
       snippet,
