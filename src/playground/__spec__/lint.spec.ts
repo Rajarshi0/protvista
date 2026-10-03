@@ -61,9 +61,9 @@ rows:
     expect(diagnostics.length).toBeGreaterThan(0);
     expect(diagnostics.map((d) => d.code)).toContain('unknown-semantic-kind');
     // The offending path is carried through for the side error list.
-    expect(diagnostics.some((d) => d.message.includes('notakind') || d.path)).toBe(
-      true
-    );
+    expect(
+      diagnostics.some((d) => d.message.includes('notakind') || d.path)
+    ).toBe(true);
   });
 
   it('does not crash when an id contains regex metacharacters', async () => {
@@ -137,9 +137,51 @@ describe('lintConfig', () => {
   });
 
   it('returns no config for a blank or broken editor', async () => {
-    expect(await lintConfig('  \n')).toEqual({ diagnostics: [] });
+    expect(await lintConfig('  \n')).toEqual({
+      diagnostics: [],
+      declaresSequence: false,
+    });
     const broken = await lintConfig('rows: [\n');
     expect(broken.diagnostics[0].code).toBe('syntax');
     expect(broken).not.toHaveProperty('parsed');
+  });
+});
+
+describe('lintConfig — sequence mode', () => {
+  const SEQUENCE = `sequence: |
+  >my construct v2
+  MKTAYIAKQRQISFVKSHFSRQ
+rows:
+  - id: sites
+    kind: features
+    label: Sites on {accession}
+    data:
+      from: inline
+      inlineData:
+        - type: BINDING
+          start: 4
+          end: 9
+`;
+
+  it('validates a sequence config without the default accession', async () => {
+    // The page always has an accession to offer; injecting it here would
+    // turn a clean sequence config into "both".
+    const result = await lintConfig(SEQUENCE, 'P05067');
+    expect(result.diagnostics).toEqual([]);
+    expect(result.declaresSequence).toBe(true);
+    expect(await computeDiagnostics(SEQUENCE, 'P05067')).toEqual([]);
+  });
+
+  it('says an accession config declares no sequence', async () => {
+    const { declaresSequence } = await lintConfig(VALID, 'P05067');
+    expect(declaresSequence).toBe(false);
+  });
+
+  it('still reports an accession written beside the sequence', async () => {
+    const { diagnostics } = await lintConfig(
+      `accession: P05067\n${SEQUENCE}`,
+      'P05067'
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(['accession-and-sequence']);
   });
 });

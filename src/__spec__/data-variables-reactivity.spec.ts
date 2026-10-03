@@ -225,9 +225,13 @@ describe('<protvista-uniprot> data-accession inside the element', () => {
       { 'data-species': 'human', 'data-accession': 'P05067' },
       { accession: null }
     );
+    // With no protein at all the mount reports `missing-protein`, which
+    // stands in for the `missing-accession` the `{accession}` URLs would
+    // otherwise add: one problem, one issue.
     await vi.waitFor(() =>
-      expect(errorIssues.some((i) => i.code === 'missing-accession')).toBe(true)
+      expect(errorIssues.some((i) => i.code === 'missing-protein')).toBe(true)
     );
+    expect(errorIssues.some((i) => i.code === 'missing-accession')).toBe(false);
     await settle();
     expect(el.accession).toBeFalsy();
     expect(featureUrls()).toEqual([]);

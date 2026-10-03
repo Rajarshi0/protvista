@@ -1,0 +1,16 @@
+# A protein that isn't in UniProt — a designed construct here — shown from
+# its own sequence. `sequence:` takes the place of `accession:` (never both)
+# and points at a one-record FASTA file; it could equally be raw residues or
+# inline FASTA written as a `sequence: |` block.
+#
+# The viewer makes no request of its own: no UniProt entry, no structure
+# panel. Only your files are fetched, relative to the page. The FASTA header
+# is shown wherever an accession would be, and every coordinate in
+# hotspots.csv is checked against the sequence's length (240 residues).
+sequence: ./protein.fasta
+rows:
+  - id: hotspots
+    label: Hotspots on {accession}
+    kind: features
+    data: ./hotspots.csv
+    description: Hotspot regions identified by our lab's pipeline

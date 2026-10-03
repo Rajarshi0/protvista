@@ -91,6 +91,33 @@ const previewStale = $<HTMLElement>('preview-stale');
 const editorHost = $<HTMLElement>('editor');
 const presetDesc = $<HTMLElement>('preset-desc');
 
+/**
+ * Says why the accession input is disabled while the config declares
+ * `sequence:`. Built here rather than in the page markup so every page that
+ * hosts the controller gets it; linked to the input by `aria-describedby`
+ * only while it applies.
+ */
+const accessionHint = document.createElement('span');
+accessionHint.id = 'accession-hint';
+accessionHint.className = 'accession-hint';
+accessionHint.hidden = true;
+accessionHint.textContent = 'Not used: this config sets sequence:';
+accessionInput.insertAdjacentElement('afterend', accessionHint);
+
+/**
+ * Disable the accession input for a `sequence:` config, which shows its own
+ * protein: an accession is not used there, and passing one is an error.
+ */
+function syncAccessionInput(declaresSequence: boolean): void {
+  accessionInput.disabled = declaresSequence;
+  accessionHint.hidden = !declaresSequence;
+  if (declaresSequence) {
+    accessionInput.setAttribute('aria-describedby', accessionHint.id);
+  } else {
+    accessionInput.removeAttribute('aria-describedby');
+  }
+}
+
 /** Id of the preset currently loaded; used to keep shared links short. */
 let activePresetId = DEFAULT_PRESET_ID;
 // Declared here so the pipeline functions below can reference it; assigned
@@ -168,7 +195,7 @@ const diagnosticsView = createDiagnosticsView(errorSummary, errorList);
 // ── Live preview ──────────────────────────────────────────────
 function renderPreview(
   configText: string,
-  accession: string,
+  accession: string | undefined,
   parsed?: unknown,
   local?: LocalDataResult
 ): void {
@@ -191,7 +218,9 @@ function renderPreview(
     parsed !== undefined && store.list().length > 0
       ? (withLocalFiles(parsed, store) as object)
       : configText;
-  element.setAttribute('accession', accession);
+  // No accession for a `sequence:` config: it shows its own protein, and an
+  // accession beside it is an error.
+  if (accession) element.setAttribute('accession', accession);
   previewHost.append(element);
 }
 
@@ -261,6 +290,7 @@ async function computeSafe(
           message: `Internal validation error: ${(error as Error).message}`,
         },
       ],
+      declaresSequence: false,
     };
   }
 }
@@ -272,6 +302,8 @@ type ValidateResult = {
   valid: boolean;
   /** The parsed config, when local files made parsing it worthwhile. */
   parsed?: unknown;
+  /** The config sets `sequence:`, so the preview gets no accession. */
+  declaresSequence: boolean;
   /** `store.version` at validation time. */
   files: number;
   /** The pre-flight of the loaded files, when it ran. */
@@ -310,8 +342,9 @@ async function validateCurrent(): Promise<ValidateResult> {
 
   const files = store.version;
   const lint = await computeSafe(text, accession);
-  const configDiagnostics = lint.diagnostics;
+  const { diagnostics: configDiagnostics, declaresSequence } = lint;
   if (seq !== updateSeq) return null;
+  syncAccessionInput(declaresSequence);
   // Only the config's own errors hold the preview back. A data problem in a
   // loaded file renders that track empty, as a hosted viewer would.
   const valid = !configDiagnostics.some((d) => d.severity === 'error');
@@ -337,7 +370,7 @@ async function validateCurrent(): Promise<ValidateResult> {
   editor.setDiagnostics(diagnostics);
   diagnosticsView.showConfig(diagnostics);
   writeHash(currentState());
-  return { text, accession, valid, parsed, files, local };
+  return { text, accession, valid, parsed, declaresSequence, files, local };
 }
 
 /**
@@ -364,7 +397,12 @@ async function run(): Promise<ValidateResult> {
   const result = await validateCurrent();
   if (!result) return null;
   if (result.valid) {
-    renderPreview(result.text, result.accession, result.parsed, result.local);
+    renderPreview(
+      result.text,
+      result.declaresSequence ? undefined : result.accession,
+      result.parsed,
+      result.local
+    );
     lastRendered = {
       text: result.text,
       accession: result.accession,

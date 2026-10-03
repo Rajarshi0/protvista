@@ -48,7 +48,10 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function locate(text: string, path: string | undefined): { from: number; to: number } {
+function locate(
+  text: string,
+  path: string | undefined
+): { from: number; to: number } {
   if (!path) return { from: 0, to: 0 };
   const segments = path.split('/').filter(Boolean);
   // The last non-numeric segment is the field/id worth highlighting
@@ -130,6 +133,12 @@ export async function computeDiagnostics(
 export interface LintResult {
   diagnostics: PlaygroundDiagnostic[];
   /**
+   * Whether the config declares `sequence:` — a protein of its own, so the
+   * preview must not be given an accession (that is an error) and the
+   * accession input has nothing to do.
+   */
+  declaresSequence: boolean;
+  /**
    * The config as parsed, before `accession` is injected, so a caller needs
    * no second parse. Absent when the text is blank or does not parse (a
    * parsed config is never `undefined`).
@@ -137,12 +146,17 @@ export interface LintResult {
   parsed?: unknown;
 }
 
-/** {@link computeDiagnostics}, also returning the config it parsed. */
+/**
+ * {@link computeDiagnostics}, plus what the page needs to know about the
+ * config without parsing it a second time: the config it parsed, and
+ * whether it declares `sequence:`. A `sequence:` config is validated
+ * without the accession, exactly as the element's loader treats it.
+ */
 export async function lintConfig(
   text: string,
   accession?: string
 ): Promise<LintResult> {
-  if (text.trim() === '') return { diagnostics: [] };
+  if (text.trim() === '') return { diagnostics: [], declaresSequence: false };
 
   let parsed: unknown;
   try {
@@ -159,17 +173,23 @@ export async function lintConfig(
           message: (error as Error).message || 'Could not parse config',
         },
       ],
+      declaresSequence: false,
     };
   }
 
+  const isObject =
+    parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+  const declaresSequence =
+    isObject && (parsed as { sequence?: unknown }).sequence != null;
+
   // Only when the config declares no accession itself — an authored
-  // `accession:` takes precedence, exactly as the element treats it.
+  // `accession:` takes precedence, exactly as the element treats it — and
+  // no `sequence:`, which shows a protein of its own.
   let validated = parsed;
   if (
     accession &&
-    parsed !== null &&
-    typeof parsed === 'object' &&
-    !Array.isArray(parsed) &&
+    isObject &&
+    !declaresSequence &&
     (parsed as { accession?: unknown }).accession == null
   ) {
     validated = { ...(parsed as object), accession };
@@ -187,5 +207,5 @@ export async function lintConfig(
     path: issue.path,
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
-  return { diagnostics, parsed };
+  return { diagnostics, declaresSequence, parsed };
 }

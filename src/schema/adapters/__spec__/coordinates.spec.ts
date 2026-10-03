@@ -191,6 +191,25 @@ describe('formatOutOfRangeWarning', () => {
     );
   });
 
+  it('names a sequence-mode protein by its display label', () => {
+    // In sequence mode the element passes the FASTA header (or "your
+    // sequence") where an accession would go; the template is unchanged.
+    expect(
+      formatOutOfRangeWarning(
+        {
+          label: './hotspots.csv (parsed as CSV)',
+          shape: 'feature',
+          format: 'csv',
+        },
+        'my construct v2',
+        240,
+        { count: 1, total: 5, first: { row: 4, fields: [['end', 812]] } }
+      )
+    ).toBe(
+      `./hotspots.csv (parsed as CSV): 1 of 5 rows fall outside my construct v2 (240 residues); first: row 4, end 812. ${START_HINT}`
+    );
+  });
+
   it('names every out-of-range field of the first row', () => {
     const message = formatOutOfRangeWarning(
       { label: './hits.csv (parsed as CSV)', shape: 'feature', format: 'csv' },
