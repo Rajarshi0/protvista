@@ -229,8 +229,10 @@ export function sourceLabel(
  * `format:` is always the first remedy: an explicit `format:` wins over the
  * extension, so it is the one fix that works for every source. Renaming is
  * offered as well only when the source is a path whose extension implies the
- * format it was read as — then the extension chose the reading, and a new
- * one changes it. Inline data and extensionless URLs get `format:` alone.
+ * format it was read as — then a new extension changes the reading, unless an
+ * explicit `format:` also pins it (the pipeline cannot tell, which is why
+ * `format:` comes first). Inline data and extensionless URLs get `format:`
+ * alone.
  *
  * No `format:` value reads semicolons, so that hint points at Excel's
  * locale-independent "Text (Tab delimited)" export instead; its "CSV" export
@@ -245,6 +247,18 @@ function delimiterHint(
     source !== undefined &&
     source !== '' &&
     formatForPath(source)?.name === declared;
+  if (suspected === ';' && declared === 'tsv') {
+    // Already read as TSV, so "read it as TSV" is no remedy on its own: the
+    // tab export must be re-saved, and a comma export must switch to CSV.
+    return (
+      'The header looks semicolon-separated, which ProtVista does not read. ' +
+      'If it came from Excel, save it again as "Text (Tab delimited)" and ' +
+      'keep reading it as TSV (`format: tsv`), or re-export it ' +
+      'comma-separated and read it as CSV: set `format: csv`' +
+      (renamable ? ' (or rename the file to .csv)' : '') +
+      '.'
+    );
+  }
   if (suspected === ';') {
     const how = renamable
       ? 'a .tsv name or `format: tsv` — Excel names that export .txt'

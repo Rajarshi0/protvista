@@ -193,10 +193,11 @@ header seems to use and the fix:
 ```
 
 `format:` always works, because it wins over the extension; a rename is
-offered only when the extension chose the reading. No `format:` reads
-semicolons, so for those save the sheet from Excel as "Text (Tab delimited)"
-and read it as TSV, or re-export it comma-separated. The viewer never switches
-separator by itself: only the message changes.
+offered only when the file's extension matches the format it was read as (it
+does not help if an explicit `format:` also pins that reading). No `format:`
+reads semicolons, so for those save the sheet from Excel as "Text (Tab
+delimited)" and read it as TSV, or re-export it comma-separated and read it as
+CSV. The viewer never switches separator by itself: only the message changes.
 
 ### A tooltip is missing rows or shows blanks
 

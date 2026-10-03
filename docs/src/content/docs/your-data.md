@@ -121,7 +121,8 @@ data:
 ```
 
 If a file's header looks like it uses a different separator from the one its
-format implies, the error says so rather than reporting a missing column:
+format implies, the missing-column error also names the separator the header
+seems to use and the fix:
 
 ```
 ./hotspots.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks semicolon-separated, which ProtVista does not read. …

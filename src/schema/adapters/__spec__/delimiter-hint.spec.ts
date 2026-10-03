@@ -71,6 +71,14 @@ const FIX: Record<string, string> = {
   semicolon: '`format: tsv`',
 };
 
+/** The rename advice each mismatched cell's hint gives for a `./hits.<format>` file. */
+const RENAME: Record<string, string> = {
+  'comma-tsv': '(or rename the file to .csv)',
+  'tab-csv': '(or rename the file to .tsv)',
+  'semicolon-csv': 'a .tsv name',
+  'semicolon-tsv': '(or rename the file to .csv)',
+};
+
 describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
   it.each(MATCHING)(
     'reads $name content declared $format as usual',
@@ -99,6 +107,7 @@ describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
         ).toBe(true);
         expect(err.message).toContain(`The header looks ${name}-separated`);
         expect(err.message).toContain(FIX[name]);
+        expect(err.message).toContain(RENAME[`${name}-${format}`]);
         expect(err.message).not.toContain('\n');
         expect(err.suspectedDelimiter).toBe(delimiter);
         expect(err.column).toBe('type');
@@ -155,6 +164,31 @@ describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
         'ProtVista does not read. If it came from Excel, save it as "Text ' +
         '(Tab delimited)" and read it as TSV (a .tsv name or `format: tsv` — ' +
         'Excel names that export .txt), or re-export it comma-separated.'
+    );
+  });
+
+  it('spells out the semicolon hint for a .tsv file in full', () => {
+    expect(
+      thrown('feature', 'tsv', featureBody(';'), { source: './hits.tsv' })
+        .message
+    ).toBe(
+      './hits.tsv (parsed as TSV): missing required header column "type". ' +
+        `${FEATURE_HEADER} The header looks semicolon-separated, which ` +
+        'ProtVista does not read. If it came from Excel, save it again as ' +
+        '"Text (Tab delimited)" and keep reading it as TSV (`format: tsv`), ' +
+        'or re-export it comma-separated and read it as CSV: set ' +
+        '`format: csv` (or rename the file to .csv).'
+    );
+  });
+
+  it('spells out the semicolon hint for inline TSV in full', () => {
+    expect(thrown('feature', 'tsv', featureBody(';')).message).toBe(
+      'inline data (parsed as TSV): missing required header column "type". ' +
+        `${FEATURE_HEADER} The header looks semicolon-separated, which ` +
+        'ProtVista does not read. If it came from Excel, save it again as ' +
+        '"Text (Tab delimited)" and keep reading it as TSV (`format: tsv`), ' +
+        'or re-export it comma-separated and read it as CSV: set ' +
+        '`format: csv`.'
     );
   });
 
@@ -386,7 +420,7 @@ describe('suspectDelimiter', () => {
   it('sees through a BOM and capitalised names (rule b)', () => {
     expect(
       suspectDelimiter(
-        '﻿Type;Start;End;Description\nDOMAIN;1;9;x\n',
+        '\uFEFFType;Start;End;Description\nDOMAIN;1;9;x\n',
         ',',
         REQUIRED_COLUMNS
       )
