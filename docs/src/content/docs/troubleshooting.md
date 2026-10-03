@@ -183,6 +183,10 @@ number, got "abc"` — and fires a `track-fetch` event with `errorKind:
 that one track degrades. No Retry is offered, because re-running the same
 decoder over the same bytes gives the same answer: fix the file.
 
+To check a file before you host it, load it in the
+[playground](/protvista/playground/) with **Load data file…**. The same message
+is listed there, naming your file.
+
 When the header is the problem because the file uses a different separator
 from the one its format implies — a semicolon export from Excel, a tab file
 named `.csv`, a comma file named `.tsv` — the message names the separator the
@@ -258,7 +262,8 @@ lists the recognised types and draws every valid shape.
 ### The config is rejected
 
 A `config`-phase error carries `detail.issues` describing each problem. Validate
-your config as you write it in the [playground](/protvista/playground/), or point
+your config as you write it in the [playground](/protvista/playground/) (and
+check your data files there with **Load data file…**), or point
 your editor at the schema for inline checking — see
 [Author a config](/protvista/configure#editor-autocomplete).
 

@@ -88,6 +88,20 @@ track's `⚠` badge, the `protvista-error` event's `message` and the console.
 Parsing is unchanged — the format alone still picks the delimiter — and a
 column that is genuinely missing keeps its message exactly as before.
 
+### Added: open a local data file in the playground
+
+The playground has a **Load data file…** button, and takes a file dropped on
+the config editor. Pick a CSV, TSV, JSON or BED file and attach it to a new or
+existing track, and it renders against the current accession. The file is
+read in your browser and never uploaded: the config names it
+(`data: ./hits.csv`), so a shared link carries only the name. A file with any
+other extension asks how to read it and writes `format:` into the config, and
+a config that already names the file (`data: ./data/hits.csv`) just needs the
+file loaded. Parse errors (with the delimiter hint) and coordinate warnings
+are listed in the playground's diagnostics, naming your file. Dropping a file
+on the editor no longer pastes its text into the config, and dropping one
+elsewhere on the page no longer navigates away.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

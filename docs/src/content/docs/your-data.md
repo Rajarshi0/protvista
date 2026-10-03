@@ -436,6 +436,30 @@ page from the same directory as the data (or use an absolute URL). The runnable
 each carry their data file beside the config for exactly this reason — see
 [`examples/README.md`](https://github.com/ebi-webcomponents/protvista/blob/next/examples/README.md).
 
+## Try your file in the playground
+
+You don't have to host a file to see it render. In the
+[playground](/protvista/playground/), press **Load data file…** (or drop the
+file onto the config editor) and pick a CSV, TSV, JSON or BED file. It is read
+in your browser and never uploaded. Only its *name* goes into the config, and
+so into any link you share: the playground adds a track with
+`data: ./hits.csv`, exactly as a config next to the real file would say it.
+
+- A file whose extension doesn't say how to read it (`hits.txt`, `export.tab`)
+  asks you to choose a format, and the config gets `format:` to match:
+  `data: { url: ./hits.txt, format: csv }`.
+- If the config already names the file — say you pasted a Starter Kit config
+  with `data: ./data/hits.csv` — just load `hits.csv`. It renders in that
+  track with no edit to the config.
+- Problems with the file are listed under the editor, naming it: a parse error
+  (`./hits.csv (parsed as CSV): row 3, column "start": …`) with the same advice
+  a hosted viewer gives, and, once it renders, any rows that fall outside the
+  protein.
+
+The file stays loaded until you reload the page. A shared link carries only the
+name, so whoever opens it is asked to load the file themselves. After fixing the
+file on disk, load it again to pick up the change.
+
 ## Custom columns or formats
 
 If your file doesn't match the feature-record columns — different headings, a
