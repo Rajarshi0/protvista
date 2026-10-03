@@ -67,7 +67,8 @@
 
 import type { ProtvistaViewerConfig } from './types.js';
 import { type Registry, createRegistry } from './registry.js';
-import { validateConfig } from './validate.js';
+import { ACCESSION_OR_SEQUENCE_GUIDANCE, validateConfig } from './validate.js';
+import { isPlainObject } from './shape.js';
 import { normalizeConfig, type NormalizedConfig } from './normalize.js';
 import {
   ConfigValidationError,
@@ -258,10 +259,10 @@ export async function loadConfigWithSource(
   // feature, so JSON-only adopters pay nothing extra for its
   // presence in the pipeline.
   // `mergeExtends` strips `extends`, so note now whether the config used it.
-  const extended = isConfigObject(parsed) && parsed.extends !== undefined;
+  const extended = isPlainObject(parsed) && parsed.extends !== undefined;
   const merged = await resolveExtends(parsed, opts);
   const declaresSequence =
-    isConfigObject(merged) && merged.sequence !== undefined;
+    isPlainObject(merged) && merged.sequence !== undefined;
 
   // Inject the caller-supplied accession *before* validation so the
   // `missing-accession` rule sees it. We only inject when the config
@@ -317,7 +318,7 @@ function contextIssues(
   opts: LoadConfigOptions,
   extended: boolean
 ): ValidationIssue[] {
-  if (!isConfigObject(config)) return [];
+  if (!isPlainObject(config)) return [];
   const out: ValidationIssue[] = [];
   const hostAccession = opts.accession;
 
@@ -329,8 +330,8 @@ function contextIssues(
         path: '/',
         message:
           `An accession ('${hostAccession}') was supplied by the host (the element's accession attribute), ` +
-          "but this config declares 'sequence:'. Use 'accession:' to show a UniProt entry, or " +
-          "'sequence:' to show your own protein — not both. Remove the attribute, or the 'sequence:'.",
+          `but this config declares 'sequence:'. ${ACCESSION_OR_SEQUENCE_GUIDANCE} ` +
+          "Remove the attribute, or the 'sequence:'.",
         code: 'accession-and-sequence',
       });
     }
@@ -408,10 +409,6 @@ function describeFetchFailure(err: unknown): string {
   }
   const message = err instanceof Error ? err.message : String(err);
   return message.replace(/\.$/, '');
-}
-
-function isConfigObject(value: unknown): value is ProtvistaViewerConfig {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function removeWhere<T>(items: T[], drop: (item: T) => boolean): void {

@@ -64,7 +64,7 @@ import { dataAttributeFor, templateTokens } from './variables.js';
 import {
   isSequenceReference,
   parseSequenceText,
-  UNIPROT_KEYED_ADAPTERS,
+  uniprotKeyedProvider,
 } from './sequence.js';
 import {
   isError,
@@ -473,10 +473,17 @@ function descriptorIncludes(
   return false;
 }
 
+/**
+ * The guidance shared by both `accession-and-sequence` messages: the config
+ * form here, and the host form (an `accession` attribute) in the loader.
+ */
+export const ACCESSION_OR_SEQUENCE_GUIDANCE =
+  "Use 'accession:' to show a UniProt entry, or 'sequence:' to show your own protein — not both.";
+
 /** The message for a config that sets both `accession:` and `sequence:`. */
-export const ACCESSION_AND_SEQUENCE_MESSAGE =
-  "This config sets both 'accession:' and 'sequence:'. Use 'accession:' to " +
-  "show a UniProt entry, or 'sequence:' to show your own protein — not both.";
+const ACCESSION_AND_SEQUENCE_MESSAGE =
+  "This config sets both 'accession:' and 'sequence:'. " +
+  ACCESSION_OR_SEQUENCE_GUIDANCE;
 
 /**
  * The rules for a config that sets `sequence:` — a protein that isn't in
@@ -546,7 +553,8 @@ function checkSequenceMode(
   }
 }
 
-const LABEL_LINK_REASON = 'its label links to a UniProt-keyed URL ({accession})';
+const LABEL_LINK_REASON =
+  'its label links to a UniProt-keyed URL ({accession})';
 
 /** Why a track can't work without an accession, or `undefined` if it can. */
 function needsAccessionReason(
@@ -570,7 +578,7 @@ function needsAccessionReason(
   // doesn't name one.
   for (const d of descriptors) {
     if (isShorthand(d) || d.adapter === undefined) continue;
-    const provider = UNIPROT_KEYED_ADAPTERS[d.adapter];
+    const provider = uniprotKeyedProvider(d.adapter);
     if (provider) {
       return `adapter '${d.adapter}' reads ${provider} data for a UniProt entry`;
     }
@@ -580,7 +588,7 @@ function needsAccessionReason(
       ? undefined
       : registry.getSemanticKind(track.kind)?.adapter;
   const provider =
-    kindAdapter === undefined ? undefined : UNIPROT_KEYED_ADAPTERS[kindAdapter];
+    kindAdapter === undefined ? undefined : uniprotKeyedProvider(kindAdapter);
   if (
     provider &&
     descriptors.some((d) => isShorthand(d) || d.adapter === undefined)
@@ -595,14 +603,16 @@ function needsAccessionReason(
 }
 
 /**
- * Whether a Markdoc label puts `{accession}` inside a link target `](…)` or a
- * tag's attributes `{% … %}` — places where substituting a FASTA header would
- * build a broken UniProt link.
+ * Whether a Markdoc label puts `{accession}` inside a link target `](…)` (one
+ * level of nested parentheses allowed, as CommonMark does), an autolink
+ * `<scheme:…>` or a tag's attributes `{% … %}` — places where substituting a
+ * FASTA header would build a broken UniProt link.
  */
 function labelLinksAccession(label: string | undefined): boolean {
   if (!label?.includes(ACCESSION_PLACEHOLDER)) return false;
   return (
-    /\]\([^)]*\{accession\}/.test(label) ||
+    /\]\((?:[^()]|\([^()]*\))*\{accession\}/.test(label) ||
+    /<[A-Za-z][A-Za-z0-9+.-]*:[^<>]*\{accession\}[^<>]*>/.test(label) ||
     /\{%(?:(?!%\})[\s\S])*\{accession\}/.test(label)
   );
 }
@@ -625,9 +635,14 @@ function descriptorUrls(
       ? [sources[raw]]
       : [raw];
   }
-  const urls = d.url === undefined ? [] : Array.isArray(d.url) ? d.url : [d.url];
+  const urls =
+    d.url === undefined ? [] : Array.isArray(d.url) ? d.url : [d.url];
   const keys =
-    d.source === undefined ? [] : Array.isArray(d.source) ? d.source : [d.source];
+    d.source === undefined
+      ? []
+      : Array.isArray(d.source)
+        ? d.source
+        : [d.source];
   return [...urls, ...keys.flatMap(viaSources)];
 }
 

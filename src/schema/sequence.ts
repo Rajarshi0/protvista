@@ -62,6 +62,17 @@ export const UNIPROT_KEYED_ADAPTERS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The provider a built-in UniProt-keyed adapter reads, or `undefined` for any
+ * other adapter name. An own-property lookup, so an author-supplied name such
+ * as `constructor` or `toString` doesn't match `Object.prototype`.
+ */
+export function uniprotKeyedProvider(adapter: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(UNIPROT_KEYED_ADAPTERS, adapter)
+    ? UNIPROT_KEYED_ADAPTERS[adapter]
+    : undefined;
+}
+
+/**
  * Whether a `sequence:` value names a file to fetch rather than carrying the
  * sequence inline.
  *

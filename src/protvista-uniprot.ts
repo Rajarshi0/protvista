@@ -2321,6 +2321,12 @@ class ProtvistaUniprot extends LitElement {
       variationComponent.colorConfig = colorConfig;
     }
 
+    // Consumed before any early return: left set past the `suspend` return
+    // below, the flag would swallow the next real accession change.
+    const clearedByConfig =
+      this._clearingAccession && changedProperties.has('accession');
+    if (clearedByConfig) this._clearingAccession = false;
+
     if (changedProperties.has('suspend')) {
       if (this.suspend) return;
       this._init();
@@ -2353,8 +2359,8 @@ class ProtvistaUniprot extends LitElement {
     // `accession-and-sequence` rather than silently keeping a config never
     // checked against the attribute.
     if (changedProperties.has('accession')) {
-      if (this._clearingAccession) {
-        this._clearingAccession = false;
+      if (clearedByConfig) {
+        // `setConfig()`'s own clear: it re-runs `_init()` itself.
       } else if (changedProperties.get('accession') !== undefined) {
         this._init();
         return;
@@ -2437,8 +2443,22 @@ class ProtvistaUniprot extends LitElement {
     // Taken before the first `await`, so it orders calls, not completions.
     const generation = ++this._entryGeneration;
     if (!this.config) {
+      // The loader is handed the accession as it is *now*. One set while the
+      // config resolves (a host that sets `accession` right after appending
+      // the element) is an `undefined → value` change `updated()` ignores, so
+      // without this re-run a sequence config would mount past it unchecked
+      // and an accession-less config would fail as `missing-protein`. The
+      // generation check skips the re-run when a newer `_init()` already
+      // started (a defined → defined change).
+      const requestedAccession = this.accession;
       try {
         const loaded = await this.resolveViewerConfig();
+        if (
+          generation === this._entryGeneration &&
+          this.accession !== requestedAccession
+        ) {
+          return this._init();
+        }
         this._applyConfig(loaded);
         // Issues on a config that still validated — warnings. Reported
         // through the same seam as a failure so they reach the
@@ -2467,6 +2487,12 @@ class ProtvistaUniprot extends LitElement {
           );
         }
       } catch (err) {
+        if (
+          generation === this._entryGeneration &&
+          this.accession !== requestedAccession
+        ) {
+          return this._init();
+        }
         // Validation / parse errors are surfaced on the console so
         // authors see the full `ConfigValidationError.issues[]` list
         // (developer channel, unchanged), AND routed through the shared
