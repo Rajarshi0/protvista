@@ -4,12 +4,15 @@
  * two helpers the `protvista-error` listener runs every event through.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { parseConfigText } from '../../schema/parse.js';
 import { createRegistry } from '../../schema/registry.js';
 import { runPipeline } from '../../schema/adapters/pipeline.js';
 import { PRESETS, DEV_PRESETS } from '../presets.js';
+import { appendTrack } from '../config-edit.js';
 import {
   KIND_FOR_SHAPE,
+  PRIVACY_NOTE,
   basename,
   countRecords,
   createLocalFileStore,
@@ -22,6 +25,7 @@ import {
   looksBinary,
   referenceFor,
   relabelRuntime,
+  sniffFormat,
   withLocalFiles,
   type LocalFileStore,
   type RuntimeDetail,
@@ -105,6 +109,17 @@ describe('naming a loaded file', () => {
   it('takes the base name of a reference', () => {
     expect(basename('./data/hits.csv')).toBe('hits.csv');
     expect(basename('hits.csv?v=2')).toBe('hits.csv');
+  });
+});
+
+describe('PRIVACY_NOTE', () => {
+  it('is what the note by the Load button says, naming the file name going into the config', () => {
+    const page = readFileSync('docs/src/pages/playground.astro', 'utf8');
+    const note = /<span id="local-note"[^>]*>([\s\S]*?)<\/span/.exec(page);
+    expect(note?.[1].replace(/\s+/g, ' ').trim()).toBe(PRIVACY_NOTE);
+    expect(PRIVACY_NOTE).toMatch(
+      /never uploaded.*file name goes into the config/
+    );
   });
 });
 
@@ -318,6 +333,54 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     }
   });
 
+  it('reads a header its extension misnames by the delimiter #276 suspects', () => {
+    const tabDepth = 'position\tvalue\n1\t0.5\n2\t0.7\n';
+    expect(guessShape(tabDepth, 'csv')).toBe('point');
+    expect(guessShape('position,variant\n5,A', 'tsv')).toBe('variation');
+    expect(guessShape('position;value\n1;0.5', 'csv')).toBe('point');
+    // A one-column header no other delimiter splits stays as it is.
+    expect(guessShape('position\n1', 'csv')).toBe('feature');
+  });
+
+  it('sniffs the format a misnamed delimited file should be read as', () => {
+    const tabDepth = 'position\tvalue\n1\t0.5\n';
+    expect(sniffFormat(tabDepth, 'csv')).toBe('tsv');
+    expect(sniffFormat(tabDepth, 'tsv')).toBe('tsv');
+    expect(sniffFormat('position,value\n1,0.5', 'tsv')).toBe('csv');
+    expect(sniffFormat('position,value\n1,0.5', 'csv')).toBe('csv');
+    // A semicolon header has no format of its own; the hint says what to do.
+    expect(sniffFormat('position;value\n1;0.5', 'csv')).toBe('csv');
+    expect(sniffFormat('[]', 'json')).toBe('json');
+    expect(sniffFormat(tabDepth, undefined)).toBeUndefined();
+  });
+
+  it('makes a tab-separated depth.csv a line-graph track that reads cleanly', async () => {
+    // As the playground adds a new track: the sniffed format is offered, and
+    // written as `format:` because the extension says otherwise.
+    const text = 'position\tvalue\n1\t0.5\n2\t0.7\n';
+    const format = sniffFormat(text, inferFormat('depth.csv'))!;
+    const config = 'accession: P05067\nrows:\n  - id: other\n    data: []\n';
+    const edit = await appendTrack(config, await parseConfigText(config), {
+      id: 'depth',
+      label: 'depth.csv',
+      kind: KIND_FOR_SHAPE[guessShape(text, format)],
+      data: { url: './depth.csv', format },
+    });
+    if (!('text' in edit)) throw new Error(edit.error);
+    expect(edit.text).toContain('kind: linegraph');
+    expect(edit.text).toContain('data: { url: ./depth.csv, format: tsv }');
+
+    const { store } = makeStore();
+    load(store, './depth.csv', text, format);
+    const result = await localDataDiagnostics(
+      edit.text,
+      await parseConfigText(edit.text),
+      store
+    );
+    expect(result.diagnostics).toEqual([]);
+    expect(result.counts.get('./depth.csv')).toBe(2);
+  });
+
   it('counts records in each built payload', () => {
     expect(countRecords('feature', [1, 2])).toBe(2);
     expect(countRecords('feature', {})).toBe(0);
@@ -516,33 +579,68 @@ describe('localDataDiagnostics', () => {
     expect(diagnostics[0].message).toMatch(/Load data file…" and pick x\.csv/);
   });
 
-  it('warns inside an extends: child, which it does not pre-flight', async () => {
-    const { store } = makeStore();
-    const text = [
-      'extends: /protvista/default-config.yaml',
-      'rows:',
-      '  - id: MY_LAB',
-      '    tracks:',
-      '      - id: hotspots',
-      '        data: ./data/hits.csv',
-    ].join('\n');
-    const missing = await localDataDiagnostics(
-      text,
-      await parseConfigText(text),
-      store
-    );
-    expect(missing.diagnostics.map((d) => d.code)).toEqual([
-      'local-file-missing',
-    ]);
+  describe('in an extends: child', () => {
+    const child = (track: string[]) =>
+      [
+        'extends: /protvista/default-config.yaml',
+        'rows:',
+        '  - id: VARIATION',
+        '    tracks:',
+        '      - id: variation',
+        ...track.map((line) => `        ${line}`),
+      ].join('\n');
+    const diagnose = async (text: string, store: LocalFileStore) =>
+      localDataDiagnostics(text, await parseConfigText(text), store);
 
-    load(store, './data/hits.csv', BAD_CSV);
-    const loaded = await localDataDiagnostics(
-      text,
-      await parseConfigText(text),
-      store
-    );
-    // The child normalises on its own here, so the pre-flight runs.
-    expect(loaded.diagnostics.map((d) => d.code)).toEqual(['data-parse']);
+    it('warns about a reference no loaded file answers', async () => {
+      const { store } = makeStore();
+      const result = await diagnose(child(['data: ./v.csv']), store);
+      expect(result.diagnostics.map((d) => d.code)).toEqual([
+        'local-file-missing',
+      ]);
+    });
+
+    it("gives no pre-flight to a track whose kind may come from the base, and leaves the preview's report alone", async () => {
+      // The default config's VARIATION/variation is `kind: variants`. Read
+      // without the base, this override would be decoded as feature records
+      // and rejected for lacking a `type` column.
+      const { store } = makeStore();
+      load(store, './v.csv', 'position,variant\n5,A');
+      const result = await diagnose(child(['data: ./v.csv']), store);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.preflightFailed.size).toBe(0);
+      expect(result.failedRefs.size).toBe(0);
+      expect(vi.mocked(runPipeline)).not.toHaveBeenCalled();
+      // So the preview's own decode failure on that track is listed.
+      const runtime: RuntimeDetail = {
+        phase: 'track-fetch',
+        context: {
+          groupId: 'VARIATION',
+          trackId: 'variation',
+          errorKind: 'parse',
+        },
+      };
+      expect(isPreflightDuplicate(runtime, result.preflightFailed)).toBe(false);
+    });
+
+    it('pre-flights a track that states its own kind, with that shape', async () => {
+      const { store } = makeStore();
+      load(store, './v.csv', 'position,variant\n5,A');
+      const good = await diagnose(
+        child(['kind: variants', 'data: ./v.csv']),
+        store
+      );
+      expect(good.diagnostics).toEqual([]);
+      expect(good.counts.get('./v.csv')).toBe(1);
+
+      load(store, './v.csv', BAD_CSV);
+      const bad = await diagnose(
+        child(['kind: features', 'data: ./v.csv']),
+        store
+      );
+      expect(bad.diagnostics.map((d) => d.code)).toEqual(['data-parse']);
+      expect([...bad.preflightFailed]).toEqual(['VARIATION-variation']);
+    });
   });
 
   it('gives no pre-flight to a config the normaliser rejects', async () => {
@@ -646,7 +744,7 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
 
   it('names the file wherever a track-fetch failure names its blob URL', () => {
     const before = structuredClone(adapterFailure);
-    const out = relabelRuntime(adapterFailure, store);
+    const out = relabelRuntime(adapterFailure, store.list());
     expect(out.message).toMatch(/^\.\/hits\.csv \(parsed as CSV\): row 2/);
     expect(out.source).toBe('./hits.csv');
     expect(out.context?.url).toBe('./hits.csv');
@@ -655,7 +753,7 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
   });
 
   it('relabels a track-data warning and its issue, keeping code and severity', () => {
-    const out = relabelRuntime(outOfRange, store);
+    const out = relabelRuntime(outOfRange, store.list());
     expect(out.issues?.[0]).toEqual({
       path: 'hits/hits',
       message: './hits.csv (parsed as CSV): 1 of 2 rows fall outside P05067',
@@ -666,7 +764,7 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
   });
 
   it("relabels #283's decoder warning in all four places, and never drops it", () => {
-    const out = relabelRuntime(ignoredColumns, store);
+    const out = relabelRuntime(ignoredColumns, store.list());
     expect(out.message).toBe(
       './hits.csv (parsed as CSV): ignored column(s) "tooltipContent"'
     );
@@ -695,10 +793,20 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
       source: 'https://example.org/x.csv',
       context: { ...adapterFailure.context, url: 'https://example.org/x.csv' },
     };
-    expect(relabelRuntime(config, store)).toEqual(config);
-    expect(relabelRuntime(remote, store)).toEqual(remote);
+    expect(relabelRuntime(config, store.list())).toEqual(config);
+    expect(relabelRuntime(remote, store.list())).toEqual(remote);
     const empty = createLocalFileStore({ createURL: () => 'blob:x' });
-    expect(relabelRuntime(adapterFailure, empty)).toBe(adapterFailure);
+    expect(relabelRuntime(adapterFailure, empty.list())).toBe(adapterFailure);
+  });
+
+  it('relabels by the files it is given, so a file removed since the preview mounted is still named', () => {
+    const own = makeStore().store;
+    const gone = load(own, './gone.csv', GOOD_CSV);
+    const atMount = own.list();
+    own.remove('./gone.csv');
+    const detail = { ...adapterFailure, source: gone.url };
+    expect(relabelRuntime(detail, atMount).source).toBe('./gone.csv');
+    expect(relabelRuntime(detail, own.list()).source).toBe(gone.url);
   });
 
   it('is a duplicate only for a pre-flighted track-fetch adapter / parse failure', () => {

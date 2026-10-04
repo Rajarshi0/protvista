@@ -4,7 +4,10 @@
  * re-serialised; anything the splice can't verify becomes a snippet.
  */
 import { describe, it, expect } from 'vitest';
+import defaultConfigYaml from '../../default-config.yaml?raw';
 import { parseConfigText } from '../../schema/parse.js';
+import { mergeExtends } from '../../schema/extends.js';
+import type { ProtvistaViewerConfig } from '../../schema/types.js';
 import { computeDiagnostics } from '../lint.js';
 import { PRESETS, getPreset } from '../presets.js';
 import {
@@ -142,6 +145,42 @@ describe('appendTrack', () => {
     expect(rowIdFor('hits.csv', parsed)).toBe('hits-3');
     expect(rowIdFor('my.hits.csv', parsed)).toBe('my-hits');
     expect(rowIdFor('hits.csv', undefined)).toBe('hits');
+  });
+
+  it.each(['PTM.csv', 'DOMAINS.csv', 'SITES.csv', 'MUTAGENESIS.csv'])(
+    'gives %s an id no base group has in an extends: config, so the base group survives the merge',
+    async (file) => {
+      const preset = getPreset('extend-uniprot')!;
+      const parsed = (await parse(preset.config)) as { extends: string };
+      const base = (await parse(defaultConfigYaml)) as {
+        rows: { id: string; tracks?: unknown[] }[];
+      };
+      const stem = file.replace(/\.csv$/, '');
+      const group = base.rows.find((r) => r.id === stem)!;
+      expect(group.tracks?.length).toBeGreaterThan(0);
+
+      const id = rowIdFor(file, parsed);
+      expect(id).toBe(`${stem}-local`);
+      const result = await appendTrack(preset.config, parsed, {
+        ...ROW,
+        id,
+        label: file,
+        data: `./${file}`,
+      });
+      if (!('text' in result)) throw new Error(result.error);
+      const merged = await mergeExtends(
+        (await parse(result.text)) as ProtvistaViewerConfig,
+        { resolver: { [parsed.extends]: defaultConfigYaml } }
+      );
+      const rows = merged.rows as { id: string; tracks?: unknown[] }[];
+      expect(rows.find((r) => r.id === stem)?.tracks).toEqual(group.tracks);
+      expect(rows.map((r) => r.id)).toContain(id);
+    }
+  );
+
+  it('still suffixes a -local id the extends: child already has', () => {
+    const parsed = { extends: 'base.yaml', rows: [{ id: 'hits-local' }] };
+    expect(rowIdFor('hits.csv', parsed)).toBe('hits-local-2');
   });
 
   it('keeps the file name as the label unless Markdoc would read it', () => {

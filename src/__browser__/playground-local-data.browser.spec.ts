@@ -14,6 +14,7 @@ import { EditorView } from 'codemirror';
 
 import { CSS_PREFIX } from '../styles/css-prefix.js';
 import { decodeState, encodeState } from '../playground/url-state.js';
+import { PRIVACY_NOTE } from '../playground/local-files.js';
 import { expectNoA11yViolations } from './axe.js';
 
 const BADGE = `.${CSS_PREFIX}-error-badge`;
@@ -26,7 +27,7 @@ const SKELETON = `
     <div class="local-data">
       <button id="load-data" type="button" aria-describedby="local-note">Load data file…</button>
       <input id="data-file" type="file" hidden />
-      <span id="local-note">Read in your browser — never uploaded.</span>
+      <span id="local-note">Read in your browser — never uploaded. Only the file name goes into the config.</span>
     </div>
     <button id="run" type="button">Run</button>
   </header>
@@ -132,14 +133,10 @@ function setEditorText(text: string): void {
   });
 }
 
-/** A drag carrying one file, as the browser builds it. */
-function fileDrag(
-  type: 'dragover' | 'drop',
-  name: string,
-  text: string
-): DragEvent {
+/** A drag carrying `files`, as the browser builds it. */
+function filesDrag(type: 'dragover' | 'drop', files: File[]): DragEvent {
   const transfer = new DataTransfer();
-  transfer.items.add(new File([text], name));
+  for (const file of files) transfer.items.add(file);
   return new DragEvent(type, {
     dataTransfer: transfer,
     bubbles: true,
@@ -147,7 +144,31 @@ function fileDrag(
   });
 }
 
+/** A drag carrying one file, as the browser builds it. */
+function fileDrag(
+  type: 'dragover' | 'drop',
+  name: string,
+  text: string
+): DragEvent {
+  return filesDrag(type, [new File([text], name)]);
+}
+
+/** Drop `files` on the editor pane. */
+function dropOnPane(files: File[]): void {
+  byId('config-pane').dispatchEvent(filesDrag('drop', files));
+}
+
 const realFetch = globalThis.fetch.bind(globalThis);
+/**
+ * Every `blob:` fetch waits on this gate, so a test can hold the preview's
+ * read of a loaded file back while it edits the config. Open by default.
+ */
+let gate: Promise<void> = Promise.resolve();
+let openGate: () => void = () => undefined;
+function closeGate(): void {
+  gate = new Promise((resolve) => (openGate = resolve));
+}
+let blobFetches = 0;
 /** The skeleton's top-level nodes, removed again after the run. */
 const fixture: Element[] = [];
 
@@ -165,7 +186,11 @@ beforeAll(async () => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       // A loaded file is a real `blob:` fetch: no network involved.
-      if (url.startsWith('blob:')) return realFetch(input, init);
+      if (url.startsWith('blob:')) {
+        blobFetches += 1;
+        await gate;
+        return realFetch(input, init);
+      }
       const body = url.includes('/proteins/api/proteins/')
         ? { sequence: { sequence: 'M'.repeat(770), length: 770 } }
         : {};
@@ -194,6 +219,11 @@ afterAll(() => {
 describe('playground: load a local data file', () => {
   it('attaches a picked CSV as a new track and renders it, keeping the data out of the URL', async () => {
     await pick('hits.csv', GOOD);
+    await vi.waitFor(() =>
+      expect(document.querySelector('.data-attach-note')?.textContent).toBe(
+        PRIVACY_NOTE
+      )
+    );
     await addAsNewTrack();
 
     await vi.waitFor(() => expect(editorText()).toContain('data: ./hits.csv'));
@@ -284,6 +314,10 @@ describe('playground: load a local data file', () => {
     });
     expect(document.activeElement).toBe(format);
     expect(format.required).toBe(true);
+    // The form says the name, not the data, goes into the config.
+    expect(document.querySelector('.data-attach-note')?.textContent).toBe(
+      `The extension doesn't say how to read x.txt, so choose a format. ${PRIVACY_NOTE}`
+    );
     expect([...format.options].map((o) => o.value)).toEqual([
       '',
       'csv',
@@ -434,5 +468,151 @@ rows:
     const listed = byId('data-files').textContent ?? '';
     expect(listed).toContain('a(b.csv as ./a-b.csv');
     expect(listed).toContain('a b.csv as ./a-b-2.csv');
+  });
+
+  it('reloads a file whose reference got a suffix in place, with no form and no edit', async () => {
+    const before = editorText();
+    // The reload renders the new rows, one of which is out of range.
+    const rendered = nextError((d) => d.phase === 'track-data');
+    await pick('a b.csv', OUT_OF_RANGE);
+    await rendered;
+    expect(byId('data-status').textContent).toMatch(
+      /^Loaded a b\.csv as \.\/a-b-2\.csv\. /
+    );
+    expect(byId('data-attach').hidden).toBe(true);
+    expect(editorText()).toBe(before);
+    expect(editorText().split('./a-b-2.csv')).toHaveLength(2);
+  });
+
+  it('says so when the browser cannot read a dropped file, such as a folder', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener('unhandledrejection', onUnhandled);
+    const arrayBuffer = vi
+      .spyOn(Blob.prototype, 'arrayBuffer')
+      .mockRejectedValue(
+        new DOMException('A requested file could not be found', 'NotFoundError')
+      );
+    try {
+      dropOnPane([new File(['x'], 'MyFolder')]);
+      await vi.waitFor(() =>
+        expect(byId('data-status').textContent).toBe(
+          "Couldn't read MyFolder — if it is a folder, or it changed on disk, " +
+            'pick the file again.'
+        )
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+      expect(byId('data-attach').hidden).toBe(true);
+    } finally {
+      arrayBuffer.mockRestore();
+      window.removeEventListener('unhandledrejection', onUnhandled);
+    }
+  });
+
+  it('offers a tab-separated .csv as tsv, and adds it as a line graph that reads cleanly', async () => {
+    await pick('depth.csv', 'position\tvalue\n1\t0.5\n2\t0.7\n');
+    const format = await vi.waitFor(() => {
+      const select = byId<HTMLSelectElement>('data-attach-format');
+      if (!select) throw new Error('attach form not open');
+      return select;
+    });
+    expect(format.value).toBe('tsv');
+    expect(document.querySelector('.data-attach-note')?.textContent).toBe(
+      `Its header looks tab-separated, so it is read as tsv. ${PRIVACY_NOTE}`
+    );
+    await addAsNewTrack();
+
+    await vi.waitFor(() =>
+      expect(editorText()).toContain('data: { url: ./depth.csv, format: tsv }')
+    );
+    expect(editorText()).toMatch(
+      /- id: depth\n\s+label: depth\.csv\n\s+kind: linegraph/
+    );
+    await vi.waitFor(() =>
+      expect(byId('data-status').textContent).toMatch(
+        /Loaded depth\.csv\. 2 records/
+      )
+    );
+    expect(
+      document.querySelector('#errors li[data-code="data-parse"]')
+    ).toBeNull();
+  });
+
+  describe("reads the mounted preview's events by what it was mounted with", () => {
+    const LATE = `accession: P05067
+rows:
+  - id: base
+    kind: features
+    data:
+      from: inline
+      inlineData:
+        - { type: DOMAIN, start: 1, end: 10 }
+  - id: late
+    kind: features
+    data: ./late.csv
+`;
+    const rowTwo = () =>
+      listItems().filter((li) => li.textContent?.includes('row 2'));
+    /** The next `track-fetch` failure on the `late` track, once listed (or skipped). */
+    const lateFailure = () =>
+      nextError(
+        (d) => d.phase === 'track-fetch' && d.context?.trackId === 'late'
+      ).then(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    afterAll(() => openGate());
+
+    it("lists a decode failure once when the track is renamed before the preview's report arrives", async () => {
+      setEditorText(LATE);
+      closeGate();
+      const fetched = blobFetches;
+      const failed = lateFailure();
+      await pick('late.csv', BAD);
+      await vi.waitFor(() =>
+        expect(byId('data-status').textContent).toMatch(/couldn't be read/)
+      );
+      await vi.waitFor(() => expect(blobFetches).toBeGreaterThan(fetched));
+      expect(rowTwo()).toHaveLength(1);
+
+      // Live validation of the edit pre-flights `renamed`, not `late`.
+      setEditorText(LATE.replace('id: late', 'id: renamed'));
+      await vi.waitFor(() => expect(byId('preview-stale').hidden).toBe(false), {
+        timeout: 3000,
+      });
+      expect(rowTwo()).toHaveLength(1);
+
+      openGate();
+      await failed;
+      expect(rowTwo()).toHaveLength(1);
+      expect(rowTwo()[0].dataset.code).toBe('data-parse');
+    });
+
+    it("skips the mounted preview's report of a failure the pre-flight listed, even after the config breaks", async () => {
+      setEditorText(LATE);
+      closeGate();
+      const fetched = blobFetches;
+      const failed = lateFailure();
+      byId('run').click();
+      await vi.waitFor(() => expect(blobFetches).toBeGreaterThan(fetched), {
+        timeout: 5000,
+      });
+      await vi.waitFor(() => expect(rowTwo()).toHaveLength(1));
+
+      setEditorText(`${LATE}rows: [\n`);
+      await vi.waitFor(
+        () =>
+          expect(
+            listItems().filter((li) => li.dataset.code === 'data-parse')
+          ).toHaveLength(0),
+        { timeout: 3000 }
+      );
+
+      openGate();
+      await failed;
+      expect(rowTwo()).toHaveLength(0);
+    });
   });
 });

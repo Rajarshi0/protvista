@@ -110,15 +110,25 @@ export function listTargetTracks(parsed: unknown): TrackTarget[] {
 /**
  * A row id for a file that no top-level row already uses: the file name's
  * stem, sanitised, with a `-2`, `-3`, … suffix on a collision.
+ *
+ * In an `extends:` child the base's rows are not here to check against, and
+ * a new standalone row whose id a base group has would replace that whole
+ * group in the merge. So the id gets a `-local` suffix there: `PTM.csv`
+ * becomes `PTM-local`, not the default config's `PTM`.
  */
 export function rowIdFor(fileName: string, parsed: unknown): string {
   const stem = splitName(fileName).stem.replace(/\./g, '-');
+  const extending = isPlainObject(parsed) && parsed.extends !== undefined;
   const taken = new Set(
     isPlainObject(parsed) && Array.isArray(parsed.rows)
       ? parsed.rows.map((r) => (isPlainObject(r) ? r.id : undefined))
       : []
   );
-  return firstFree(stem, '', (id) => !taken.has(id));
+  return firstFree(
+    extending ? `${stem}-local` : stem,
+    '',
+    (id) => !taken.has(id)
+  );
 }
 
 /**

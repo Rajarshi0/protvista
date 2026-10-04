@@ -33,8 +33,10 @@ import {
   referenceFor,
   relabelRuntime,
   sanitizeName,
+  sniffFormat,
   withLocalFiles,
   type LocalDataResult,
+  type LocalFile,
   type RuntimeDetail,
 } from './local-files.js';
 import {
@@ -102,12 +104,17 @@ let updateSeq = 0;
 let lastRendered: { text: string; accession: string; files: number } | null =
   null;
 /**
- * Track keys whose loaded file the latest validation's pre-flight failed to
- * decode. The preview's own report of the same failure is skipped.
+ * What the mounted preview was rendered with, for reading its events: the
+ * track keys whose loaded file the pre-flight failed to decode (the
+ * preview's own report of the same failure is skipped), and the files it was
+ * handed (their `blob:` URLs are put back to `./name`). Captured at mount, so
+ * live validation of later edits cannot change how the preview's events,
+ * which arrive asynchronously, are read.
  */
-let preflightFailed: ReadonlySet<string> = new Set();
-/** The latest validation's pre-flight of the loaded files, if it ran. */
-let lastLocal: LocalDataResult | undefined;
+let mounted: {
+  preflightFailed: ReadonlySet<string>;
+  files: readonly LocalFile[];
+} = { preflightFailed: new Set(), files: [] };
 
 /** Files the user loaded — read in this browser, never uploaded. */
 const store = createLocalFileStore();
@@ -162,9 +169,14 @@ const diagnosticsView = createDiagnosticsView(errorSummary, errorList);
 function renderPreview(
   configText: string,
   accession: string,
-  parsed?: unknown
+  parsed?: unknown,
+  local?: LocalDataResult
 ): void {
   previewHost.textContent = '';
+  mounted = {
+    preflightFailed: local?.preflightFailed ?? new Set(),
+    files: store.list(),
+  };
   const element = document.createElement('protvista-uniprot') as PreviewElement;
   // Property set (not attribute) before connection so the mount-time
   // pipeline parses the raw YAML/JSON string directly. `setConfig()` would
@@ -192,8 +204,8 @@ function renderPreview(
 // back, and skip a decode failure the pre-flight has already listed.
 previewHost.addEventListener('protvista-error', (event) => {
   const raw = (event as CustomEvent<RuntimeDetail>).detail;
-  if (isPreflightDuplicate(raw, preflightFailed)) return;
-  const detail = relabelRuntime(raw, store);
+  if (isPreflightDuplicate(raw, mounted.preflightFailed)) return;
+  const detail = relabelRuntime(raw, mounted.files);
   diagnosticsView.appendRuntime(
     detail?.issues,
     detail?.phase,
@@ -260,6 +272,8 @@ type ValidateResult = {
   parsed?: unknown;
   /** `store.version` at validation time. */
   files: number;
+  /** The pre-flight of the loaded files, when it ran. */
+  local?: LocalDataResult;
 } | null;
 
 /** A data-file extension (from the format table) or a `format:` anywhere. */
@@ -310,14 +324,12 @@ async function validateCurrent(): Promise<ValidateResult> {
     }
     if (seq !== updateSeq) return null;
   }
-  preflightFailed = local?.preflightFailed ?? new Set();
-  lastLocal = local;
 
   const diagnostics = [...configDiagnostics, ...(local?.diagnostics ?? [])];
   editor.setDiagnostics(diagnostics);
   diagnosticsView.showConfig(diagnostics);
   writeHash(currentState());
-  return { text, accession, valid, parsed, files };
+  return { text, accession, valid, parsed, files, local };
 }
 
 /**
@@ -344,7 +356,7 @@ async function run(): Promise<ValidateResult> {
   const result = await validateCurrent();
   if (!result) return null;
   if (result.valid) {
-    renderPreview(result.text, result.accession, result.parsed);
+    renderPreview(result.text, result.accession, result.parsed, result.local);
     lastRendered = {
       text: result.text,
       accession: result.accession,
@@ -450,10 +462,10 @@ async function runWithFile(
     outcome = 'Press Run to see it in the preview.';
   } else if (!result.valid) {
     outcome = 'Fix the config problems listed below, then press Run.';
-  } else if (lastLocal?.failedRefs.has(ref)) {
+  } else if (result.local?.failedRefs.has(ref)) {
     outcome = "It couldn't be read — see the problem listed below.";
   } else {
-    const count = lastLocal?.counts.get(ref);
+    const count = result.local?.counts.get(ref);
     const how = 'read in your browser, never uploaded.';
     outcome =
       count === undefined
@@ -476,12 +488,20 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   const names = new Set([file.name, sanitizeName(file.name)]);
   // A reference already registered to a *different* file (`a(b.csv` under
   // `./a-b.csv`, now loading `a b.csv`) is that file's: the new one goes
-  // through the form and gets a reference of its own.
-  const answers = (value: string | undefined): value is string =>
-    value !== undefined &&
-    names.has(basename(value)) &&
-    (store.get(value)?.name ?? file.name) === file.name;
-  const inferred = inferFormat(file.name);
+  // through the form and gets a reference of its own. One registered to this
+  // file is its own, whatever its name says (`a b.csv` under `./a-b-2.csv`),
+  // so a reload replaces it in place.
+  const answers = (value: string | undefined): value is string => {
+    if (value === undefined) return false;
+    const owner = store.get(value)?.name;
+    return owner === undefined
+      ? names.has(basename(value))
+      : owner === file.name;
+  };
+  // A tab-separated export saved as `.csv` is offered as `tsv`, so the new
+  // track reads it the way its header is written.
+  const byName = inferFormat(file.name);
+  const inferred = sniffFormat(file.text, byName);
 
   const parsed = await parseEditor();
   const matching = findLocalReferences(parsed).filter((r) => answers(r.value));
@@ -500,6 +520,13 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   const choice = await control.ask({
     file,
     inferred,
+    ...(inferred !== byName && inferred !== undefined
+      ? {
+          reason:
+            `Its header looks ${inferred === 'tsv' ? 'tab' : 'comma'}-separated, ` +
+            `so it is read as ${inferred}.`,
+        }
+      : {}),
     options: targets.map((t) => ({ value: t.path, label: t.label })),
     selected: targets.find((t) => answers(t.ref))?.path,
   });

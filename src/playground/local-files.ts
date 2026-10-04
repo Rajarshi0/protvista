@@ -33,11 +33,16 @@ import type {
 } from '../schema/types.js';
 import {
   DATA_FORMATS,
+  DATA_FORMAT_NAMES,
   formatForPath,
   isDataFormat,
 } from '../schema/file-formats.js';
 import { SHAPES } from '../schema/shapes.js';
-import { parseDelimited } from '../schema/adapters/dsv.js';
+import {
+  parseDelimited,
+  suspectDelimiter,
+  type Delimiter,
+} from '../schema/adapters/dsv.js';
 import { runPipeline, sourceLabel } from '../schema/adapters/pipeline.js';
 import { normalizeConfig } from '../schema/normalize.js';
 import { createRegistry } from '../schema/registry.js';
@@ -47,6 +52,14 @@ import type { PlaygroundDiagnostic } from './lint.js';
 
 /** The largest file the playground reads (it is decoded twice: once by the pre-flight, once by the preview). */
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/**
+ * What happens to a loaded file, as the note by the Load button and the
+ * attach form both say: the data stays in the browser, but its name is
+ * written into the config, and so into any link the user shares.
+ */
+export const PRIVACY_NOTE =
+  'Read in your browser — never uploaded. Only the file name goes into the config.';
 
 /** How much of a file {@link looksBinary} inspects before the full read. */
 export const SNIFF_BYTES = 8192;
@@ -421,21 +434,69 @@ export const KIND_FOR_SHAPE: Readonly<Record<ShapeName, string>> = {
   variation: 'variants',
 };
 
+/** The delimiter each delimited format reads with. */
+const DELIMITER_OF: Readonly<Partial<Record<DataFormat, Delimiter>>> = {
+  csv: ',',
+  tsv: '\t',
+};
+
+/** A delimited file's first line. */
+const headerLine = (text: string): string =>
+  text.slice(0, text.search(/\r?\n|$/));
+
+/** A header line's cells under `delimiter`, trimmed. */
+const headerCells = (header: string, delimiter: Delimiter): string[] =>
+  (parseDelimited(header, delimiter)[0] ?? []).map((cell) => cell.trim());
+
+/**
+ * The delimiter a header line actually uses: `declared`, unless that reads
+ * it as a single cell and another candidate splits it — the mismatch #276's
+ * hint diagnoses (a tab-separated export saved as `.csv`), found by the same
+ * `suspectDelimiter`.
+ */
+function headerDelimiter(header: string, declared: Delimiter): Delimiter {
+  if (headerCells(header, declared).length !== 1) return declared;
+  return (
+    suspectDelimiter(header, declared, SHAPES.feature.requiredFields) ??
+    declared
+  );
+}
+
+/**
+ * The format a file should be read as, given the one its extension implies:
+ * `tsv` for a tab-separated header in a `.csv`, `csv` for a comma-separated
+ * one in a `.tsv`. Anything else comes back unchanged — a semicolon header
+ * has no format of its own, and the pre-flight's hint says what to do.
+ */
+export function sniffFormat(
+  text: string,
+  format: DataFormat | undefined
+): DataFormat | undefined {
+  const declared = format === undefined ? undefined : DELIMITER_OF[format];
+  if (declared === undefined) return format;
+  const used = headerDelimiter(headerLine(text), declared);
+  return (
+    DATA_FORMAT_NAMES.find((name) => DELIMITER_OF[name] === used) ?? format
+  );
+}
+
 /**
  * Which records a file seems to hold, from its header row (CSV/TSV) or its
  * first record's keys (JSON): the first shape whose required fields are all
- * present, checked most specific first. A format that declares the records
- * it emits (`emitsShape`, as BED does) gets that shape. Defaults to `feature`.
+ * present, checked most specific first. A header the format's delimiter
+ * reads as one cell is split by the delimiter it seems to use instead (see
+ * {@link sniffFormat}), so a tab-separated `depth.csv` still reads as a line
+ * graph. A format that declares the records it emits (`emitsShape`, as BED
+ * does) gets that shape. Defaults to `feature`.
  */
 export function guessShape(text: string, format: DataFormat): ShapeName {
   const emits = DATA_FORMATS[format].emitsShape;
   if (emits) return emits;
   let fields: string[] = [];
-  if (format === 'csv' || format === 'tsv') {
-    const firstLine = text.slice(0, text.search(/\r?\n|$/));
-    fields = (
-      parseDelimited(firstLine, format === 'csv' ? ',' : '\t')[0] ?? []
-    ).map((cell) => cell.trim());
+  const declared = DELIMITER_OF[format];
+  if (declared !== undefined) {
+    const header = headerLine(text);
+    fields = headerCells(header, headerDelimiter(header, declared));
   } else if (format === 'json') {
     try {
       const body = JSON.parse(text) as unknown;
@@ -564,9 +625,9 @@ function locateReference(
  * bounds check needs the sequence, which the element has) and no `warnings`
  * sink (the element routes those; the playground lists the event).
  *
- * A track the pre-flight cannot place — one that exists only after an
- * `extends:` merge, or a config the normaliser rejects — gets no pre-flight,
- * and still renders.
+ * A track the pre-flight cannot place — one whose shape may come from an
+ * `extends:` base, or any track of a config the normaliser rejects — gets no
+ * pre-flight, and still renders.
  */
 export async function localDataDiagnostics(
   text: string,
@@ -642,36 +703,65 @@ export async function localDataDiagnostics(
 
 /**
  * Each track's first data source after normalisation, by track key, for the
- * shape and format the pre-flight decodes with. `extends:` is set aside — the
- * base is fetched by the element, not here — so a child-only track normalises
- * on its own and a track that needs the base is simply absent. A config the
- * normaliser rejects yields no tracks.
+ * shape and format the pre-flight decodes with. A config the normaliser
+ * rejects yields no tracks.
+ *
+ * An `extends:` child is normalised on its own — the base is fetched by the
+ * element, not here — and a track that overrides a base track of the same id
+ * takes its `kind` (and so its shape) from the base in the merge. Read alone,
+ * such a track would be decoded as feature records. So in a child only the
+ * tracks that state their own `kind:` are kept: the child's `kind` and `data`
+ * win the merge, so they decode the same way in the preview. Any other track
+ * gets no pre-flight; the preview's own report names the file.
  */
 function normalizedTracks(
   parsed: unknown
 ): Map<string, { shape?: ShapeName; format?: DataFormat }> {
   const tracks = new Map<string, { shape?: ShapeName; format?: DataFormat }>();
   if (!isPlainObject(parsed)) return tracks;
+  const keep =
+    parsed.extends === undefined ? undefined : keysStatingKind(parsed);
   try {
-    const normalised = normalizeConfig(
-      { ...parsed, extends: undefined } as unknown as ProtvistaViewerConfig,
+    const normalized = normalizeConfig(
+      parsed as unknown as ProtvistaViewerConfig,
       { registry: createRegistry() }
     );
-    for (const row of normalised.rows) {
+    for (const row of normalized.rows) {
       for (const track of row.tracks) {
+        const key = `${row.id}-${track.id}`;
         const first = track.data[0];
-        if (first) {
-          tracks.set(`${row.id}-${track.id}`, {
-            shape: first.shape,
-            format: first.format,
-          });
+        if (first && (keep === undefined || keep.has(key))) {
+          tracks.set(key, { shape: first.shape, format: first.format });
         }
       }
     }
   } catch {
-    // An `extends:` child or an invalid config: no pre-flight, still renders.
+    // An invalid config: no pre-flight, and it still renders.
   }
   return tracks;
+}
+
+/** The track keys of a raw config's tracks and standalone rows that state a `kind:`. */
+function keysStatingKind(config: Obj): Set<string> {
+  const keys = new Set<string>();
+  const states = (entry: Obj) => typeof entry.kind === 'string';
+  for (const row of Array.isArray(config.rows) ? config.rows : []) {
+    if (!isPlainObject(row) || typeof row.id !== 'string') continue;
+    if (Array.isArray(row.tracks)) {
+      for (const track of row.tracks) {
+        if (
+          isPlainObject(track) &&
+          typeof track.id === 'string' &&
+          states(track)
+        ) {
+          keys.add(`${row.id}-${track.id}`);
+        }
+      }
+    } else if (states(row)) {
+      keys.add(`${row.id}-${row.id}`);
+    }
+  }
+  return keys;
 }
 
 // ── The preview's events ──────────────────────────────────────
@@ -692,17 +782,20 @@ export interface RuntimeDetail {
 }
 
 /**
- * The event's `detail` with every registered `blob:` URL replaced by the
+ * The event's `detail` with each file's `blob:` URL replaced by the
  * reference it stands for — in `message`, `source`, `context.url` and each
  * issue's `message` — so a list row names `./hits.csv`. Returns a new object
- * (other listeners read the same `detail`); an event that names no
- * registered URL comes back unchanged.
+ * (other listeners read the same `detail`); an event that names none of the
+ * URLs comes back unchanged.
+ *
+ * `files` is the set the preview was mounted with, not the store as it is
+ * now: a file removed or reloaded since still has its old URL in the
+ * preview's events.
  */
 export function relabelRuntime<T extends RuntimeDetail>(
   detail: T,
-  store: LocalFileStore
+  files: readonly Pick<LocalFile, 'url' | 'ref'>[]
 ): T {
-  const files = store.list();
   if (files.length === 0 || detail == null) return detail;
   // Plain string replacement: a blob URL is full of regex metacharacters.
   const relabel = (text: string): string =>

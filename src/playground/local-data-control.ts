@@ -13,6 +13,7 @@ import type { DataFormat } from '../schema/types.js';
 import { DATA_FORMAT_NAMES } from '../schema/file-formats.js';
 import {
   MAX_FILE_BYTES,
+  PRIVACY_NOTE,
   SNIFF_BYTES,
   looksBinary,
   type LocalFile,
@@ -34,8 +35,13 @@ export interface AttachOption {
 
 export interface AttachRequest {
   file: ReadFile;
-  /** The format the extension implies, if any. Without one, a choice is required. */
+  /**
+   * The format the file seems to be in: the one its extension implies, or
+   * what its header says instead. Without one, a choice is required.
+   */
   inferred?: DataFormat;
+  /** Why `inferred` is not what the extension implies, when it is not. */
+  reason?: string;
   options: readonly AttachOption[];
   /** Which option starts selected (default: New track). */
   selected?: string;
@@ -114,15 +120,27 @@ export function createLocalDataControl(
       );
       return undefined;
     }
-    const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
-    if (looksBinary(head)) {
+    try {
+      const head = new Uint8Array(
+        await file.slice(0, SNIFF_BYTES).arrayBuffer()
+      );
+      if (looksBinary(head)) {
+        setStatus(
+          `${file.name} looks like a binary or compressed file — export it as ` +
+            `CSV or TSV and load that.`
+        );
+        return undefined;
+      }
+      return { name: file.name, size: file.size, text: await file.text() };
+    } catch {
+      // A dropped folder, or a file moved or changed on disk since it was
+      // picked: the browser refuses the read.
       setStatus(
-        `${file.name} looks like a binary or compressed file — export it as ` +
-          `CSV or TSV and load that.`
+        `Couldn't read ${file.name} — if it is a folder, or it changed on ` +
+          `disk, pick the file again.`
       );
       return undefined;
     }
-    return { name: file.name, size: file.size, text: await file.text() };
   }
 
   async function load(files: readonly File[]): Promise<void> {
@@ -257,10 +275,14 @@ export function createLocalDataControl(
 
       const note = document.createElement('p');
       note.className = 'data-attach-note';
-      note.textContent = inferred
-        ? 'Read in your browser — never uploaded. Only the file name goes into the config.'
-        : `The extension doesn't say how to read ${file.name}, so choose a format. ` +
-          'Read in your browser — never uploaded.';
+      note.textContent = [
+        inferred
+          ? request.reason
+          : `The extension doesn't say how to read ${file.name}, so choose a format.`,
+        PRIVACY_NOTE,
+      ]
+        .filter(Boolean)
+        .join(' ');
       fieldset.append(note);
 
       const actions = document.createElement('div');
