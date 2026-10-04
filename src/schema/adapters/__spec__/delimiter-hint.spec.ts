@@ -75,7 +75,7 @@ const FIX: Record<string, string> = {
 const RENAME: Record<string, string> = {
   'comma-tsv': '(or rename the file to .csv)',
   'tab-csv': '(or rename the file to .tsv)',
-  'semicolon-csv': 'a .tsv name',
+  'semicolon-csv': 'or a .tsv name',
   'semicolon-tsv': '(or rename the file to .csv)',
 };
 
@@ -162,7 +162,7 @@ describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
       './hits.csv (parsed as CSV): missing required header column "type". ' +
         `${FEATURE_HEADER} The header looks semicolon-separated, which ` +
         'ProtVista does not read. If it came from Excel, save it as "Text ' +
-        '(Tab delimited)" and read it as TSV (a .tsv name or `format: tsv` — ' +
+        '(Tab delimited)" and read it as TSV (`format: tsv` or a .tsv name — ' +
         'Excel names that export .txt), or re-export it comma-separated.'
     );
   });

@@ -261,7 +261,7 @@ function delimiterHint(
   }
   if (suspected === ';') {
     const how = renamable
-      ? 'a .tsv name or `format: tsv` — Excel names that export .txt'
+      ? '`format: tsv` or a .tsv name — Excel names that export .txt'
       : '`format: tsv`';
     return (
       'The header looks semicolon-separated, which ProtVista does not read. ' +

@@ -111,14 +111,16 @@ rows:
 ProtVista reads commas (`.csv`) and tabs (`.tsv`) only, and the format alone
 decides which — it never guesses from the content. Excel's "CSV" export in many
 European locales writes semicolons instead, so save the sheet as **Text (Tab
-delimited)** and give the file a `.tsv` name (Excel names it `.txt`), or keep
-the name and say the encoding outright:
+delimited)** and read it as TSV. Excel names that file `.txt`, so say the
+encoding outright with `format:`, which works whatever the name:
 
 ```yaml
 data:
   url: ./hotspots.txt
   format: tsv
 ```
+
+Renaming the file to `.tsv` works too.
 
 If a file's header looks like it uses a different separator from the one its
 format implies, the missing-column error also names the separator the header
