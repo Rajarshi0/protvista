@@ -80,8 +80,8 @@ What stays out of scope:
   are not a generic CSV-parsing library.
 - **Format auto-detection.** No content-sniffing; the file extension
   is the discriminator. A `.tsv`-named CSV file is treated as TSV;
-  authors with a misnamed file must rename it or set `format:`
-  explicitly. When such a file's header fails the required-columns
+  authors with a misnamed file must set `format:` explicitly
+  or rename it. When such a file's header fails the required-columns
   check, the error names the delimiter the header seems to use and
   the fix — a diagnosis only; the reading is never switched.
 - **Streaming or chunked parsing.** All four read the whole response
