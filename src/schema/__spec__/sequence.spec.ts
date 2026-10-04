@@ -92,6 +92,8 @@ describe('parseSequenceText', () => {
 
   it('uppercases residues and drops one trailing stop', () => {
     expect(ok('mkt*')).toEqual({ residues: 'MKT' });
+    // Only one: a second trailing stop is an invalid residue.
+    expect(err('MKT**')).toMatch(/invalid character '\*' at residue 4/);
   });
 
   it('accepts every IUPAC protein letter', () => {
@@ -153,6 +155,21 @@ describe('sequenceDisplayLabel', () => {
     });
     expect(label).toHaveLength(80);
     expect(label.endsWith('…')).toBe(true);
+  });
+
+  it('keeps an 80-character header whole and cuts one of 81', () => {
+    const label = (header: string) =>
+      sequenceDisplayLabel({ residues: 'M', header });
+    expect(label('x'.repeat(80))).toBe('x'.repeat(80));
+    expect(label('x'.repeat(81))).toBe(`${'x'.repeat(79)}…`);
+  });
+
+  it('trims the space before the ellipsis', () => {
+    // The cut falls just after a space: no "construct …".
+    const header = `${'x'.repeat(78)} ${'y'.repeat(10)}`;
+    expect(sequenceDisplayLabel({ residues: 'M', header })).toBe(
+      `${'x'.repeat(78)}…`
+    );
   });
 });
 

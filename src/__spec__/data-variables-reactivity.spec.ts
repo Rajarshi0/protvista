@@ -258,6 +258,39 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
     await vi.waitFor(() => expect(featureUrls()).toEqual([urlFor('mouse')]));
   });
 
+  it('reloads a sequence-mode element too, which has no accession', async () => {
+    // The gate is "a protein to load for", not "an accession".
+    const { el, load } = await mountLoaded(
+      { 'data-species': 'human' },
+      {
+        config: {
+          sequence: 'MKTAYIAKQRMKTAYIAKQR',
+          rows: [
+            {
+              id: 'G',
+              tracks: [
+                {
+                  id: 't',
+                  kind: 'features',
+                  data: 'https://api.example.org/{species}/feed',
+                },
+              ],
+            },
+          ],
+        },
+        accession: null,
+      }
+    );
+    expect(el.accession).toBeFalsy();
+    el.setAttribute('data-species', 'mouse');
+    await settle();
+    flushFrames();
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(featureUrls()).toEqual(['https://api.example.org/mouse/feed'])
+    );
+  });
+
   it('coalesces a burst of attribute changes into one load', async () => {
     const { el, load } = await mountLoaded();
     el.setAttribute('data-species', 'rat');
