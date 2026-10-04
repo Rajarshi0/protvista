@@ -95,19 +95,23 @@ to see it render live (run `pnpm docs:dev` and open `/protvista/playground` loca
 **Path-resolution caveat.** `<protvista-uniprot>` fetches `config-src`
 itself relative to the hosting page, but everything *inside* the
 fetched config — a track's `data: ./hotspots.csv` shorthand, an
-`extends:` reference — is resolved by the loader's default fetcher as
-a bare `fetch(url)`, which the browser resolves against the *hosting
-page's* URL, not the config file's own directory. This is transparent
-for `basic/` and `inline-data/` (neither references another file), so
-"point `config-src` at any example" is literally true only for those
-two. For the file-backed examples (`csv/`, `tsv/`, `json/`, `bed/`,
-`extend-default/`), the snippet above only resolves correctly when
-the hosting page itself lives in that example's own directory (e.g.
-serve from `examples/csv/` and use `config-src="./config.yaml"`) — a
-page at the repo root loading `config-src="./examples/csv/config.yaml"`
-will fetch `./hotspots.csv` against the repo root instead and render
-that group empty. `extend-default/config.yaml` sidesteps this for its
-own `extends:` target by using an origin-absolute path
-(`/src/default-config.yaml`, see the comment in that file) — but its
-`data: ./hotspots.csv` track is still page-relative like every other
-file-backed example.
+`extends:` reference, a `sequence: ./protein.fasta` file — is resolved
+by the loader's default fetcher as a bare `fetch(url)`, which the
+browser resolves against the *hosting page's* URL, not the config
+file's own directory. This is transparent for `basic/` and
+`inline-data/` (neither references another file), so "point
+`config-src` at any example" is literally true only for those two. For
+the file-backed examples (`csv/`, `tsv/`, `json/`, `bed/`,
+`extend-default/`, `sequence-only/`), the snippet above only resolves
+correctly when the hosting page itself lives in that example's own
+directory (e.g. serve from `examples/csv/` and use
+`config-src="./config.yaml"`) — a page at the repo root loading
+`config-src="./examples/csv/config.yaml"` will fetch `./hotspots.csv`
+against the repo root instead and render that group empty. For
+`sequence-only/` it is worse: `./protein.fasta` is the protein itself,
+so fetched from the wrong directory it fails the whole viewer with a
+`cannot-resolve-sequence` config error. `extend-default/config.yaml`
+sidesteps this for its own `extends:` target by using an
+origin-absolute path (`/src/default-config.yaml`, see the comment in
+that file) — but its `data: ./hotspots.csv` track is still
+page-relative like every other file-backed example.
