@@ -657,6 +657,8 @@ class ProtvistaUniprot extends LitElement {
    * it, it is the config's, not the host's (`_hostAccession`): the next
    * config resolves with it only as a fallback, and `_applyConfig` replaces
    * it with whatever that config names — dropping it for a `sequence:`.
+   * Cleared by `updated()` once the host changes the accession itself, so a
+   * host value that happens to equal it is still the host's.
    */
   private _backfilledAccession: string | undefined;
 
@@ -2336,10 +2338,17 @@ class ProtvistaUniprot extends LitElement {
     }
 
     // Consumed before any early return: left set past the `suspend` return
-    // below, the flag would swallow the next real accession change.
+    // below, the flag would swallow the next real accession change. The
+    // ownership of an accession is settled here too, suspended or not.
     const changedByConfig =
       this._configAccessionChange && changedProperties.has('accession');
     if (changedByConfig) this._configAccessionChange = false;
+    // Any other change is the host's: from here the accession is theirs,
+    // even when it equals the one a config once backfilled, so a later
+    // `sequence:` config reports it rather than silently dropping it.
+    else if (changedProperties.has('accession')) {
+      this._backfilledAccession = undefined;
+    }
 
     if (changedProperties.has('suspend')) {
       if (this.suspend) return;

@@ -4,8 +4,12 @@
  * error; a semantically invalid one surfaces the validator's own issue
  * codes (so the editor and `src/schema/validate.ts` never drift).
  */
-import { describe, it, expect } from 'vitest';
-import { computeDiagnostics, lintConfig } from '../lint.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  computeDiagnostics,
+  lintConfig,
+  memoizedExtendsFetcher,
+} from '../lint.js';
 
 const VALID = `accession: P05067
 rows:
@@ -206,5 +210,47 @@ rows:
       'P05067'
     );
     expect(diagnostics.map((d) => d.code)).toEqual(['accession-and-sequence']);
+  });
+});
+
+describe('memoizedExtendsFetcher', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches a base once across lints, and retries one that failed', async () => {
+    const BASE = 'sequence: MKTAYIAKQR\nrows: []\n';
+    const CHILD = 'extends: https://lab.example/base.yaml\nrows: []\n';
+    let fail = true;
+    const fetcher = vi.fn(async () => {
+      if (fail) throw new Error('offline');
+      return BASE;
+    });
+    const extendsFetcher = memoizedExtendsFetcher(fetcher);
+    const lint = () => lintConfig(CHILD, 'P05067', { extendsFetcher });
+
+    expect((await lint()).declaresSequence).toBe(false);
+    fail = false;
+    expect((await lint()).declaresSequence).toBe(true);
+    expect((await lint()).declaresSequence).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('defaults to the size-capped global fetch', async () => {
+    const fetchFn = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          text: async () => 'rows: []\n',
+        }) as unknown as Response
+    );
+    vi.stubGlobal('fetch', fetchFn);
+    const extendsFetcher = memoizedExtendsFetcher();
+
+    expect(await extendsFetcher('./base.yaml')).toBe('rows: []\n');
+    expect(await extendsFetcher('./base.yaml')).toBe('rows: []\n');
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

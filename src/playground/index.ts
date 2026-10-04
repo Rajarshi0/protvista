@@ -19,7 +19,7 @@ import '../protvista-uniprot.js';
 import { parseConfigText } from '../schema/parse.js';
 import { createEditor, type PlaygroundEditor } from './editor.js';
 import { createDiagnosticsView } from './diagnostics-view.js';
-import { lintConfig, type LintResult } from './lint.js';
+import { lintConfig, memoizedExtendsFetcher, type LintResult } from './lint.js';
 import { initSplitter } from './splitter.js';
 import {
   KIND_FOR_SHAPE,
@@ -271,12 +271,15 @@ function syncPicker(text: string): void {
   presetDesc.textContent = pristine ? (preset?.description ?? '') : '';
 }
 
+/** Each `extends:` base is fetched once per page, not on every lint. */
+const extendsFetcher = memoizedExtendsFetcher();
+
 async function computeSafe(
   text: string,
   accession: string
 ): Promise<LintResult> {
   try {
-    return await lintConfig(text, accession);
+    return await lintConfig(text, accession, { extendsFetcher });
   } catch (error) {
     // Validation is not supposed to throw, but never let an unexpected
     // failure silently freeze the pipeline — surface it as an error.
