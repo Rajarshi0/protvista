@@ -760,6 +760,71 @@ describe('sequence mode — setConfig between the modes', () => {
     }
   );
 
+  it("treats a host accession equal to an earlier backfilled one as the host's", async () => {
+    stubEntry();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = mountEl({ viewerConfig: accConfig() });
+    const events = collect(el);
+    await ready(el);
+    expect(el.accession).toBe('P05067');
+
+    // The host takes the accession over, then sets back the very value the
+    // first config backfilled: it is the host's now, not the config's.
+    el.accession = 'Q99999';
+    await el.setConfig({ rows: accConfig().rows });
+    await settle();
+    el.accession = 'P05067';
+    await el.setConfig(seqConfig());
+    await vi.waitFor(() => {
+      const codes = events
+        .filter((e) => e.detail.phase === 'config')
+        .flatMap((e) => e.detail.issues.map((i) => i.code));
+      expect(codes).toContain('accession-and-sequence');
+    });
+    expect(el.accession).toBe('P05067');
+  });
+
+  it('drops a superseded config before re-resolving for a host accession', async () => {
+    // Both FASTA files are held. The earlier call's config lands first and is
+    // applied; the later call then sees the host's new accession and must
+    // re-resolve its own input, not mount the earlier config unchecked.
+    const release: Record<string, () => void> = {};
+    const gates: Record<string, Promise<void>> = {};
+    for (const name of ['a.fasta', 'b.fasta']) {
+      gates[name] = new Promise((resolve) => (release[name] = resolve));
+    }
+    const fetchFn = vi.fn(async (input: unknown) => {
+      const name = Object.keys(gates).find((n) => String(input).includes(n));
+      if (!name) return ok({});
+      await gates[name];
+      return ok({ text: `>${name}\n${RESIDUES}\n` });
+    });
+    vi.stubGlobal('fetch', fetchFn);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const el = mountEl({ viewerConfig: seqConfig() });
+    const events = collect(el);
+    await ready(el);
+
+    void el.setConfig(seqConfig({ sequence: './a.fasta' }));
+    void el.setConfig(seqConfig({ sequence: './b.fasta' }));
+    await settle();
+    el.accession = 'P05067';
+    await el.updateComplete;
+
+    release['a.fasta']();
+    await settle();
+    release['b.fasta']();
+    await settle();
+
+    await vi.waitFor(() => {
+      const codes = events
+        .filter((e) => e.detail.phase === 'config')
+        .flatMap((e) => e.detail.issues.map((i) => i.code));
+      expect(codes).toEqual(['accession-and-sequence']);
+    });
+  });
+
   it('clears the spinner when a sequence config replaces a hung entry fetch', async () => {
     // The entry never answers. The sequence-mode `_init` must reset the
     // flag the superseded fetch would have cleared, or the spinner stays.

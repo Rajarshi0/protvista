@@ -21,6 +21,7 @@ import { parseConfigText } from '../schema/parse.js';
 import { validateConfig } from '../schema/validate.js';
 import { createRegistry } from '../schema/registry.js';
 import { mergeExtends, type ExtendsFetcher } from '../schema/extends.js';
+import { fetchTextCapped } from '../schema/fetch-text.js';
 import type { ProtvistaViewerConfig } from '../schema/types.js';
 
 export interface PlaygroundDiagnostic {
@@ -156,6 +157,30 @@ export interface LintOptions {
    * Defaults to the loader's own (`globalThis.fetch`, size-capped).
    */
   extendsFetcher?: ExtendsFetcher;
+}
+
+/**
+ * An `extends:` fetcher that fetches each base once. The page lints on every
+ * debounced edit, so without it a config that extends a base refetched and
+ * re-parsed that base each time. A failed fetch is forgotten, so a later
+ * edit tries the URL again.
+ */
+export function memoizedExtendsFetcher(
+  fetcher: ExtendsFetcher = fetchTextCapped
+): ExtendsFetcher {
+  const cache = new Map<string, Promise<string>>();
+  return (url) => {
+    let text = cache.get(url);
+    if (!text) {
+      const pending = fetcher(url);
+      cache.set(url, pending);
+      pending.catch(() => {
+        if (cache.get(url) === pending) cache.delete(url);
+      });
+      text = pending;
+    }
+    return text;
+  };
 }
 
 /**
