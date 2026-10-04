@@ -1865,7 +1865,8 @@ class ProtvistaUniprot extends LitElement {
     for (const { groupId, trackId, fields } of misses) {
       const group = this.config.rows.find((row) => row.id === groupId);
       if (!group) continue;
-      const message = formatTooltipFieldMiss(groupId, trackId, fields);
+      const path = issuePath(group, trackId);
+      const message = formatTooltipFieldMiss(path, fields);
       this._report(
         {
           severity: 'warning',
@@ -1877,7 +1878,7 @@ class ProtvistaUniprot extends LitElement {
         {
           issues: [
             {
-              path: issuePath(group, trackId),
+              path,
               message,
               code: 'tooltip-field-miss',
               severity: 'warning',

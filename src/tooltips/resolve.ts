@@ -928,13 +928,15 @@ export function createTooltipFieldTracker(
  * The text of a tooltip field-miss warning, without the console's
  * `[protvista-uniprot]` tag — the element adds that for the console line, and
  * the event and the issue carry this text as is.
+ *
+ * `trackPath` names the row as the issue path does: `group/track`, or the
+ * bare track id on a standalone row, whose group is synthetic.
  */
 export function formatTooltipFieldMiss(
-  groupId: string,
-  trackId: string,
+  trackPath: string,
   fields: readonly string[]
 ): string {
-  return `Track ${groupId}/${trackId}: dataTooltip references unknown fields: ${fields.join(', ')}`;
+  return `Track ${trackPath}: dataTooltip references unknown fields: ${fields.join(', ')}`;
 }
 
 // -----------------------------------------------------------------------------

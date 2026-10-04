@@ -3420,9 +3420,9 @@ describe('track-data coordinate warning', () => {
       expect(el.querySelector(BADGE)).toBeNull();
     });
 
-    it('uses the bare track id as the path for a standalone row', async () => {
+    it('names a standalone row by its bare track id, in the path and the message', async () => {
       stubRoutes({ csv: IN_RANGE });
-      const { misses } = mountMisses({
+      const { misses, lines } = mountMisses({
         viewerConfig: {
           rows: [
             {
@@ -3437,10 +3437,13 @@ describe('track-data coordinate warning', () => {
 
       await vi.waitFor(() => expect(misses()).toHaveLength(1));
       const [ev] = misses();
+      // The message names the row as the issue path does: the synthetic
+      // group is not one the author wrote, so not `solo/solo`.
+      const message = 'Track solo: dataTooltip references unknown fields: nope';
       expect(ev.detail.issues[0].path).toBe('solo');
-      expect(ev.detail.message).toBe(
-        'Track solo/solo: dataTooltip references unknown fields: nope'
-      );
+      expect(ev.detail.issues[0].message).toBe(message);
+      expect(ev.detail.message).toBe(message);
+      expect(lines()).toEqual([[`[protvista-uniprot] ${message}`]]);
       expect(ev.detail.context.trackId).toBe('solo');
     });
 

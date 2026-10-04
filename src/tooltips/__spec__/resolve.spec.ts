@@ -617,7 +617,7 @@ describe('resolveTooltip — unknown-field tracker (#135)', () => {
     expect(fields).toEqual(['foo', 'bar', 'baz']);
     // Single-use: the summary is handed over once.
     expect(tracker.flush()).toEqual([]);
-    const message = formatTooltipFieldMiss('G', 't', fields);
+    const message = formatTooltipFieldMiss('G/t', fields);
     expect(message).toBe(
       'Track G/t: dataTooltip references unknown fields: foo, bar, baz'
     );
