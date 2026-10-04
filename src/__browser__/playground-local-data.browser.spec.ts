@@ -14,7 +14,7 @@ import { EditorView } from 'codemirror';
 
 import { CSS_PREFIX } from '../styles/css-prefix.js';
 import { decodeState, encodeState } from '../playground/url-state.js';
-import { PRIVACY_NOTE } from '../playground/local-files.js';
+import { MAX_FILE_BYTES, PRIVACY_NOTE } from '../playground/local-files.js';
 import { expectNoA11yViolations } from './axe.js';
 
 const BADGE = `.${CSS_PREFIX}-error-badge`;
@@ -482,6 +482,83 @@ rows:
     expect(byId('data-attach').hidden).toBe(true);
     expect(editorText()).toBe(before);
     expect(editorText().split('./a-b-2.csv')).toHaveLength(2);
+  });
+
+  it('matches a path by the file name in its exact case', async () => {
+    const scores = `accession: P05067
+rows:
+  - id: scores
+    kind: features
+    data: ./data/scores.csv
+`;
+    setEditorText(scores);
+    await pick('SCORES.csv', GOOD);
+    // `./data/scores.csv` is another file on a case-sensitive host: ask.
+    await vi.waitFor(() => expect(byId('data-attach').hidden).toBe(false));
+    expect(byId<HTMLSelectElement>('data-attach-target').value).toBe('');
+    await userEvent.keyboard('{Escape}');
+    expect(editorText()).toBe(scores);
+  });
+
+  it('loads only the first of several dropped files, says so, and renders it', async () => {
+    dropOnPane([
+      new File([GOOD], 'first.csv', { type: 'text/plain' }),
+      new File([BAD], 'second.csv', { type: 'text/plain' }),
+    ]);
+    await vi.waitFor(() =>
+      expect(byId('data-attach').textContent).toContain('first.csv')
+    );
+    expect(byId('data-attach').textContent).not.toContain('second.csv');
+    await addAsNewTrack();
+
+    await vi.waitFor(() =>
+      expect(byId('data-status').textContent).toBe(
+        'Load one file at a time — loaded first.csv only. Loaded first.csv. ' +
+          '2 records — read in your browser, never uploaded.'
+      )
+    );
+    expect(editorText()).toContain('data: ./first.csv');
+    expect(editorText()).not.toContain('second.csv');
+    await vi.waitFor(() =>
+      expect((preview()?.data?.['first-first'] as unknown[])?.length).toBe(2)
+    );
+  });
+
+  it('refuses a file over the size cap before reading it', async () => {
+    const before = editorText();
+    const big = new File(
+      [new Uint8Array(MAX_FILE_BYTES + 1).fill(0x61)],
+      'big.csv'
+    );
+    const text = vi.spyOn(big, 'text');
+    dropOnPane([big]);
+    await vi.waitFor(() =>
+      expect(byId('data-status').textContent).toBe(
+        'big.csv is 20.0 MB — the playground opens data files up to 20.0 MB.'
+      )
+    );
+    expect(text).not.toHaveBeenCalled();
+    expect(byId('data-attach').hidden).toBe(true);
+    expect(byId('data-files').textContent).not.toContain('big.csv');
+    expect(editorText()).toBe(before);
+  });
+
+  it('refuses a binary or compressed file', async () => {
+    const before = editorText();
+    await pick('x.xlsx', '');
+    await userEvent.upload(
+      byId('data-file'),
+      new File([new Uint8Array([0x50, 0x4b, 3, 4, 0x41, 0x42])], 'x.xlsx')
+    );
+    await vi.waitFor(() =>
+      expect(byId('data-status').textContent).toBe(
+        'x.xlsx looks like a binary or compressed file — export it as CSV ' +
+          'or TSV and load that.'
+      )
+    );
+    expect(byId('data-attach').hidden).toBe(true);
+    expect(byId('data-files').textContent).not.toContain('x.xlsx');
+    expect(editorText()).toBe(before);
   });
 
   it('says so when the browser cannot read a dropped file, such as a folder', async () => {

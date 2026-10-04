@@ -74,6 +74,8 @@ function load(
 const GOOD_CSV =
   'type,start,end,description\nDOMAIN,10,25,Kinase\nSITE,30,30,x';
 const BAD_CSV = 'type,start,end,description\nDOMAIN,abc,25,Kinase';
+const OUT_OF_RANGE_CSV =
+  'type,start,end,description\nDOMAIN,10,25,Kinase\nSITE,700,812,Tail';
 
 const standalone = (data: unknown, extra: object = {}) => ({
   accession: 'P05067',
@@ -330,6 +332,16 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     for (const name of DATA_FORMAT_NAMES) {
       const emits = DATA_FORMATS[name].emitsShape;
       if (emits) expect(guessShape('position,value\n1,2', name)).toBe(emits);
+    }
+    // BED declares `feature`, which is also the fallback: declare another
+    // shape for a moment, so the declaration is seen to win.
+    const bed = DATA_FORMATS.bed as { emitsShape?: string };
+    const declared = bed.emitsShape;
+    try {
+      bed.emitsShape = 'variation';
+      expect(guessShape('type,start,end\nA,1,2', 'bed')).toBe('variation');
+    } finally {
+      bed.emitsShape = declared;
     }
   });
 
@@ -799,6 +811,29 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
     expect(relabelRuntime(adapterFailure, empty.list())).toBe(adapterFailure);
   });
 
+  it('relabels every loaded file, not only the first', () => {
+    const two = makeStore().store;
+    load(two, './hits.csv', GOOD_CSV);
+    const tail = load(two, './tail.csv', OUT_OF_RANGE_CSV);
+    const message = `${tail.url} (parsed as CSV): 1 of 2 rows fall outside P05067`;
+    const out = relabelRuntime(
+      {
+        ...outOfRange,
+        message,
+        source: tail.url,
+        issues: [{ ...outOfRange.issues![0], message }],
+        context: { groupId: 'tail', trackId: 'tail', url: tail.url },
+      },
+      two.list()
+    );
+    expect(out.source).toBe('./tail.csv');
+    expect(out.context?.url).toBe('./tail.csv');
+    expect(out.issues?.[0].message).toBe(
+      './tail.csv (parsed as CSV): 1 of 2 rows fall outside P05067'
+    );
+    expect(JSON.stringify(out)).not.toContain('blob:');
+  });
+
   it('relabels by the files it is given, so a file removed since the preview mounted is still named', () => {
     const own = makeStore().store;
     const gone = load(own, './gone.csv', GOOD_CSV);
@@ -807,6 +842,26 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
     const detail = { ...adapterFailure, source: gone.url };
     expect(relabelRuntime(detail, atMount).source).toBe('./gone.csv');
     expect(relabelRuntime(detail, own.list()).source).toBe(gone.url);
+  });
+
+  it('keys a grouped track as <groupId>-<trackId>, as the pre-flight does', () => {
+    const grouped: RuntimeDetail = {
+      ...adapterFailure,
+      context: {
+        ...adapterFailure.context,
+        groupId: 'MY_LAB',
+        trackId: 'hotspots',
+      },
+    };
+    expect(isPreflightDuplicate(grouped, new Set(['MY_LAB-hotspots']))).toBe(
+      true
+    );
+    expect(isPreflightDuplicate(grouped, new Set(['hotspots-MY_LAB']))).toBe(
+      false
+    );
+    expect(isPreflightDuplicate(grouped, new Set(['hotspots-hotspots']))).toBe(
+      false
+    );
   });
 
   it('is a duplicate only for a pre-flighted track-fetch adapter / parse failure', () => {

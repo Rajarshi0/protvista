@@ -104,6 +104,42 @@ describe('appendTrack', () => {
     expect(JSON.parse(fromJson.text)).toEqual({ rows: [row] });
   });
 
+  it('quotes ids and labels YAML would read as null or a boolean', async () => {
+    const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+    const parsed = await parse(text);
+    for (const word of ['null', 'true', 'No', '~', '.inf']) {
+      const row = { ...ROW, id: word, label: word };
+      const result = await appendTrack(text, parsed, row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`- id: "${word}"`);
+      expect(result.text).toContain(`label: "${word}"`);
+      expect(
+        ((await parse(result.text)) as { rows: unknown[] }).rows[1]
+      ).toEqual(row);
+    }
+  });
+
+  it.each([
+    [
+      'a top-level key starting with -',
+      'rows:\n  - id: a\n    data: ./a.csv\n-x: 1\n',
+    ],
+    [
+      'a flow mapping closed at column 0',
+      'rows:\n  - id: a\n    data: { url: ./a.csv,\n      format: csv\n}\n',
+    ],
+  ])(
+    'returns a snippet when the splice after %s does not re-parse to the config plus the row',
+    async (_, text) => {
+      const parsed = await parse(text);
+      expect(parsed).toMatchObject({ rows: [{ id: 'a' }] });
+      expect(await appendTrack(text, parsed, ROW)).toEqual({
+        error: expect.stringContaining('by hand') as unknown,
+        snippet: expect.stringContaining('- id: hits') as unknown,
+      });
+    }
+  );
+
   it('round-trips a JSON config', async () => {
     const text =
       JSON.stringify(
@@ -132,8 +168,15 @@ describe('appendTrack', () => {
   });
 
   it('refuses a config that is not a mapping, or whose rows is not a list', async () => {
-    expect(await appendTrack('- a', ['a'], ROW)).toMatchObject({
-      error: expect.any(String),
+    const notMapping = {
+      error: 'The config is not a mapping, so no track can be added:',
+    };
+    expect(await appendTrack('- a', ['a'], ROW)).toMatchObject(notMapping);
+    // JSON is re-serialised, not spliced: only the guard stops a JSON array
+    // coming back unchanged as a "successful" edit with no track added.
+    expect(await appendTrack('["a"]', ['a'], ROW)).toEqual({
+      ...notMapping,
+      snippet: JSON.stringify(ROW, null, 2),
     });
     expect(await appendTrack('rows: 3', { rows: 3 }, ROW)).toMatchObject({
       snippet: expect.stringContaining('- id: hits') as unknown,
