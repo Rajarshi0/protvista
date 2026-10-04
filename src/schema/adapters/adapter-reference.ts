@@ -47,6 +47,9 @@ export interface FieldDoc {
   /** Required in the emitted feature record (the shape the track renders). */
   required: boolean;
   notes?: string;
+  /** Inclusive numeric bounds the decoders enforce, emitted into the schema. */
+  minimum?: number;
+  maximum?: number;
 }
 
 
@@ -136,7 +139,7 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
     type: 'string',
     required: false,
     notes:
-      "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty.",
+      "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty, and dropped with a warning when it names an Object.prototype property (`valueOf`, `constructor`, …).",
   },
   {
     name: 'fill',
@@ -149,6 +152,8 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
     name: 'opacity',
     type: 'number',
     required: false,
+    minimum: 0,
+    maximum: 1,
     notes:
       'Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error.',
   },

@@ -38,7 +38,7 @@
     },
     "shape": {
       "type": "string",
-      "description": "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty."
+      "description": "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty, and dropped with a warning when it names an Object.prototype property (`valueOf`, `constructor`, …)."
     },
     "fill": {
       "type": "string",
@@ -46,7 +46,9 @@
     },
     "opacity": {
       "type": "number",
-      "description": "Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error."
+      "description": "Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error.",
+      "minimum": 0,
+      "maximum": 1
     }
   }
 }

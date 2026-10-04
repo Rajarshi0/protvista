@@ -12,21 +12,26 @@ inline now render the same way.
 - A `color`, `shape`, `fill` or `opacity` column styles that one feature,
   ahead of the track's `rendering:`, so `DOMAIN` rows can be blue and
   `BINDING` rows red in one track. A blank cell falls back to the track's
-  setting. `opacity` must be a number from 0 to 1.
+  setting. `opacity` must be a number from 0 to 1. A `shape` that names a
+  JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a
+  `data-field-ignored` warning, because the canvas would otherwise stop
+  drawing the track at that feature.
 - Any other column (`pmid`, `gene`, `url`, …) is kept as written, so a
   `dataTooltip` can show it as `{% $pmid %}` or `path: pmid`.
   A JSON value that is an object or array is kept on the record, but a
   tooltip never renders it as markup, whatever its shape.
 - A new Markdoc tag, `{% link href=$url %}text{% /link %}` (or
   `{% link href=$url /%}`), turns a URL field into a tooltip link. Only
-  `http(s):`, `mailto:` and root-relative URLs become links; anything else
-  renders as plain text.
+  `http(s):` and `mailto:` URLs and values starting with `/`, `#` or `?`
+  become links (a protocol-relative `//host/…` value links to that host);
+  anything else renders as plain text.
 - `tooltipContent`, `locations`, `residuesToHighlight` and names JavaScript
   reserves (`toString`, `__proto__`, …) cannot come from a file (or from
   inline text read with `format:`) and are dropped. Structured inline
   records and `setTrackData()` arrays may still set them.
 - Two new `track-data` warnings on the `protvista-error` event, with
-  `detail.issues[0].code` `data-field-ignored` (a dropped column) or
+  `detail.issues[0].code` `data-field-ignored` (a dropped column or
+  `shape` value) or
   `unpaintable-color` (a `color` / `fill` the canvas cannot paint, which
   would otherwise draw that feature in the previous feature's colour). Like
   the coordinate warning, they reach the event, the console and the

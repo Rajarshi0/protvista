@@ -74,7 +74,7 @@ dataTooltip:
     PMID {% $pmid %}: {% link href=$url %}read on PubMed{% /link %}
 ```
 
-The self-closing form, `{% link href=$url /%}`, uses the URL itself as the link text. The URL goes through the same allowlist as every other link: only an absolute `http:` / `https:` / `mailto:` URL or a root-relative one (`/…`, `#…`, `?…`) becomes a link. Anything else — `javascript:`, a bare relative path like `docs/x.html`, or a feature whose `url` is empty or missing — renders the text alone, with no link. Links open in the same tab.
+The self-closing form, `{% link href=$url /%}`, uses the URL itself as the link text. The URL goes through the same allowlist as every other link: only an absolute `http:` / `https:` / `mailto:` URL, or one starting with `/`, `#` or `?`, becomes a link. A value starting with `//` is protocol-relative, not root-relative: `//example.org/x` links to another site, as an `https:` URL would. Anything else — `javascript:`, a bare relative path like `docs/x.html`, or a feature whose `url` is empty or missing — renders the text alone, with no link. Links open in the same tab.
 
 ## Fields from your own file
 

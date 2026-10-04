@@ -23,6 +23,7 @@ import {
   type KindAdapterDoc,
 } from '../adapters/adapter-reference.js';
 import { BUILTIN_ADAPTERS } from '../adapters/index.js';
+import { renderFeatureRecordSchema } from '../adapters/render-adapter-reference.js';
 import { FEATURE_RENDER_FIELDS } from '../adapters/feature-fields.js';
 import {
   POINT_COLUMNS,
@@ -210,6 +211,23 @@ describe('adapter reference — render fields drift (#283)', () => {
       expect(FEATURE_RECORD_FIELDS.map((f) => f.name)).toContain(name);
     }
   );
+
+  it('the published `opacity` bounds are the ones the decoder enforces', () => {
+    const properties = renderFeatureRecordSchema().properties as Record<
+      string,
+      { minimum?: number; maximum?: number }
+    >;
+    const { minimum, maximum } = properties.opacity;
+    expect([minimum, maximum]).toEqual([0, 1]);
+    const decode = (opacity: number) =>
+      runPipeline('feature', 'json', [{ type: 'D', start: 1, end: 2, opacity }], {
+        source: './x.json',
+      });
+    expect(() => decode(minimum as number)).not.toThrow();
+    expect(() => decode(maximum as number)).not.toThrow();
+    expect(() => decode((minimum as number) - 0.01)).toThrow(/opacity/);
+    expect(() => decode((maximum as number) + 0.01)).toThrow(/opacity/);
+  });
 });
 
 describe('adapter reference — fixture drift (examples/csv)', () => {

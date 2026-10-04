@@ -308,6 +308,8 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
   for (const f of FEATURE_RECORD_FIELDS) {
     const prop: Record<string, unknown> = { type: f.type };
     if (f.notes) prop.description = f.notes;
+    if (f.minimum !== undefined) prop.minimum = f.minimum;
+    if (f.maximum !== undefined) prop.maximum = f.maximum;
     if (f.name === 'start') {
       prop.description =
         '1-based start position (inclusive).';

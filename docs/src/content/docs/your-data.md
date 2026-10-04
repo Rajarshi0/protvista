@@ -35,7 +35,7 @@ A `features` track draws a list of **feature records**. Each record has:
 | `description` | no | Free text shown on hover/click. |
 | `score` | no | A number, typically 0–1, for quality or confidence. |
 | `color` | no | This feature's colour — any CSS colour (`#1f77b4`, `steelblue`, `rgb(…)`). Wins over the track's `rendering.color`. |
-| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. |
+| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. A value that names a JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a `track-data` warning, so the feature takes the track's shape. |
 | `fill` | no | This feature's fill colour, when it should differ from `color`. |
 | `opacity` | no | A number from 0 to 1 (default 0.9). |
 
@@ -183,8 +183,10 @@ BINDING,132,140,Predicted heparin-binding site,#d62728,23456789,https://pubmed.n
 REGION,290,340,Acidic-rich linker region,,,
 ```
 
-(The PubMed IDs are placeholders.) [`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled)
-is a runnable version.
+(The PubMed IDs are placeholders.) For a runnable variant, see
+[`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled):
+the same track and pattern, with a lab-notebook `ref` column in place of
+`pmid`, a "Read more" link, and one more `DOMAIN` row.
 
 How it works:
 
@@ -204,8 +206,9 @@ How it works:
 - **Every other column is kept as written**, as text — a blank cell is an
   empty string — so a template can use it as `{% $pmid %}` and a `fields` list
   as `path: pmid`. `{% link href=$url %}…{% /link %}` turns a URL column into a
-  link; a row whose URL is empty, or not an `http(s):` / `mailto:` / `/…` URL,
-  shows the text without one. Name columns like identifiers (`gene_name`,
+  link; a row whose URL is empty, or not an `http(s):` / `mailto:` / `/…` /
+  `#…` / `?…` URL, shows the text without one. A protocol-relative
+  `//host/…` value counts as `/…` and links to that host. Name columns like identifiers (`gene_name`,
   `p-value`): a template cannot reference a name with a space in it, a
   `fields` path cannot reach one with a dot, and `$ctx` is reserved for the
   tooltip context.
