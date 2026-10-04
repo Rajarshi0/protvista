@@ -155,7 +155,7 @@ export function ignoredShapesWarning(
     message:
       `${formatLabel}: ignored "shape" value(s) in ${values.length} row(s) ` +
       `(${quoteDistinct(values)}) — these names are reserved by JavaScript, ` +
-      `so those features take the track's shape.`,
+      `so those features take the track's or type's shape.`,
   };
 }
 

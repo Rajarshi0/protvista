@@ -435,7 +435,7 @@ describe('features-json adapter — extra fields (#283)', () => {
         message:
           'hits.json: ignored "shape" value(s) in 2 row(s) ("hasOwnProperty", ' +
           '"toString") — these names are reserved by JavaScript, so those ' +
-          "features take the track's shape.",
+          "features take the track's or type's shape.",
       },
     ]);
   });

@@ -35,7 +35,7 @@ A `features` track draws a list of **feature records**. Each record has:
 | `description` | no | Free text shown on hover/click. |
 | `score` | no | A number, typically 0–1, for quality or confidence. |
 | `color` | no | This feature's colour — any CSS colour (`#1f77b4`, `steelblue`, `rgb(…)`). Wins over the track's `rendering.color`. |
-| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. A value that names a JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a `track-data` warning, so the feature takes the track's shape. |
+| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. A value that names a JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a `track-data` warning, so the feature takes the track's or type's shape. |
 | `fill` | no | This feature's fill colour, when it should differ from `color`. |
 | `opacity` | no | A number from 0 to 1 (default 0.9). |
 

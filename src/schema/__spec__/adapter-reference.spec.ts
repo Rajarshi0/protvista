@@ -220,9 +220,14 @@ describe('adapter reference — render fields drift (#283)', () => {
     const { minimum, maximum } = properties.opacity;
     expect([minimum, maximum]).toEqual([0, 1]);
     const decode = (opacity: number) =>
-      runPipeline('feature', 'json', [{ type: 'D', start: 1, end: 2, opacity }], {
-        source: './x.json',
-      });
+      runPipeline(
+        'feature',
+        'json',
+        [{ type: 'D', start: 1, end: 2, opacity }],
+        {
+          source: './x.json',
+        }
+      );
     expect(() => decode(minimum as number)).not.toThrow();
     expect(() => decode(maximum as number)).not.toThrow();
     expect(() => decode((minimum as number) - 0.01)).toThrow(/opacity/);

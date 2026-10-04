@@ -454,7 +454,7 @@ describe.each([
         message:
           `${label}: ignored "shape" value(s) in 5 row(s) ("valueOf", ` +
           `"hasOwnProperty", "constructor", …) — these names are reserved ` +
-          `by JavaScript, so those features take the track's shape.`,
+          `by JavaScript, so those features take the track's or type's shape.`,
       },
     ]);
   });
