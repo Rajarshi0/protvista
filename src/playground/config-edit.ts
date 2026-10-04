@@ -16,7 +16,12 @@ import { parseConfigText } from '../schema/parse.js';
 import { createRegistry } from '../schema/registry.js';
 import { isPlainObject } from '../schema/shape.js';
 import { detectFormat } from './format.js';
-import { findLocalReferences, sanitiseName } from './local-files.js';
+import {
+  findLocalReferences,
+  firstFree,
+  sanitizeName,
+  splitName,
+} from './local-files.js';
 
 /** What a track's `data:` becomes: the shorthand path, or a descriptor. */
 export type DataValue = string | { url: string; format: DataFormat };
@@ -107,18 +112,13 @@ export function listTargetTracks(parsed: unknown): TrackTarget[] {
  * stem, sanitised, with a `-2`, `-3`, … suffix on a collision.
  */
 export function rowIdFor(fileName: string, parsed: unknown): string {
-  const clean = sanitiseName(fileName);
-  const dot = clean.lastIndexOf('.');
-  const stem = (dot > 0 ? clean.slice(0, dot) : clean).replace(/\./g, '-');
+  const stem = splitName(fileName).stem.replace(/\./g, '-');
   const taken = new Set(
     isPlainObject(parsed) && Array.isArray(parsed.rows)
       ? parsed.rows.map((r) => (isPlainObject(r) ? r.id : undefined))
       : []
   );
-  for (let n = 1; ; n += 1) {
-    const id = n === 1 ? stem : `${stem}-${n}`;
-    if (!taken.has(id)) return id;
-  }
+  return firstFree(stem, '', (id) => !taken.has(id));
 }
 
 /**
@@ -127,7 +127,7 @@ export function rowIdFor(fileName: string, parsed: unknown): string {
  * name.
  */
 export function rowLabelFor(fileName: string): string {
-  return /[*`[\]{}<>\\]/.test(fileName) ? sanitiseName(fileName) : fileName;
+  return /[*`[\]{}<>\\]/.test(fileName) ? sanitizeName(fileName) : fileName;
 }
 
 // ── YAML text helpers ─────────────────────────────────────────

@@ -32,7 +32,7 @@ import {
   localDataDiagnostics,
   referenceFor,
   relabelRuntime,
-  sanitiseName,
+  sanitizeName,
   withLocalFiles,
   type LocalDataResult,
   type RuntimeDetail,
@@ -473,7 +473,7 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   control.setSnippet('');
   const note =
     skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
-  const names = new Set([file.name, sanitiseName(file.name)]);
+  const names = new Set([file.name, sanitizeName(file.name)]);
   // A reference already registered to a *different* file (`a(b.csv` under
   // `./a-b.csv`, now loading `a b.csv`) is that file's: the new one goes
   // through the form and gets a reference of its own.

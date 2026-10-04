@@ -76,7 +76,7 @@ export function basename(value: string): string {
 }
 
 /** A file name reduced to characters a plain YAML scalar and a URL path keep. */
-export function sanitiseName(fileName: string): string {
+export function sanitizeName(fileName: string): string {
   const cleaned = fileName.replace(/[^A-Za-z0-9._-]/g, '-').replace(/-+/g, '-');
   return cleaned === '' || /^\.+$/.test(cleaned) ? 'data' : cleaned;
 }
@@ -94,14 +94,38 @@ export function referenceFor(
   fileName: string,
   taken: ReadonlyMap<string, string> = new Map()
 ): string {
-  const clean = sanitiseName(fileName);
+  const { stem, ext } = splitName(fileName);
+  return `./${firstFree(stem, ext, (name) => {
+    const owner = taken.get(`./${name}`);
+    return owner === undefined || owner === fileName;
+  })}`;
+}
+
+/**
+ * A file name, sanitised, split before its last dot: `hits.csv` gives
+ * `hits` and `.csv`. A name with no dot, or only a leading one (`.env`), is
+ * all stem.
+ */
+export function splitName(fileName: string): { stem: string; ext: string } {
+  const clean = sanitizeName(fileName);
   const dot = clean.lastIndexOf('.');
-  const [stem, ext] =
-    dot > 0 ? [clean.slice(0, dot), clean.slice(dot)] : [clean, ''];
+  return dot > 0
+    ? { stem: clean.slice(0, dot), ext: clean.slice(dot) }
+    : { stem: clean, ext: '' };
+}
+
+/**
+ * The first of `<stem><ext>`, `<stem>-2<ext>`, `<stem>-3<ext>`, … that
+ * `isFree` accepts.
+ */
+export function firstFree(
+  stem: string,
+  ext: string,
+  isFree: (name: string) => boolean
+): string {
   for (let n = 1; ; n += 1) {
-    const ref = `./${n === 1 ? clean : `${stem}-${n}${ext}`}`;
-    const owner = taken.get(ref);
-    if (owner === undefined || owner === fileName) return ref;
+    const name = n === 1 ? `${stem}${ext}` : `${stem}-${n}${ext}`;
+    if (isFree(name)) return name;
   }
 }
 
@@ -581,7 +605,7 @@ export async function localDataDiagnostics(
     }
     if (ref.adapter !== undefined) continue;
 
-    tracks ??= normalisedTracks(parsed);
+    tracks ??= normalizedTracks(parsed);
     const track = tracks.get(ref.trackKey);
     if (!track) continue;
     const shape = track.shape ?? 'feature';
@@ -623,7 +647,7 @@ export async function localDataDiagnostics(
  * on its own and a track that needs the base is simply absent. A config the
  * normaliser rejects yields no tracks.
  */
-function normalisedTracks(
+function normalizedTracks(
   parsed: unknown
 ): Map<string, { shape?: ShapeName; format?: DataFormat }> {
   const tracks = new Map<string, { shape?: ShapeName; format?: DataFormat }>();
