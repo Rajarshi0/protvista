@@ -66,6 +66,14 @@ rows:
         - { type: DOMAIN, start: 1, end: 10 }
 `;
 
+/** An `extends:` base that brings a `sequence:` of its own. */
+const SEQUENCE_BASE_URL = 'https://lab.example/base.yaml';
+const SEQUENCE_BASE = `sequence: |
+  >my construct v2
+  MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQ
+rows: []
+`;
+
 const GOOD = 'type,start,end,description\nDOMAIN,10,25,Kinase\nSITE,30,30,Site';
 const OUT_OF_RANGE =
   'type,start,end,description\nDOMAIN,10,25,Kinase\nSITE,700,812,Tail';
@@ -190,6 +198,9 @@ beforeAll(async () => {
         blobFetches += 1;
         await gate;
         return realFetch(input, init);
+      }
+      if (url === SEQUENCE_BASE_URL) {
+        return new Response(SEQUENCE_BASE, { status: 200 });
       }
       const body = url.includes('/proteins/api/proteins/')
         ? { sequence: { sequence: 'M'.repeat(770), length: 770 } }
@@ -731,5 +742,36 @@ rows:
     await vi.waitFor(() => expect(input.disabled).toBe(false));
     expect(input.hasAttribute('aria-describedby')).toBe(false);
     expect(hint.hidden).toBe(true);
+  });
+
+  it('previews a child config whose extends: base declares the sequence', async () => {
+    // The child names no `sequence:`; the element finds it after merging
+    // the base, so handing it the accession would fail as "both".
+    setEditorText(`extends: ${SEQUENCE_BASE_URL}
+rows:
+  - id: sites
+    label: Sites on {accession}
+    kind: features
+    data:
+      from: inline
+      inlineData:
+        - { type: DOMAIN, start: 4, end: 30 }
+`);
+    byId('run').click();
+
+    await vi.waitFor(() =>
+      expect(preview()?.textContent).toContain('Sites on my construct v2')
+    );
+    expect(preview()?.hasAttribute('accession')).toBe(false);
+    expect(byId<HTMLInputElement>('accession').disabled).toBe(true);
+    expect(listItems().map((li) => li.dataset.code)).not.toContain(
+      'accession-and-sequence'
+    );
+
+    setEditorText(CONFIG);
+    byId('run').click();
+    await vi.waitFor(() =>
+      expect(byId<HTMLInputElement>('accession').disabled).toBe(false)
+    );
   });
 });

@@ -157,6 +157,49 @@ rows:
     expect(declaresSequence).toBe(false);
   });
 
+  it('reads a sequence inherited through extends:', async () => {
+    // The element merges the base before it looks for `sequence:`, so the
+    // page must too, or it hands the preview its accession ("both").
+    const CHILD = `extends: https://lab.example/base.yaml
+rows:
+  - id: sites
+    kind: features
+    label: Sites on {accession}
+    data:
+      from: inline
+      inlineData:
+        - { type: BINDING, start: 4, end: 9 }
+`;
+    const fetched: string[] = [];
+    const lint = (base: string | Error) =>
+      lintConfig(CHILD, 'P05067', {
+        extendsFetcher: async (url) => {
+          fetched.push(url);
+          if (base instanceof Error) throw base;
+          return base;
+        },
+      });
+
+    // Validated as the sequence config it becomes: `{accession}` in a label
+    // is the header there, not a missing accession.
+    expect(
+      await lint('sequence: |\n  >base\n  MKTAYIAKQR\nrows: []\n')
+    ).toEqual({ diagnostics: [], declaresSequence: true });
+    expect(fetched).toEqual(['https://lab.example/base.yaml']);
+    // A base with no sequence, or one that can't be fetched, says no.
+    expect((await lint('rows: []\n')).declaresSequence).toBe(false);
+    expect((await lint(new Error('offline'))).declaresSequence).toBe(false);
+    // A config with no `extends:` fetches nothing.
+    fetched.length = 0;
+    await lintConfig(VALID, 'P05067', {
+      extendsFetcher: async (url) => {
+        fetched.push(url);
+        return '';
+      },
+    });
+    expect(fetched).toEqual([]);
+  });
+
   it('still reports an accession written beside the sequence', async () => {
     const { diagnostics } = await lintConfig(
       `accession: P05067\n${SEQUENCE}`,

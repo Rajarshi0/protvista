@@ -20,6 +20,8 @@
 import { parseConfigText } from '../schema/parse.js';
 import { validateConfig } from '../schema/validate.js';
 import { createRegistry } from '../schema/registry.js';
+import { mergeExtends, type ExtendsFetcher } from '../schema/extends.js';
+import type { ProtvistaViewerConfig } from '../schema/types.js';
 
 export interface PlaygroundDiagnostic {
   /** Start offset in the document (character index). */
@@ -132,20 +134,33 @@ export interface LintResult {
   /**
    * Whether the config declares `sequence:` — a protein of its own, so the
    * preview must not be given an accession (that is an error) and the
-   * accession input has nothing to do.
+   * accession input has nothing to do. Read after `extends:` is resolved, as
+   * the element reads it: a child config inherits its base's `sequence:`.
    */
   declaresSequence: boolean;
 }
 
+/** {@link lintConfig}'s options. */
+export interface LintOptions {
+  /**
+   * Fetches an `extends:` base, to see whether it brings a `sequence:`.
+   * Defaults to the loader's own (`globalThis.fetch`, size-capped).
+   */
+  extendsFetcher?: ExtendsFetcher;
+}
+
 /**
  * {@link computeDiagnostics}, plus what the page needs to know about the
- * config without parsing it a second time: whether it declares `sequence:`.
- * A `sequence:` config is validated without the accession, exactly as the
- * element's loader treats it.
+ * config without parsing it a second time: whether it declares `sequence:`,
+ * itself or through `extends:`. A `sequence:` config is validated without
+ * the accession, exactly as the element's loader treats it. The diagnostics
+ * are still the editor text's own: a base is fetched only to read its
+ * `sequence:`.
  */
 export async function lintConfig(
   text: string,
-  accession?: string
+  accession?: string,
+  options: LintOptions = {}
 ): Promise<LintResult> {
   if (text.trim() === '') return { diagnostics: [], declaresSequence: false };
 
@@ -170,8 +185,20 @@ export async function lintConfig(
 
   const isObject =
     parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
-  const declaresSequence =
-    isObject && (parsed as { sequence?: unknown }).sequence != null;
+  const own = isObject ? (parsed as { sequence?: unknown }).sequence : null;
+  const inherited =
+    isObject && own == null
+      ? await inheritedSequence(
+          parsed as ProtvistaViewerConfig,
+          options.extendsFetcher
+        )
+      : undefined;
+  const declaresSequence = own != null || inherited !== undefined;
+  // Validated as the sequence config it is once merged, so `{accession}` is
+  // checked as sequence mode checks it, not as a missing accession.
+  if (inherited !== undefined) {
+    parsed = { ...(parsed as object), sequence: inherited };
+  }
 
   // Only when the config declares no accession itself — an authored
   // `accession:` takes precedence, exactly as the element treats it — and
@@ -198,4 +225,25 @@ export async function lintConfig(
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
   return { diagnostics, declaresSequence };
+}
+
+/**
+ * The `sequence:` a config's `extends:` chain brings in, if any. A child
+ * config takes its base's `sequence:` (a scalar, so the child's own would
+ * win), and the element reads it after merging — so without this, the page
+ * would hand such a config its accession, and the preview would fail as
+ * `accession-and-sequence`. A base that can't be resolved counts as none:
+ * the preview then reports that itself.
+ */
+async function inheritedSequence(
+  config: ProtvistaViewerConfig,
+  fetcher: ExtendsFetcher | undefined
+): Promise<string | undefined> {
+  if (config.extends === undefined) return undefined;
+  try {
+    const merged = await mergeExtends(config, { fetcher });
+    return merged.sequence ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
