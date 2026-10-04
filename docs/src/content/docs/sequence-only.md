@@ -125,8 +125,9 @@ event with `phase: 'config'`, `severity: 'error'` and each problem in
 
 The [playground](/protvista/playground/) checks a `sequence:` config as you
 type, inline sequence included, and disables its accession box while the
-config sets `sequence:`. It can't read a FASTA file from your disk, so write
-the sequence inline there (`sequence: |`).
+config sets `sequence:`, itself or through an `extends:` base. It can't read
+a FASTA file from your disk, so write the sequence inline there
+(`sequence: |`).
 
 ## Your coordinates are still checked
 
