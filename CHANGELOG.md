@@ -129,7 +129,10 @@ neither of `accession:` / `sequence:` (`accession-and-sequence`,
 `missing-protein`), a multi-record or malformed sequence (`invalid-sequence`)
 and a FASTA file that can't be fetched (`cannot-resolve-sequence`). Each is a
 `phase: 'config'` error in the panel and on the `protvista-error` event. The
-playground disables its accession box for such a config. Accession-mode
+playground disables its accession box for such a config, including one whose
+`extends:` base sets `sequence:`. `setConfig()` switches between the modes: a
+`sequence:` config replaces an accession the previous config set, while a
+config that names no protein keeps showing it, as before. Accession-mode
 configs are unchanged. See
 [Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
 

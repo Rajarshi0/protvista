@@ -51,7 +51,7 @@ type ProtvistaUniprotLike = HTMLElement & {
   accession: string | undefined;
   data: Record<string, unknown>;
   customTrackData: Record<string, unknown>;
-  _clearingAccession: boolean;
+  _configAccessionChange: boolean;
   _init(): Promise<void>;
   _loadDataInComponents(): Promise<void>;
   updated(changedProperties: Map<string, unknown>): void;
@@ -165,17 +165,18 @@ describe('<protvista-uniprot> — accession-change handling', () => {
     expect(initSpy).toHaveBeenCalledTimes(1);
     expect(pushSpy).not.toHaveBeenCalled();
   });
-  it('a programmatic clear by setConfig() does not re-run _init()', () => {
-    // `setConfig()` clears an accession the previous config supplied and
-    // runs `_init()` itself. Lit delivers the clear a microtask later, as an
-    // ordinary defined → undefined change, so `setConfig()` flags it and this
-    // hook consumes the flag instead of starting a second `_init()`.
-    el._clearingAccession = true;
+  it("a config's own accession change does not re-run _init()", () => {
+    // `_applyConfig` drops (or replaces) an accession the previous config
+    // supplied, inside the `_init()` that goes on to load for the new config.
+    // Lit delivers the change a microtask later, as an ordinary defined →
+    // undefined change, so `_applyConfig` flags it and this hook consumes the
+    // flag instead of starting a second `_init()`.
+    el._configAccessionChange = true;
     el.accession = undefined;
     el.updated(new Map<string, unknown>([['accession', 'P05067']]));
 
     expect(initSpy).not.toHaveBeenCalled();
-    expect(el._clearingAccession).toBe(false);
+    expect(el._configAccessionChange).toBe(false);
 
     // The flag is spent: a real change afterwards re-runs `_init()`.
     el.accession = 'P12345';

@@ -449,6 +449,27 @@ describe('loadConfigWithSource — sequence mode', () => {
     ]);
   });
 
+  it('uses a fallback accession only for a config that names no protein', async () => {
+    const opts = { fallbackAccession: 'P05067', requireProtein: true };
+    // Named no protein: the fallback fills it, so no `missing-protein`.
+    const kept = await loadConfigWithSource({ rows }, opts);
+    expect(kept.config.accession).toBe('P05067');
+    // Its own accession wins.
+    const own = await loadConfigWithSource({ accession: 'Q99999', rows }, opts);
+    expect(own.config.accession).toBe('Q99999');
+    // A sequence replaces it: dropped, not "both".
+    const seq = await loadConfigWithSource({ sequence: FASTA, rows }, opts);
+    expect(seq.config.accession).toBeUndefined();
+    expect(seq.config.sequence?.header).toBe('my construct v2');
+    expect(seq.issues).toEqual([]);
+    // A host accession still takes precedence over it.
+    const host = await loadConfigWithSource(
+      { rows },
+      { ...opts, accession: 'A11111' }
+    );
+    expect(host.config.accession).toBe('A11111');
+  });
+
   it('adds a start-from-blank summary when extended tracks need UniProt', async () => {
     const base = {
       sources: {

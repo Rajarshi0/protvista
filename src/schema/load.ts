@@ -157,6 +157,16 @@ export interface LoadConfigOptions {
   accession?: string;
 
   /**
+   * An accession to fall back on when `accession` is unset: injected like it
+   * into a config that names no protein of its own, but simply ignored —
+   * not an `accession-and-sequence` error — by a config that declares
+   * `sequence:`. `<protvista-uniprot>` passes the accession a previous config
+   * supplied, so a `setConfig()` that names no protein keeps showing it,
+   * while one that brings its own sequence replaces it.
+   */
+  fallbackAccession?: string;
+
+  /**
    * Fetch implementation for a `sequence:` that names a FASTA file.
    * Defaults to `globalThis.fetch` with a 2 MiB ceiling, the same as
    * `extendsFetcher`. Provide a stub in tests or a filesystem-backed
@@ -270,10 +280,11 @@ export async function loadConfigWithSource(
   // accession would silently override an accession the author
   // deliberately hard-coded, which would be more surprising than
   // helpful. Never into a `sequence:` config, where a host accession
-  // is an error of its own (below) rather than a fill-in.
+  // is an error of its own (below) rather than a fill-in, and a fallback
+  // one is dropped.
   const withAccession = declaresSequence
     ? merged
-    : injectAccession(merged, opts.accession);
+    : injectAccession(merged, opts.accession ?? opts.fallbackAccession);
 
   const result = validateConfig(withAccession, registry, {
     runtimeVariables: Object.keys(opts.variables ?? {}),

@@ -212,6 +212,34 @@ describe('sequence mode — rendering', () => {
     );
   });
 
+  it('cuts a long header at 80 characters wherever it names the protein', async () => {
+    stubEntry();
+    const header = 'x'.repeat(200);
+    const cut = `${'x'.repeat(79)}…`;
+    const el = mountEl({
+      viewerConfig: seqConfig({ sequence: `>${header}\n${RESIDUES}\n` }),
+      openGroups: ['g'],
+    });
+    await ready(el);
+    expect(el.textContent).toContain(`Hotspots on ${cut}`);
+    expect(el.textContent).not.toContain('x'.repeat(80));
+
+    const empty = mountEl({
+      viewerConfig: {
+        sequence: `>${header}\n${RESIDUES}\n`,
+        rows: [inlineTrack('empty', [])],
+      },
+    });
+    await vi.waitFor(() => {
+      if (!empty.querySelector('.protvista-no-results')) {
+        throw new Error('not rendered');
+      }
+    });
+    const text = empty.querySelector('.protvista-no-results')?.textContent;
+    expect(text).toContain(`No feature data available for ${cut}`);
+    expect(text).not.toContain('x'.repeat(80));
+  });
+
   it('escapes a header that looks like markup', async () => {
     stubEntry();
     const el = mountEl({
@@ -390,6 +418,91 @@ describe('sequence mode — config failures reach the routed config report', () 
     );
   });
 
+  it('shows the spinner, not a blank viewer, while that accession re-resolves', async () => {
+    stubEntry();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const el = mountEl({ viewerConfig: seqConfig() });
+    await ready(el);
+    expect(el.loading).toBe(false);
+
+    el.accession = 'P05067';
+    await el.updateComplete;
+    await el.updateComplete;
+    expect(el.loading).toBe(true);
+    expect(el.querySelector(LOADER)).not.toBeNull();
+    await vi.waitFor(() => {
+      if (!el.querySelector(ISSUES)) throw new Error('panel not ready');
+    });
+  });
+
+  it.each([
+    [
+      'an accession is set',
+      (el: El) => {
+        el.accession = 'P05067';
+      },
+    ],
+    [
+      'setConfig() is called',
+      (el: El) => {
+        // Its FASTA never arrives, so the old load lands first.
+        void el.setConfig(seqConfig({ sequence: './later.fasta' }));
+      },
+    ],
+  ])(
+    'aborts the track load still in flight when %s mid-load',
+    async (_name, change) => {
+      // The file track's fetch is held until the config is dropped; landing
+      // after that, it must not read the missing config.
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const fetchFn = vi.fn(async (input: unknown) => {
+        if (String(input).includes('hot.csv')) {
+          await held;
+          return ok({ text: 'type,start,end\nDOMAIN,1,5\n' });
+        }
+        if (String(input).includes('later.fasta')) {
+          return new Promise<Response>(() => undefined);
+        }
+        return String(input).includes(ENTRY)
+          ? ok({ json: { sequence: { sequence: 'A'.repeat(770) } } })
+          : ok({});
+      });
+      vi.stubGlobal('fetch', fetchFn);
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const unhandled: unknown[] = [];
+      const onRejection = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onRejection);
+      try {
+        const el = mountEl({
+          viewerConfig: seqConfig({
+            rows: [
+              {
+                id: 'g',
+                tracks: [{ id: 'f', kind: 'features', data: './hot.csv' }],
+              },
+            ],
+          }),
+        });
+        await vi.waitFor(() =>
+          expect(fetchedUrls(fetchFn).some((u) => u.includes('hot.csv'))).toBe(
+            true
+          )
+        );
+        change(el);
+        await el.updateComplete;
+        expect(el.config).toBeUndefined();
+
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(unhandled.map(String)).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onRejection);
+      }
+    }
+  );
+
   it('rejects an accession set while a sequence config is still resolving', async () => {
     const fetchFn = stubEntry();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -561,6 +674,91 @@ describe('sequence mode — setConfig between the modes', () => {
 
     expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
   });
+
+  it("keeps the previous config's accession for a config that names no protein", async () => {
+    // The host never set an accession: the first config's is kept, as
+    // before sequence mode, rather than failing as `missing-protein`.
+    const fetchFn = stubEntry();
+    const el = mountEl({ viewerConfig: accConfig() });
+    const events = collect(el);
+    await ready(el);
+    expect(el.accession).toBe('P05067');
+
+    await el.setConfig({ rows: [inlineTrack('other', [])] });
+    await settle();
+    await el.updateComplete;
+    expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
+    expect(el.querySelector(PANEL)).toBeNull();
+    expect(el.accession).toBe('P05067');
+    expect(el.config?.rows.map((r) => r.id)).toEqual(['other']);
+    await vi.waitFor(() =>
+      expect(
+        fetchedUrls(fetchFn).filter((u) => u.includes(ENTRY))
+      ).toHaveLength(2)
+    );
+
+    // …and still drops it for a config that brings its own sequence.
+    await el.setConfig(seqConfig());
+    await settle();
+    await ready(el);
+    expect(el.accession).toBeUndefined();
+    expect(el.sequence).toBe(RESIDUES);
+    expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
+  });
+
+  it("swaps the previous config's accession for the new config's own", async () => {
+    const fetchFn = stubEntry();
+    const el = mountEl({ viewerConfig: accConfig() });
+    await ready(el);
+
+    await el.setConfig({ ...accConfig(), accession: 'Q99999' });
+    await settle();
+    await el.updateComplete;
+    expect(el.accession).toBe('Q99999');
+    expect(fetchedUrls(fetchFn).filter((u) => u.includes(ENTRY))).toEqual([
+      expect.stringContaining('P05067'),
+      expect.stringContaining('Q99999'),
+    ]);
+  });
+
+  it.each([
+    ['accession', accConfig(), { ...accConfig(), accession: 'Q99999' }],
+    ['sequence', seqConfig(), seqConfig()],
+  ])(
+    'applies the later of two overlapping setConfig() calls (%s mount)',
+    async (_name, mounted, later) => {
+      // The earlier call resolves first and backfills its accession; that is
+      // not the host's, so the later call must not re-run on it and load the
+      // earlier config in its place.
+      stubEntry();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const proto = customElements.get('protvista-uniprot')!.prototype as {
+        _init(): Promise<void>;
+      };
+      const init = vi.spyOn(proto, '_init');
+      const el = mountEl({ viewerConfig: mounted });
+      const events = collect(el);
+      await ready(el);
+
+      void el.setConfig(accConfig());
+      await el.setConfig(later);
+      await settle();
+      await settle();
+      await el.updateComplete;
+
+      expect(events.filter((e) => e.detail.phase === 'config')).toEqual([]);
+      // The mount and one per call: no re-run.
+      expect(init).toHaveBeenCalledTimes(3);
+      if ('sequence' in later) {
+        expect(el.config?.sequence?.residues).toBe(RESIDUES);
+        expect(el.accession).toBeUndefined();
+      } else {
+        expect(el.config?.accession).toBe('Q99999');
+        expect(el.accession).toBe('Q99999');
+      }
+    }
+  );
 
   it('clears the spinner when a sequence config replaces a hung entry fetch', async () => {
     // The entry never answers. The sequence-mode `_init` must reset the

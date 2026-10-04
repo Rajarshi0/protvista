@@ -654,17 +654,19 @@ class ProtvistaUniprot extends LitElement {
   /**
    * The accession `_applyConfig` backfilled from the config's `accession:`
    * (the host left the attribute blank). While `this.accession` still holds
-   * it, it is the config's, not the host's: `setConfig()` clears it, so a
-   * switch to a `sequence:` config isn't mistaken for a host accession.
+   * it, it is the config's, not the host's (`_hostAccession`): the next
+   * config resolves with it only as a fallback, and `_applyConfig` replaces
+   * it with whatever that config names — dropping it for a `sequence:`.
    */
   private _backfilledAccession: string | undefined;
 
   /**
-   * Set by `setConfig()` just before it clears a backfilled accession, and
+   * Set by `_applyConfig` when it changes `this.accession` for a config, and
    * consumed by `updated()` when that change arrives (Lit delivers it a
-   * microtask later), so the clear doesn't re-run `_init()` on its own.
+   * microtask later), so the config's own change doesn't re-run `_init()`:
+   * the `_init()` that applied the config goes on to load for it.
    */
-  private _clearingAccession = false;
+  private _configAccessionChange = false;
 
   /**
    * Authored tracks' decoded coordinates still waiting for the
@@ -678,7 +680,7 @@ class ProtvistaUniprot extends LitElement {
    */
   private _pendingCoordinateChecks: Map<
     string,
-    { accession: string; coordinates: TrackCoordinates }
+    { protein: string; coordinates: TrackCoordinates }
   > = new Map();
 
   /**
@@ -1600,10 +1602,7 @@ class ProtvistaUniprot extends LitElement {
     // replacing any unchecked entry a reloaded track left behind.
     for (const key of reloadedKeys) this._pendingCoordinateChecks.delete(key);
     for (const [key, coordinates] of Object.entries(trackCoordinates)) {
-      this._pendingCoordinateChecks.set(key, {
-        accession: protein,
-        coordinates,
-      });
+      this._pendingCoordinateChecks.set(key, { protein, coordinates });
     }
 
     // Recompute each reloaded group's aggregate from the LIVE merged
@@ -1674,10 +1673,22 @@ class ProtvistaUniprot extends LitElement {
     const variables = mergeVariables({
       configVariables: this.config?.variables,
       dataset: this.dataset,
-      accession: this.config?.sequence ? undefined : this.accession,
+      accession: this.accession,
     });
     if (this.config?.sequence) delete variables.accession;
     return variables;
+  }
+
+  /**
+   * The accession the host set (the attribute or property), as opposed to
+   * one `_applyConfig` backfilled from a config's `accession:`. Only the
+   * host's is passed to the loader as such — and is an error beside a
+   * `sequence:` — and only a change to it re-runs a config resolve.
+   */
+  private get _hostAccession(): string | undefined {
+    return this.accession && this.accession !== this._backfilledAccession
+      ? this.accession
+      : undefined;
   }
 
   /**
@@ -1820,15 +1831,18 @@ class ProtvistaUniprot extends LitElement {
    */
   private _checkCoordinates() {
     const sequence = this.sequence;
-    if (!sequence || !this.config) return;
+    // Named by its display label, never the private key; with no label there
+    // is no protein, so no pending check could match one anyway.
+    const label = this._proteinLabel;
+    if (!sequence || !this.config || !label) return;
     for (const group of this.config.rows) {
       for (const track of group.tracks) {
         const key = `${group.id}-${track.id}`;
         const pending = this._pendingCoordinateChecks.get(key);
         if (!pending) continue;
         if (
-          pending.accession !== this._sequenceAccession ||
-          pending.accession !== this._proteinKey
+          pending.protein !== this._sequenceAccession ||
+          pending.protein !== this._proteinKey
         ) {
           continue;
         }
@@ -1836,11 +1850,11 @@ class ProtvistaUniprot extends LitElement {
         const { coordinates } = pending;
         const found = findOutOfRange(coordinates.rows, sequence.length);
         if (!found) continue;
-        // Named by its display label, so a sequence-mode message reads
-        // "outside my construct v2 (240 residues)", not the private key.
+        // A sequence-mode message reads "outside my construct v2 (240
+        // residues)", not the private key.
         const message = formatOutOfRangeWarning(
           coordinates,
-          this._proteinLabel ?? pending.accession,
+          label,
           sequence.length,
           found
         );
@@ -2323,9 +2337,9 @@ class ProtvistaUniprot extends LitElement {
 
     // Consumed before any early return: left set past the `suspend` return
     // below, the flag would swallow the next real accession change.
-    const clearedByConfig =
-      this._clearingAccession && changedProperties.has('accession');
-    if (clearedByConfig) this._clearingAccession = false;
+    const changedByConfig =
+      this._configAccessionChange && changedProperties.has('accession');
+    if (changedByConfig) this._configAccessionChange = false;
 
     if (changedProperties.has('suspend')) {
       if (this.suspend) return;
@@ -2349,9 +2363,10 @@ class ProtvistaUniprot extends LitElement {
     // the gate below. Running the push on THIS tick would inject
     // stale (old-accession) data into components.
     //
-    // `setConfig()` clearing an accession the previous config supplied is not
-    // such a change — it re-runs `_init()` itself — so its flag is consumed
-    // here and the change otherwise ignored.
+    // `_applyConfig` replacing or dropping an accession the previous config
+    // supplied is not such a change — the `_init()` that applied the config
+    // loads for it — so its flag is consumed here and the change otherwise
+    // ignored.
     //
     // A sequence-mode element given an accession after mount is the other
     // exception: `undefined → value` is ignored above, but here the config
@@ -2359,13 +2374,13 @@ class ProtvistaUniprot extends LitElement {
     // `accession-and-sequence` rather than silently keeping a config never
     // checked against the attribute.
     if (changedProperties.has('accession')) {
-      if (clearedByConfig) {
-        // `setConfig()`'s own clear: it re-runs `_init()` itself.
+      if (changedByConfig) {
+        // The config's own change: the `_init()` that applied it loads.
       } else if (changedProperties.get('accession') !== undefined) {
         this._init();
         return;
       } else if (this.config?.sequence && this.accession) {
-        this.config = undefined;
+        this._dropConfig();
         this._init();
         return;
       }
@@ -2443,22 +2458,32 @@ class ProtvistaUniprot extends LitElement {
     // Taken before the first `await`, so it orders calls, not completions.
     const generation = ++this._entryGeneration;
     if (!this.config) {
-      // The loader is handed the accession as it is *now*. One set while the
-      // config resolves (a host that sets `accession` right after appending
-      // the element) is an `undefined → value` change `updated()` ignores, so
-      // without this re-run a sequence config would mount past it unchecked
-      // and an accession-less config would fail as `missing-protein`. The
-      // generation check skips the re-run when a newer `_init()` already
-      // started (a defined → defined change).
-      const requestedAccession = this.accession;
+      // The loader is handed the host's accession as it is *now*. One set
+      // while the config resolves (a host that sets `accession` right after
+      // appending the element) is an `undefined → value` change `updated()`
+      // ignores, so without this re-run a sequence config would mount past it
+      // unchecked and an accession-less config would fail as
+      // `missing-protein`. The generation check skips the re-run when a newer
+      // `_init()` already started (a defined → defined change). Only the
+      // host's accession counts: an overlapping, superseded `_init()` that
+      // applied its config meanwhile may have backfilled one, and re-running
+      // for that would load its config in place of this newer one. That
+      // stale config is dropped, so the re-run resolves this one's input.
+      const requestedAccession = this._hostAccession;
+      const outcome = await this.resolveViewerConfig().then(
+        (loaded) => ({ loaded }),
+        (error: unknown) => ({ error })
+      );
+      if (
+        generation === this._entryGeneration &&
+        this._hostAccession !== requestedAccession
+      ) {
+        this._dropConfig();
+        return this._init();
+      }
       try {
-        const loaded = await this.resolveViewerConfig();
-        if (
-          generation === this._entryGeneration &&
-          this.accession !== requestedAccession
-        ) {
-          return this._init();
-        }
+        if ('error' in outcome) throw outcome.error;
+        const { loaded } = outcome;
         this._applyConfig(loaded);
         // Issues on a config that still validated — warnings. Reported
         // through the same seam as a failure so they reach the
@@ -2487,12 +2512,6 @@ class ProtvistaUniprot extends LitElement {
           );
         }
       } catch (err) {
-        if (
-          generation === this._entryGeneration &&
-          this.accession !== requestedAccession
-        ) {
-          return this._init();
-        }
         // Validation / parse errors are surfaced on the console so
         // authors see the full `ConfigValidationError.issues[]` list
         // (developer channel, unchanged), AND routed through the shared
@@ -2645,11 +2664,18 @@ class ProtvistaUniprot extends LitElement {
    */
   private _applyConfig(loaded: LoadedConfig): void {
     const normalized = loaded.config;
-    // Accession precedence: HTML attribute wins, so only backfill
-    // from the config when the author left the attribute blank.
-    if (!this.accession && normalized.accession) {
-      this.accession = normalized.accession;
-      this._backfilledAccession = normalized.accession;
+    // Accession precedence: HTML attribute wins, so only backfill from the
+    // config when the host left the attribute blank. An accession a previous
+    // config backfilled is this config's to replace: kept when it names no
+    // protein (the loader injected it as a fallback), swapped for its own
+    // `accession:`, and dropped for a `sequence:` (no accession at all).
+    if (!this._hostAccession) {
+      const next = normalized.accession;
+      if (this.accession !== next) {
+        this._configAccessionChange = true;
+        this.accession = next;
+      }
+      this._backfilledAccession = next;
     }
     this._authoredConfig = loaded.authored;
     // The pristine rows, kept before any layout edit: the baseline "reset to
@@ -2693,29 +2719,32 @@ class ProtvistaUniprot extends LitElement {
    */
   async setConfig(config: ProtvistaViewerConfig | string): Promise<void> {
     this.viewerConfig = config;
-    // An accession the previous config supplied is that config's, not the
-    // host's: left in place, it would be passed to the loader as the host
-    // accession, and a switch to a `sequence:` config would fail as "both".
-    // The new config re-supplies it if it has one. The flag stops `updated()`
-    // treating the clear as a post-mount accession change (another `_init()`).
-    if (
-      this._backfilledAccession !== undefined &&
-      this.accession === this._backfilledAccession
-    ) {
-      this._clearingAccession = true;
-      this.accession = undefined;
-    }
-    this._backfilledAccession = undefined;
+    // An accession the previous config supplied stays until the new config
+    // resolves: it is handed to the loader only as a fallback, and
+    // `_applyConfig` then keeps, replaces or drops it by what the new config
+    // names (see `_backfilledAccession`).
     // Drop the current config so `_init` re-resolves rather than
     // short-circuiting, and so a failure can't leave a half-swapped state.
-    this.config = undefined;
+    this._dropConfig();
     this._baseRows = undefined;
     this._authoredConfig = undefined;
     this.data = Object.create(null);
     this.rawData = {};
     this._pendingCoordinateChecks.clear();
-    this.loading = true;
     await this._init();
+  }
+
+  /**
+   * Drop the loaded config so the next `_init()` resolves it again. The
+   * track loads still in flight read the config when they land, so they are
+   * aborted with it; and the spinner shows until the new one resolves,
+   * rather than the blank `render()` gives a config-less, idle element.
+   */
+  private _dropConfig(): void {
+    for (const batch of this._loadBatches) batch.controller.abort();
+    this._loadBatches = [];
+    this.config = undefined;
+    this.loading = true;
   }
 
   /**
@@ -2730,8 +2759,10 @@ class ProtvistaUniprot extends LitElement {
    * `{accession}` placeholders. `loadConfig` will ignore this when
    * the config already declares its own accession, and rejects it
    * (`accession-and-sequence`) for a config that declares `sequence:`.
-   * Likewise the host's `data-*` attributes, so `missing-variable`
-   * accepts their tokens.
+   * An accession a previous config backfilled goes as `fallbackAccession`
+   * instead: kept by a config that names no protein, ignored by a
+   * `sequence:` one. Likewise the host's `data-*` attributes, so
+   * `missing-variable` accepts their tokens.
    */
   private async resolveViewerConfig(): Promise<LoadedConfig> {
     // `data-*` names go along so `missing-variable` accepts the tokens this
@@ -2740,7 +2771,8 @@ class ProtvistaUniprot extends LitElement {
     // has nothing to show, so it says so (`missing-protein`) in the panel
     // rather than mounting blank.
     const loadOpts = {
-      accession: this.accession,
+      accession: this._hostAccession,
+      fallbackAccession: this.accession || undefined,
       registry: this.registry,
       variables: { ...this.dataset },
       requireProtein: true,
