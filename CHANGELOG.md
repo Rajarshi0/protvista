@@ -95,9 +95,9 @@ the config editor. Pick a CSV, TSV, JSON or BED file and attach it to a new or
 existing track, and it renders against the current accession. The file is
 read in your browser and never uploaded: the config names it
 (`data: ./hits.csv`), so a shared link carries only the name. A file with any
-other extension asks how to read it and writes `format:` into the config, and
-a config that already names the file (`data: ./data/hits.csv`) just needs the
-file loaded. Parse errors (with the delimiter hint) and coordinate warnings
+other extension asks how to read it and writes `format:` into the config (a
+tab-separated `.csv` is offered as `tsv`), and a config that already names the
+file (`data: ./data/hits.csv`) just needs the file loaded. Parse errors (with the delimiter hint) and coordinate warnings
 are listed in the playground's diagnostics, naming your file. Dropping a file
 on the editor no longer pastes its text into the config, and dropping one
 elsewhere on the page no longer navigates away.

@@ -251,10 +251,6 @@ export default defineConfig({
         'src/playground/index.ts',
         'src/playground/editor.ts',
         'src/playground/splitter.ts',
-        // The "Load data file…" control's DOM wiring, likewise; it is driven
-        // by playground-local-data.browser.spec.ts, and the logic it calls
-        // lives in the covered local-files / config-edit modules.
-        'src/playground/local-data-control.ts',
       ],
       // Coverage ratchet (#162): a fixed floor, seeded ~1% below the
       // measured baseline. CI runs `pnpm test:coverage`, so a PR that

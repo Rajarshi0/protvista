@@ -447,7 +447,12 @@ so into any link you share: the playground adds a track with
 
 - A file whose extension doesn't say how to read it (`hits.txt`, `export.tab`)
   asks you to choose a format, and the config gets `format:` to match:
-  `data: { url: ./hits.txt, format: csv }`.
+  `data: { url: ./hits.txt, format: csv }`. A `.csv` whose header is
+  tab-separated is offered as `tsv` the same way, and the new track's `kind`
+  follows the header's columns (`position,value` makes a line graph).
+- In a config that `extends:` another, a new track's id ends in `-local`
+  (`PTM.csv` becomes `PTM-local`), so it can't replace a base row with the
+  same id.
 - If the config already names the file — say you pasted a Starter Kit config
   with `data: ./data/hits.csv` — just load `hits.csv`. It renders in that
   track with no edit to the config.
