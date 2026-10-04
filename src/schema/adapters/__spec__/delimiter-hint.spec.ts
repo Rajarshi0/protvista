@@ -16,6 +16,7 @@ import {
   MissingHeaderColumnError,
   REQUIRED_COLUMNS,
   suspectDelimiter,
+  VARIATION_COLUMNS,
 } from '../dsv.js';
 import type { CoordinateRow } from '../coordinates.js';
 import type { DecodeWarning } from '../feature-fields.js';
@@ -108,6 +109,10 @@ describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
         expect(err.message).toContain(`The header looks ${name}-separated`);
         expect(err.message).toContain(FIX[name]);
         expect(err.message).toContain(RENAME[`${name}-${format}`]);
+        // `format:` is the first remedy everywhere; a rename comes after it.
+        expect(err.message.indexOf(FIX[name])).toBeLessThan(
+          err.message.indexOf(RENAME[`${name}-${format}`])
+        );
         expect(err.message).not.toContain('\n');
         expect(err.suspectedDelimiter).toBe(delimiter);
         expect(err.column).toBe('type');
@@ -275,6 +280,7 @@ describe('the point and variation shapes get the same hint', () => {
       /^\.\/variants\.csv \(parsed as CSV\): missing required header column "position"\. Header must contain position, variant\. The header looks semicolon-separated/
     );
     expect(err.suspectedDelimiter).toBe(';');
+    expect(err.required).toEqual(VARIATION_COLUMNS);
   });
 
   it('names a comma line-graph file read as TSV', () => {
@@ -340,6 +346,15 @@ describe('no hint when nothing points to a delimiter mismatch', () => {
       message:
         './hits.csv (parsed as CSV): missing required header column "type". ' +
         FEATURE_HEADER,
+    },
+    {
+      what: 'a genuinely missing variation column under the right delimiter',
+      shape: 'variation',
+      format: 'csv',
+      body: 'position,foo\n42,K\n',
+      message:
+        './hits.csv (parsed as CSV): missing required header column ' +
+        '"variant". Header must contain position, variant.',
     },
     {
       what: 'a trailing tab on a TSV line-graph header',
@@ -415,6 +430,27 @@ describe('suspectDelimiter', () => {
         REQUIRED_COLUMNS
       )
     ).toBe(';');
+    // A quoted comma makes the declared parse two cells, so rule (b) cannot
+    // fire: only a quote-aware re-tokenise finds every required column.
+    expect(
+      suspectDelimiter(
+        '"type";"start";"end";"description";"a,b"\n',
+        ',',
+        REQUIRED_COLUMNS
+      )
+    ).toBe(';');
+  });
+
+  it('trims candidate cells, as the header check does', () => {
+    // The declared parse gives two cells (split on the comma in "a,b"), so
+    // rule (b) cannot fire; only trimmed `;` cells match the required names.
+    expect(
+      suspectDelimiter(
+        'type; start; end; description; a,b\n',
+        ',',
+        REQUIRED_COLUMNS
+      )
+    ).toBe(';');
   });
 
   it('sees through a BOM and capitalised names (rule b)', () => {
@@ -437,6 +473,26 @@ describe('suspectDelimiter', () => {
         REQUIRED_COLUMNS
       )
     ).toBe('\t');
+  });
+
+  it('prefers a complete candidate even when it comes later in order', () => {
+    // Comma comes first and gives six cells, none of them required.
+    expect(
+      suspectDelimiter(
+        'a,b,c,d,e,f;type;start;end;description\n',
+        '\t',
+        REQUIRED_COLUMNS
+      )
+    ).toBe(';');
+    // Tab comes first and splits the one-cell header (rule b), but only
+    // `;` gives every required column (rule a).
+    expect(
+      suspectDelimiter(
+        'a\tb;type;start;end;description\n',
+        ',',
+        REQUIRED_COLUMNS
+      )
+    ).toBe(';');
   });
 
   it('then prefers more cells, then candidate order', () => {
