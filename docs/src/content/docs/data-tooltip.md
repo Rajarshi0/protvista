@@ -88,13 +88,17 @@ A field a record does not have renders as nothing: in the `fields` form its row 
 [protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
 ```
 
+A row you add on its own, outside a group, is named by its track id alone (`Track hits: …`).
+
 The same text fires a `tooltip-field-miss` [`protvista-error` event](/protvista/troubleshooting#phases) with `severity: 'warning'` and the names in `context.fields`, and the playground lists it as a warning. The track itself renders as usual: there is no `⚠` badge and no alert panel, even with `strict` on.
 
 The names to check against are the record's own: the fields a provider adapter outputs, or the column headers of your file (see [Fields from your own file](#fields-from-your-own-file)). A few details:
 
 - Every field the template names counts, including one inside `{% if $field %}`, a function such as `equals($field, "x")`, or `{% link href=$field %}`, and one in a fenced code block, which Markdoc fills in too. Inline code (single backticks) is printed literally, so a name there is not a reference.
-- A field that is present but empty (`''`, a blank cell, or `null` in a JSON key of your own) is not missing. The exception is the built-in columns `description`, `score`, `color`, `shape`, `fill` and `opacity`: a blank cell there, or `null` / `''` in JSON, is left off the record, so a column that is blank on every row reads as missing.
-- A variation file's records carry `start` and `end` (not `position`), plus `variant`, `wildType`, `description`, `consequence` and `consequenceType`; its other columns are dropped.
+- A field that is present but empty (`''`, a blank cell, or `null` in a JSON key of your own) is not missing. The exceptions are a few built-in columns, which are left off a record that has no value for them, so a column with no value on any row reads as missing:
+  - In a feature file, `description`, `score`, `color`, `shape`, `fill` and `opacity`: a blank CSV or TSV cell, or `null` in JSON. In JSON, `""` is left off too for `description` and the four render fields, but not for `score`: `"score": ""` is not a number, so it fails the track.
+  - In a variation CSV or TSV file, `wildType`, `description` and `consequence`: a blank cell.
+- A variation file's records carry `start` and `end` (not `position`), plus `variant` and `consequenceType`, and `wildType`, `description` and `consequence` when they have a value; its other columns are dropped.
 - For a dotted path such as `variant.wildType`, a record where `variant` is `null` counts as having it, so it does not warn. In the `fields` form that row just drops out. A template (`{% $variant.wildType %}`) currently fails the whole track on such a record, so guard it with `{% if $variant %}` or use the `fields` form.
 - `$ctx.accession`, `$ctx.trackId` and `$ctx.kind`, and any key you supply under the template's `variables:`, are checked against those values rather than the records.
 - Only a `dataTooltip` you write is checked. A track using its kind's built-in default, or the automatic tooltip, never warns, and neither do line-graph, coloured-sequence and heatmap tracks, which have no per-feature tooltip for `dataTooltip` to template (see [Line graphs](#line-graphs)).
