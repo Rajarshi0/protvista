@@ -3463,6 +3463,36 @@ describe('track-data coordinate warning', () => {
       expect(lines()).toHaveLength(2);
     });
 
+    it('reports nothing for a load superseded while its data was in flight', async () => {
+      let csvCalls = 0;
+      const held = gate();
+      stubRoutes({
+        files: {
+          'hits.csv': async () => {
+            if (csvCalls++ === 0) await held.wait;
+            return IN_RANGE;
+          },
+        },
+      });
+      const { el, misses, lines } = mountMisses({
+        viewerConfig: withTooltip(),
+      });
+      await vi.waitFor(() => expect(csvCalls).toBe(1));
+
+      // A second load starts while the first one's file is held, and reports.
+      await el._loadData();
+      expect(misses()).toHaveLength(1);
+      expect(lines()).toHaveLength(1);
+
+      // The first load's data arrives late: it was superseded, so it must
+      // not report its stale misses on top.
+      held.release();
+      await settle();
+      await settle();
+      expect(misses()).toHaveLength(1);
+      expect(lines()).toHaveLength(1);
+    });
+
     it('reports again for only the track a targeted retry reruns', async () => {
       stubRoutes({ csv: IN_RANGE });
       const { el, events, misses } = mountMisses({
@@ -3490,7 +3520,7 @@ describe('track-data coordinate warning', () => {
       });
 
       await vi.waitFor(() => expect(misses()).toHaveLength(2));
-      // Config order.
+      // Config order (pipeline.spec.ts pins it against settle order).
       expect(misses().map((e) => e.detail.context.trackId)).toEqual(['x', 'y']);
       events.length = 0;
 
@@ -3515,8 +3545,10 @@ describe('track-data coordinate warning', () => {
     });
 
     it('fires nothing when every referenced field is present on some record', async () => {
+      // Row 1's blank `description` is left off its record, so only row 2
+      // carries it: the rule is "on some record", not "on every record".
       stubRoutes({
-        csv: 'type,start,end,description,pvalue\nDOMAIN,1,10,a,\nDOMAIN,5,20,b,0.01\n',
+        csv: 'type,start,end,description,pvalue\nDOMAIN,1,10,,0.5\nDOMAIN,5,20,b,0.01\n',
       });
       const { el, misses } = mountMisses({
         viewerConfig: withTooltip('{% $description %} {% $pvalue %}'),
@@ -3526,6 +3558,8 @@ describe('track-data coordinate warning', () => {
         expect(el.data['g-y']).toBeDefined();
         expect(el.sequence).toBeDefined();
       });
+      const rows = el.data['g-y'] as Array<Record<string, unknown>>;
+      expect(rows.map((row) => 'description' in row)).toEqual([false, true]);
       expect(misses()).toHaveLength(0);
     });
   });

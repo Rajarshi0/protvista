@@ -415,29 +415,112 @@ describe('tooltip pipeline — unknown dataTooltip fields (#135)', () => {
     ]);
   });
 
-  it("never checks a line graph, whose payload is the renderer's series wrapper", async () => {
-    const result = await load({
-      id: 'lg',
-      label: 'lg',
-      component: 'nightingale-linegraph-track',
-      rendering: {},
-      dataTooltip: { kind: 'markdown', template: '{% $value %}' },
-      data: [
-        {
-          from: 'inline',
-          shape: 'point',
-          inlineData: [
-            { position: 1, value: 3 },
-            { position: 2, value: 4 },
-          ],
+  it.each([
+    ['nightingale-linegraph-track'],
+    ['nightingale-colored-sequence'],
+    ['nightingale-sequence-heatmap'],
+  ])(
+    "never checks a %s, whose payload is the renderer's series wrapper",
+    async (component) => {
+      const result = await load({
+        id: 'lg',
+        label: 'lg',
+        component,
+        rendering: {},
+        dataTooltip: { kind: 'markdown', template: '{% $value %}' },
+        data: [
+          {
+            from: 'inline',
+            shape: 'point',
+            inlineData: [
+              { position: 1, value: 3 },
+              { position: 2, value: 4 },
+            ],
+          },
+        ],
+      });
+      // The records carry `value`; the resolver saw the series wrapper.
+      expect(result.data['GROUP-lg']).toEqual([
+        expect.objectContaining({ values: expect.any(Array) }),
+      ]);
+      expect(result.tooltipFieldMisses).toEqual([]);
+    }
+  );
+
+  it('checks the variants of a `{ sequence, variants }` payload, not the wrapper', async () => {
+    const result = await load(
+      {
+        id: 'variation',
+        label: 'variation',
+        component: 'nightingale-variation-canvas',
+        rendering: {},
+        dataTooltip: {
+          kind: 'markdown',
+          template: '{% $variant %} {% $nope %} {% $sequence %}',
         },
-      ],
-    });
-    // The records carry `value`; what the resolver saw is the series wrapper.
-    expect(result.data['GROUP-lg']).toEqual([
-      expect.objectContaining({ values: expect.any(Array) }),
+        data: [
+          {
+            from: 'url',
+            url: 'variation-url',
+            adapter: 'uniprot-variation-json',
+          },
+        ],
+      },
+      {
+        'uniprot-variation-json': async () => ({
+          sequence: 'MAAA',
+          variants: [{ start: 1, end: 1, variant: 'K' }],
+        }),
+      }
+    );
+    // `sequence` is the wrapper's key, not a variant's, so it is unknown too.
+    expect(result.tooltipFieldMisses).toEqual([
+      { groupId: 'GROUP', trackId: 'variation', fields: ['nope', 'sequence'] },
     ]);
-    expect(result.tooltipFieldMisses).toEqual([]);
+  });
+
+  it('lists misses in config order, whatever order the tracks settle in', async () => {
+    const gate: { release?: () => void } = {};
+    const slowDone = new Promise<void>((resolve) => (gate.release = resolve));
+    const settled: string[] = [];
+    const adapters: AdapterMap = {
+      slow: async () => {
+        await slowDone;
+        settled.push('a');
+        return [{ type: 'DOMAIN', start: 1, end: 2 }];
+      },
+      fast: async () => {
+        settled.push('b');
+        gate.release!();
+        return [{ type: 'DOMAIN', start: 1, end: 2 }];
+      },
+    };
+    const track = (id: string, adapter: string) =>
+      urlTrack({
+        id,
+        label: id,
+        dataTooltip: { kind: 'markdown', template: '{% $nope %}' },
+        data: [{ from: 'url' as const, url: `u-${id}`, adapter }],
+      });
+    const config = makeConfig(track('a', 'slow'));
+    config.rows[0].tracks.push(track('b', 'fast'));
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let result;
+    try {
+      result = await loadProtvistaData(
+        ACCESSION,
+        config,
+        fetchOne,
+        (name) => adapters[name]
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(settled).toEqual(['b', 'a']);
+    expect(result.tooltipFieldMisses.map((m) => m.trackId)).toEqual(['a', 'b']);
   });
 
   it('records nothing for a track whose adapter threw', async () => {
