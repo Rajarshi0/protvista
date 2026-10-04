@@ -136,7 +136,9 @@ export type ValidationIssueCode =
   /**
    * A feature file (or inline text with a `format:`) has a column decoded
    * data may not set — `tooltipContent`, `locations`, `residuesToHighlight`,
-   * or a name on `Object.prototype` — so the decoder dropped it. Emitted at
+   * or a name on `Object.prototype` — so the decoder dropped it; or a
+   * `shape` value that is an `Object.prototype` name (`valueOf`), which the
+   * decoder dropped so the canvas falls back to the track's shape. Emitted at
    * runtime on `phase: 'track-data'` at `severity: 'warning'`; the track
    * still renders.
    */

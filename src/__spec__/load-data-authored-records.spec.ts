@@ -621,6 +621,19 @@ describe('decoder warnings are returned, not logged (#283)', () => {
     expect(trackWarnings['G-t'][0].message).toMatch(/^\.\/hits\.json \(parsed as JSON\): /);
   });
 
+  it('a JSON file reports a `shape` naming a JavaScript built-in, and drops it', async () => {
+    const { data, trackWarnings } = await loadFile('./hits.json', [
+      { type: 'DOMAIN', start: 1, end: 9, shape: 'valueOf' },
+    ]);
+    expect((data['G-t'] as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
+      'shape'
+    );
+    expect(trackWarnings['G-t'].map((w) => w.code)).toEqual(['data-field-ignored']);
+    expect(trackWarnings['G-t'][0].message).toMatch(
+      /^\.\/hits\.json \(parsed as JSON\): ignored "shape" value\(s\)/
+    );
+  });
+
   it('inline CSV text names "inline data"', async () => {
     const { trackWarnings } = await load({
       accession: 'P05067',

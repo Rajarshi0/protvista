@@ -29,8 +29,8 @@
  *                         but something in its data is worth knowing: its
  *                         coordinates fall outside the loaded sequence
  *                         (`coordinate-out-of-range`), or its feature file
- *                         had columns the decoder ignored
- *                         (`data-field-ignored`) or colours the canvas
+ *                         had columns or `shape` values the decoder
+ *                         ignored (`data-field-ignored`) or colours the canvas
  *                         cannot paint (`unpaintable-color`). Event and
  *                         console only; the issue carries that `code` and
  *                         `severity: 'warning'`

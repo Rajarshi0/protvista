@@ -424,6 +424,41 @@ describe.each([
     expect(warnings).toEqual([]);
   });
 
+  it('drops a `shape` that names an Object.prototype property, with one warning', () => {
+    // The canvas looks shapes up on plain object literals, so `valueOf`
+    // would find an inherited method and throw mid-draw.
+    const { out, warnings } = decode(
+      file(
+        ['type', 'start', 'end', 'description', 'shape'],
+        ['DOMAIN', '1', '9', 'x', 'valueOf'],
+        ['DOMAIN', '2', '9', 'x', ' hasOwnProperty '],
+        ['DOMAIN', '3', '9', 'x', 'constructor'],
+        ['DOMAIN', '4', '9', 'x', '__proto__'],
+        ['DOMAIN', '5', '9', 'x', 'valueOf'],
+        ['DOMAIN', '6', '9', 'x', 'diamond']
+      )
+    );
+    expect(out.map((r) => r.shape)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'diamond',
+    ]);
+    expect('shape' in out[0]).toBe(false);
+    expect(Object.getPrototypeOf(out[3])).toBe(Object.prototype);
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          `${label}: ignored "shape" value(s) in 5 row(s) ("valueOf", ` +
+          `"hasOwnProperty", "constructor", …) — these names are reserved ` +
+          `by JavaScript, so those features take the track's shape.`,
+      },
+    ]);
+  });
+
   it('parses `opacity` as a number from 0 to 1, leaving a blank cell off', () => {
     const { out } = decode(
       file(

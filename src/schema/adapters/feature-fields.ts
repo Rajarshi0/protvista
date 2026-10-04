@@ -104,8 +104,15 @@ export function ignoredFieldsWarning(
   };
 }
 
-/** At most this many offending colours are named in the warning. */
-const MAX_LISTED_COLORS = 3;
+/** At most this many offending values are named in a warning. */
+const MAX_LISTED_VALUES = 3;
+
+/** The first few distinct `values`, quoted, with `, …` when there are more. */
+const quoteDistinct = (values: readonly string[]): string => {
+  const distinct = [...new Set(values)];
+  const more = distinct.length > MAX_LISTED_VALUES ? ', …' : '';
+  return quoteList(distinct.slice(0, MAX_LISTED_VALUES)) + more;
+};
 
 /**
  * One warning for every row whose `color` / `fill` a browser will not paint.
@@ -125,23 +132,54 @@ export function unpaintableColorWarning(
   rows: number,
   values: readonly string[]
 ): DecodeWarning {
-  const distinct = [...new Set(values)];
-  const shown = quoteList(distinct.slice(0, MAX_LISTED_COLORS));
-  const more = distinct.length > MAX_LISTED_COLORS ? ', …' : '';
   return {
     code: 'unpaintable-color',
     message:
       `${formatLabel}: ${rows} row(s) have a colour the canvas cannot paint ` +
-      `(${shown}${more}); those features are drawn in the previous ` +
+      `(${quoteDistinct(values)}); those features are drawn in the previous ` +
       `feature's colour.`,
   };
 }
 
 /**
+ * One warning for every row whose `shape` was dropped because it names an
+ * `Object.prototype` property (see `isReservedShape`). `values` are the
+ * dropped values in the order met, one per row.
+ */
+export function ignoredShapesWarning(
+  formatLabel: string,
+  values: readonly string[]
+): DecodeWarning {
+  return {
+    code: 'data-field-ignored',
+    message:
+      `${formatLabel}: ignored "shape" value(s) in ${values.length} row(s) ` +
+      `(${quoteDistinct(values)}) — these names are reserved by JavaScript, ` +
+      `so those features take the track's shape.`,
+  };
+}
+
+/**
  * Whether a trimmed render-field value is a colour the canvas would not
- * paint. Only `color` and `fill` are checked: `shape` is not, matching the
- * track-level `rendering.shape` (Nightingale draws `?` and warns).
+ * paint. Only `color` and `fill` are checked: an unknown `shape` is not,
+ * matching the track-level `rendering.shape` (Nightingale draws `?` and
+ * warns) — but see `isReservedShape`.
  */
 export function isUnpaintable(name: string, value: string): boolean {
   return (name === 'color' || name === 'fill') && !isPaintableColor(value);
+}
+
+/**
+ * Whether a trimmed `shape` value names an `Object.prototype` property
+ * (`valueOf`, `hasOwnProperty`, `constructor`, `__proto__`, …).
+ *
+ * The canvas looks a shape up as `drawers[shape]` on plain object literals,
+ * so such a name finds an inherited method instead of missing: `valueOf`
+ * and most others throw mid-draw, which stops the track painting, and
+ * `constructor` / `toString` draw nothing. Unlike an unknown name, which
+ * Nightingale draws as `?`, these are dropped so the feature falls back to
+ * the track's or type's shape.
+ */
+export function isReservedShape(name: string, value: string): boolean {
+  return name === 'shape' && value in Object.prototype;
 }

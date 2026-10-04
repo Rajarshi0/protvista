@@ -233,9 +233,10 @@ export interface PipelineOptions {
   coordinates?: CoordinateRow[];
   /**
    * When given, receives the feature decoder's warnings — at most one
-   * `data-field-ignored` (columns it dropped) and one `unpaintable-color`
-   * (colours it kept but a browser will not paint) per call. Nothing is
-   * logged without it; the returned payload is identical either way.
+   * `data-field-ignored` for columns it dropped, one for `shape` values it
+   * dropped, and one `unpaintable-color` (colours it kept but a browser will
+   * not paint) per call. Nothing is logged without it; the returned payload
+   * is identical either way.
    */
   warnings?: DecodeWarning[];
 }

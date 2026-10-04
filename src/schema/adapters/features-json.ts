@@ -29,8 +29,10 @@
  *
  * An optional third argument is a warnings sink (`DecodeWarning[]`), filled
  * the way `rowsToFeatureRecords` fills its `opts.warnings`: at most one
- * `data-field-ignored` and one `unpaintable-color` warning per call, pushed
- * only when the call returns. Nothing is logged.
+ * `data-field-ignored` warning for dropped keys, one for dropped `shape`
+ * values that name an `Object.prototype` property, and one
+ * `unpaintable-color` warning per call, pushed only when the call returns.
+ * Nothing is logged.
  *
  * `description` and `score` are optional: absent or `null` omits the
  * field from the output, but a *present* value of the wrong type (e.g.
@@ -58,6 +60,8 @@ import {
   FEATURE_CANONICAL_FIELDS,
   classifyExtraField,
   ignoredFieldsWarning,
+  ignoredShapesWarning,
+  isReservedShape,
   isUnpaintable,
   unpaintableColorWarning,
   type DecodeWarning,
@@ -104,6 +108,7 @@ export const featuresJson: AdapterFunction = (raw, labelArg, warningsArg) => {
   const blocked = new Set<string>();
   const unpaintable: string[] = [];
   let unpaintableRows = 0;
+  const reservedShapes: string[] = [];
   for (let i = 0; i < raw.length; i++) {
     const item: unknown = raw[i];
 
@@ -232,6 +237,10 @@ export const featuresJson: AdapterFunction = (raw, labelArg, warningsArg) => {
       }
       const trimmed = value.trim();
       if (trimmed === '') continue;
+      if (isReservedShape(key, trimmed)) {
+        reservedShapes.push(trimmed);
+        continue;
+      }
       if (isUnpaintable(key, trimmed)) {
         unpaintable.push(trimmed);
         rowUnpaintable = true;
@@ -245,6 +254,8 @@ export const featuresJson: AdapterFunction = (raw, labelArg, warningsArg) => {
 
   if (blocked.size > 0)
     warnings?.push(ignoredFieldsWarning(label, [...blocked]));
+  if (reservedShapes.length > 0)
+    warnings?.push(ignoredShapesWarning(label, reservedShapes));
   if (unpaintableRows > 0) {
     warnings?.push(
       unpaintableColorWarning(label, unpaintableRows, unpaintable)

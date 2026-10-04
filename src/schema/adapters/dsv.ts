@@ -33,6 +33,8 @@ import {
   FEATURE_CANONICAL_FIELDS,
   classifyExtraField,
   ignoredFieldsWarning,
+  ignoredShapesWarning,
+  isReservedShape,
   isUnpaintable,
   unpaintableColorWarning,
   type DecodeWarning,
@@ -251,10 +253,11 @@ function wholeNumber(
  * the returned records. Skipped blank rows add nothing.
  *
  * `opts.warnings`, when given, is an out-array too: it receives at most one
- * `data-field-ignored` warning (the dropped column names) and one
- * `unpaintable-color` warning (the `color` / `fill` values a browser will
- * not paint, which are still kept). Nothing is logged either way; a call
- * that throws pushes nothing.
+ * `data-field-ignored` warning for the dropped column names, one more for
+ * `shape` values dropped because they name an `Object.prototype` property
+ * (`isReservedShape`), and one `unpaintable-color` warning (the `color` /
+ * `fill` values a browser will not paint, which are still kept). Nothing is
+ * logged either way; a call that throws pushes nothing.
  */
 export function rowsToFeatureRecords(
   rows: string[][],
@@ -298,6 +301,7 @@ export function rowsToFeatureRecords(
   // decoded: a file that throws reports its error alone.
   const unpaintable: string[] = [];
   let unpaintableRows = 0;
+  const reservedShapes: string[] = [];
 
   const records: AuthoredFeatureRecord[] = [];
   for (let r = 1; r < rows.length; r++) {
@@ -383,6 +387,10 @@ export function rowsToFeatureRecords(
         record.opacity = n;
         continue;
       }
+      if (isReservedShape(name, value)) {
+        reservedShapes.push(value);
+        continue;
+      }
       if (isUnpaintable(name, value)) {
         unpaintable.push(value);
         rowUnpaintable = true;
@@ -397,6 +405,9 @@ export function rowsToFeatureRecords(
 
   if (blocked.length > 0) {
     opts.warnings?.push(ignoredFieldsWarning(formatLabel, blocked));
+  }
+  if (reservedShapes.length > 0) {
+    opts.warnings?.push(ignoredShapesWarning(formatLabel, reservedShapes));
   }
   if (unpaintableRows > 0) {
     opts.warnings?.push(

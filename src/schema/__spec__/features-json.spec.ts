@@ -414,6 +414,28 @@ describe('features-json adapter — extra fields (#283)', () => {
     ]);
   });
 
+  it('drops a `shape` that names an Object.prototype property, with one warning', () => {
+    const { out, warnings } = decode([
+      { type: 'DOMAIN', start: 1, end: 5, shape: 'hasOwnProperty' },
+      { type: 'DOMAIN', start: 2, end: 6, shape: ' toString ', gene: 'g' },
+      { type: 'DOMAIN', start: 3, end: 7, shape: 'chevron' },
+    ]);
+    expect(out).toStrictEqual([
+      { type: 'DOMAIN', start: 1, end: 5 },
+      { type: 'DOMAIN', start: 2, end: 6, gene: 'g' },
+      { type: 'DOMAIN', start: 3, end: 7, shape: 'chevron' },
+    ]);
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          'hits.json: ignored "shape" value(s) in 2 row(s) ("hasOwnProperty", ' +
+          '"toString") — these names are reserved by JavaScript, so those ' +
+          "features take the track's shape.",
+      },
+    ]);
+  });
+
   it('drops an own `__proto__` key from JSON.parse without touching the prototype', () => {
     const parsed = JSON.parse(
       '[{"type":"DOMAIN","start":1,"end":5,"__proto__":{"tooltipContent":"x"},"gene":"g"}]'

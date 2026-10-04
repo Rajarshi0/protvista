@@ -175,7 +175,8 @@ type LoadResult = {
   /**
    * What a feature decoder noticed about a track's data without rejecting
    * it, keyed by `${groupId}-${trackId}`: columns it dropped because decoded
-   * data may not set them (`data-field-ignored`), and `color` / `fill`
+   * data may not set them, or `shape` values naming an `Object.prototype`
+   * property (`data-field-ignored`), and `color` / `fill`
    * values it kept but a browser will not paint (`unpaintable-color`). Only
    * tracks with at least one warning have a key, and a track whose decode
    * threw has none (its failure is in `trackFailures`).
