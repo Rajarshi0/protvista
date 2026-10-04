@@ -8,7 +8,6 @@ import {
   createTooltipFieldTracker,
   formatTooltipFieldMiss,
   resolveTooltip,
-  tooltipFieldRefs,
 } from '../resolve.js';
 import type { TooltipContext, TooltipSpec } from '../types.js';
 
@@ -696,7 +695,11 @@ describe('resolveTooltip — unknown-field tracker (#135)', () => {
       '`{% $code %}` {% if not($neg) %}z{% /if %} ' +
       '{% link href=$url %}PubMed{% /link %}\n\n' +
       '```\n{% $fenced %}\n```';
-    expect(tooltipFieldRefs(md(template))).toEqual([
+    // An empty record carries none of them, so the summary is every
+    // reference the template makes.
+    const tracker = createTooltipFieldTracker(md(template), ctx);
+    tracker.observe({});
+    expect(tracker.flush()).toEqual([
       'name',
       'kind',
       'score',
@@ -747,7 +750,6 @@ describe('resolveTooltip — unknown-field tracker (#135)', () => {
       kind: 'fields',
       fields: [{ path: '', label: 'Self' }],
     };
-    expect(tooltipFieldRefs(spec)).toEqual([]);
     expect(misses(spec, [{}])).toEqual([]);
   });
 

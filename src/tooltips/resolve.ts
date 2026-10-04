@@ -796,6 +796,11 @@ function dedupeRefs(refs: FieldRef[]): FieldRef[] {
   return refs.filter(({ path }) => !seen.has(path) && !!seen.add(path));
 }
 
+/**
+ * The field paths a tooltip spec references, deduplicated in the order they
+ * first appear: each `fields` entry's `path`, or every Markdoc variable in a
+ * `markdown` template, dotted (`variantType.wildType`, `items.0.id`).
+ */
 function fieldRefs(spec: TooltipSpec): readonly FieldRef[] {
   if (spec.kind === 'fields') {
     // `path: ''` resolves to the item itself, so it names no field.
@@ -820,15 +825,6 @@ function fieldRefs(spec: TooltipSpec): readonly FieldRef[] {
   const deduped = dedupeRefs(refs);
   markdownRefCache.set(spec.template, deduped);
   return deduped;
-}
-
-/**
- * The field paths a tooltip spec references, deduplicated in the order they
- * first appear: each `fields` entry's `path`, or every Markdoc variable in a
- * `markdown` template, dotted (`variantType.wildType`, `items.0.id`).
- */
-export function tooltipFieldRefs(spec: TooltipSpec): string[] {
-  return fieldRefs(spec).map(({ path }) => path);
 }
 
 /** `Object.hasOwn`, which the ES2021 target does not have. */
