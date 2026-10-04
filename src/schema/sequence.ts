@@ -16,8 +16,10 @@
  * into thrown `ConfigValidationError` issues, which the element reports
  * through its one routed config report.
  *
- * Kept off any element import graph: `config-subpath-purity.spec.ts` walks
- * `src/schema`.
+ * The element imports the label helpers (`sequenceDisplayLabel`,
+ * `escapeMarkdocInline`) from here, so this module is on its import graph;
+ * it imports nothing that renders, which keeps the validator and the editor
+ * tooling free to use it too. No spec enforces that: keep it so by hand.
  */
 
 /** A `sequence:` value, resolved to residues. */
