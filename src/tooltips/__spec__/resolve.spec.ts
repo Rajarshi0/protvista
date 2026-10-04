@@ -3,6 +3,7 @@
  * `markdown`) gets a representative input.
  */
 import { describe, it, expect } from 'vitest';
+import { Tag } from '@markdoc/markdoc';
 import { resolveTooltip } from '../resolve.js';
 import type { TooltipContext } from '../types.js';
 
@@ -536,5 +537,41 @@ describe('resolveTooltip — Tag-shaped data values render as nothing (#283)', (
     expect(out).toBe('<p>Note: </p>');
     expect(out).not.toContain('<img');
     expect(out).not.toContain('onerror');
+  });
+});
+
+describe('resolveTooltip — renderNode guards on real Tag instances (#283)', () => {
+  // Markdoc drops undeclared attributes before `renderNode` sees them, so
+  // only a real `Tag` passed as a data value (a `setTrackData()` caller can
+  // hand over any object) reaches the name and attribute guards. Each case
+  // fails if exactly one guard is removed.
+  const render = (note: unknown) =>
+    resolveTooltip(
+      { note },
+      { kind: 'markdown', template: 'Note: {% $note %}' },
+      ctx
+    );
+
+  it('renders a real Tag with a plain name and attributes', () => {
+    expect(render(new Tag('b', { title: 'x' }, ['hi']))).toBe(
+      '<p>Note: <b title="x">hi</b></p>'
+    );
+  });
+
+  it('drops a Tag whose name smuggles attributes', () => {
+    const out = render(new Tag('img src=x onerror=alert(2) x', {}, []));
+    expect(out).toBe('<p>Note: </p>');
+  });
+
+  it('drops an attribute whose key is not a plain name', () => {
+    const out = render(new Tag('b', { 'x onmouseover': 'alert(3)' }, ['hi']));
+    expect(out).toBe('<p>Note: <b>hi</b></p>');
+  });
+
+  it('drops event-handler attributes, whatever their case', () => {
+    const out = render(
+      new Tag('b', { onclick: 'alert(4)', OnMouseOver: 'alert(5)' }, ['hi'])
+    );
+    expect(out).toBe('<p>Note: <b>hi</b></p>');
   });
 });

@@ -349,8 +349,12 @@ describe('features-json adapter — extra fields (#283)', () => {
         fill: '   ',
         opacity: null,
       },
+      { type: 'DOMAIN', start: 2, end: 6, color: '', opacity: '' },
     ]);
-    expect(out[0]).toStrictEqual({ type: 'DOMAIN', start: 1, end: 5 });
+    expect(out).toStrictEqual([
+      { type: 'DOMAIN', start: 1, end: 5 },
+      { type: 'DOMAIN', start: 2, end: 6 },
+    ]);
   });
 
   it('throws on a wrongly typed render field', () => {
@@ -432,6 +436,26 @@ describe('features-json adapter — extra fields (#283)', () => {
           'hits.json: ignored "shape" value(s) in 2 row(s) ("hasOwnProperty", ' +
           '"toString") — these names are reserved by JavaScript, so those ' +
           "features take the track's shape.",
+      },
+    ]);
+  });
+
+  it('names a blocked key once even when every record carries it', () => {
+    const { out, warnings } = decode([
+      { type: 'DOMAIN', start: 1, end: 5, tooltipContent: 'a' },
+      { type: 'DOMAIN', start: 2, end: 6, tooltipContent: 'b' },
+    ]);
+    expect(out).toStrictEqual([
+      { type: 'DOMAIN', start: 1, end: 5 },
+      { type: 'DOMAIN', start: 2, end: 6 },
+    ]);
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          'hits.json: ignored column(s) "tooltipContent" — these names are ' +
+          'reserved by the viewer or by JavaScript and cannot come from a ' +
+          'data file.',
       },
     ]);
   });

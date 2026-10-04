@@ -37,6 +37,7 @@ interface TrackMethods {
 }
 
 let track: TrackMethods;
+let typeTable: Record<string, { color: string; shape: string }>;
 
 beforeAll(async () => {
   // Nightingale's resizable mixin builds a `ResizeObserver` at module load;
@@ -50,6 +51,11 @@ beforeAll(async () => {
   // eslint-disable-next-line no-unsanitized/method
   const mod = await import(join(trackDir, 'dist/index.js'));
   track = mod.default.prototype as TrackMethods;
+  // The type table is not exported from the compiled entry; the package ships
+  // its source, which is what `getColorByType` / `getShapeByType` read.
+  // eslint-disable-next-line no-unsanitized/method
+  const configModule = await import(join(trackDir, 'src/config.ts'));
+  typeTable = configModule.config;
 });
 
 /** Call a track method the way the canvas does, on a track with `rendering:`. */
@@ -101,13 +107,20 @@ describe("Nightingale's per-record styling precedence", () => {
     expect(onTrack('getShape', { type: 'DOMAIN' })).toBe('circle');
   });
 
-  it('the type default applies when neither record nor track sets one', () => {
-    // Not asserting the default's value (the vocabulary page pins that) —
-    // only that it is neither the record's absent value nor a track's.
-    const color = onTrack('getFeatureColor', { type: 'DOMAIN' }, {});
-    expect(typeof color).toBe('string');
-    expect(color).not.toBe('red');
-    expect(onTrack('getShape', { type: 'DOMAIN' }, {})).not.toBe('circle');
+  it.each(['DOMAIN', 'SITE'])(
+    'the %s type default applies when neither record nor track sets one',
+    (type) => {
+      // The expected values come from Nightingale's own type table, so this
+      // fails if the type lookup is replaced by a constant fallback.
+      const expected = typeTable[type];
+      expect(onTrack('getFeatureColor', { type }, {})).toBe(expected.color);
+      expect(onTrack('getShape', { type }, {})).toBe(expected.shape);
+    }
+  );
+
+  it('the two type defaults differ, so no constant satisfies both', () => {
+    expect(typeTable.SITE.color).not.toBe(typeTable.DOMAIN.color);
+    expect(typeTable.SITE.shape).not.toBe(typeTable.DOMAIN.shape);
   });
 });
 

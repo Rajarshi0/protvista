@@ -465,11 +465,12 @@ describe.each([
         ['type', 'start', 'end', 'description', 'opacity'],
         ['DOMAIN', '1', '9', 'x', ' 0.5 '],
         ['DOMAIN', '1', '9', 'x', '1'],
+        ['DOMAIN', '1', '9', 'x', '0'],
         ['DOMAIN', '1', '9', 'x', '']
       )
     );
-    expect(out.map((r) => r.opacity)).toEqual([0.5, 1, undefined]);
-    expect('opacity' in out[2]).toBe(false);
+    expect(out.map((r) => r.opacity)).toEqual([0.5, 1, 0, undefined]);
+    expect('opacity' in out[3]).toBe(false);
   });
 
   it.each(['abc', '1.5', '-0.1'])('rejects an `opacity` of %j', (bad) => {

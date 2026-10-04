@@ -414,7 +414,7 @@ describe('file and inline feature records are interchangeable (#283)', () => {
   const TEMPLATE =
     'PMID {% $pmid %}: {% link href=$url %}PubMed{% /link %}';
 
-  const loadTrack = (data: unknown) => {
+  const loadTrack = (data: unknown, template = TEMPLATE) => {
     const r = registry();
     return loadProtvistaData(
       'P05067',
@@ -429,7 +429,7 @@ describe('file and inline feature records are interchangeable (#283)', () => {
                   id: 't',
                   kind: 'features',
                   rendering: { color: 'red' },
-                  dataTooltip: { kind: 'markdown', template: TEMPLATE },
+                  dataTooltip: { kind: 'markdown', template },
                   data,
                 } as never,
               ],
@@ -467,17 +467,34 @@ describe('file and inline feature records are interchangeable (#283)', () => {
     }
   });
 
-  it('a blank extra CSV cell becomes an empty string; YAML may omit the key', async () => {
-    const body = 'type,start,end,description,pmid\nDOMAIN,1,9,x,\n';
-    const { data } = await loadTrack({ from: 'inline', inlineData: body, format: 'csv' });
-    expect((data['G-t'] as Array<Record<string, unknown>>)[0].pmid).toBe('');
-    const yaml = await loadTrack({
-      from: 'inline',
-      inlineData: [{ type: 'DOMAIN', start: 1, end: 9, description: 'x' }],
-    });
-    expect((yaml.data['G-t'] as Array<Record<string, unknown>>)[0]).not.toHaveProperty(
-      'pmid'
+  it('a blank CSV cell is an empty string and YAML may omit the key, with the same tooltip', async () => {
+    // The two forms differ in the record (`''` against no key at all), but a
+    // template must render them alike: no "undefined", and no link. The
+    // self-closing link shows its URL as text, so a missing one would show.
+    const template = 'PMID {% $pmid %}: {% link href=$url /%}';
+    const csv = await loadTrack(
+      {
+        from: 'inline',
+        inlineData: 'type,start,end,description,pmid,url\nDOMAIN,1,9,x,,\n',
+        format: 'csv',
+      },
+      template
     );
+    const yaml = await loadTrack(
+      {
+        from: 'inline',
+        inlineData: [{ type: 'DOMAIN', start: 1, end: 9, description: 'x' }],
+      },
+      template
+    );
+    const [fromCsv] = csv.data['G-t'] as Array<Record<string, unknown>>;
+    const [fromYaml] = yaml.data['G-t'] as Array<Record<string, unknown>>;
+    expect(fromCsv.pmid).toBe('');
+    expect(fromCsv.url).toBe('');
+    expect(fromYaml).not.toHaveProperty('pmid');
+    expect(fromYaml).not.toHaveProperty('url');
+    expect(fromCsv.tooltipContent).toBe('<p>PMID : </p>');
+    expect(fromYaml.tooltipContent).toBe(fromCsv.tooltipContent);
   });
 });
 
