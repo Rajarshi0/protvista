@@ -400,6 +400,16 @@ document.addEventListener(
   true
 );
 
+/**
+ * A new preset or accession starts over: the status line's word on the last
+ * file loaded (and any snippet to paste) is about what came before. The
+ * loaded files stay, listed, for the new config to name.
+ */
+function clearDataStatus(): void {
+  control.setStatus('');
+  control.setSnippet('');
+}
+
 // Selecting a preset is a deliberate "show me this" → render once.
 presetSelect.addEventListener('change', () => {
   const preset = getPreset(presetSelect.value);
@@ -407,11 +417,15 @@ presetSelect.addEventListener('change', () => {
   activePresetId = preset.id;
   accessionInput.value = preset.accession;
   editor.setText(preset.config);
+  clearDataStatus();
   void run();
 });
 
 // Accession changes fire once on blur/enter → render once.
-accessionInput.addEventListener('change', () => void run());
+accessionInput.addEventListener('change', () => {
+  clearDataStatus();
+  void run();
+});
 
 // ── Local data files ──────────────────────────────────────────
 // A picked or dropped file is read in this browser and never uploaded. The
