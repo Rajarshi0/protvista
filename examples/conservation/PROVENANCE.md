@@ -117,12 +117,19 @@ up the aromatic and iron-binding core of the fold.
 ## Regenerating and checking
 
 ```sh
-node scripts/conservation/build.mjs            # PF00301 and P24297 by default; rewrites the three files
+node scripts/conservation/build.mjs            # PF00301 and P24297 by default; rewrites the three files and the served copies
 node scripts/conservation/build.mjs --check    # writes nothing; exits 1 on any difference
 ```
 
 The generator uses the network, so it runs by hand and never in CI.
 
+- **Served copies.** The playground's `conservation` preset fetches the two
+  CSVs from the docs site, which serves copies of them from
+  `docs/public/sample-data/conservation/`. A regeneration rewrites those
+  copies too, so commit them with the files here.
+  `src/playground/__spec__/presets.spec.ts` fails if a copy differs from its
+  source by a single byte. With a non-default `--out`, the copies are written
+  only to an explicit `--served <dir>`.
 - **`--check`.** It recomputes everything from today's data and compares the
   two CSVs line by line, and every field of `provenance.json`. It names the
   first difference.

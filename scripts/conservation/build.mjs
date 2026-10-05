@@ -3,12 +3,18 @@
  * UniProt protein from the Pfam full alignment it is a row of.
  *
  *   node scripts/conservation/build.mjs [--pfam PF00301] [--target P24297]
- *                                       [--out examples/conservation] [--check]
+ *                                       [--out examples/conservation]
+ *                                       [--served <dir>] [--check]
  *
  * It fetches the Pfam alignment and the InterPro release from the InterPro
  * API, and the target's sequence and binding sites from UniProt, then writes
  * `conservation.csv`, `conserved-sites.csv` and `provenance.json`. The scoring
  * is in `score.mjs`; see `examples/conservation/PROVENANCE.md` for the method.
+ *
+ * It also writes the two CSVs to the docs site's served copies, which must be
+ * byte-identical to `--out`'s (a test checks): by default
+ * `docs/public/sample-data/conservation/` when `--out` is the default, and
+ * only `--served <dir>` otherwise.
  *
  * `--check` writes nothing. It recomputes from today's data and compares with
  * the committed files, ignoring only the `retrieved` dates, and exits 1 naming
@@ -47,12 +53,19 @@ import {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
+const DEFAULT_OUT = 'examples/conservation';
+const DEFAULT_SERVED = 'docs/public/sample-data/conservation';
+/** The outputs the playground fetches, so the docs site serves copies. */
+const SERVED_FILES = ['conservation.csv', 'conserved-sites.csv'];
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
   const options = {
     pfam: 'PF00301',
     target: 'P24297',
-    out: 'examples/conservation',
+    out: DEFAULT_OUT,
+    /** @type {string | undefined} */
+    served: undefined,
     check: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -61,7 +74,11 @@ function parseArgs(argv) {
     else if (arg === '--pfam') options.pfam = argv[++i];
     else if (arg === '--target') options.target = argv[++i];
     else if (arg === '--out') options.out = argv[++i];
+    else if (arg === '--served') options.served = argv[++i];
     else throw new Error(`unknown argument: ${arg}`);
+  }
+  if (options.served === undefined && options.out === DEFAULT_OUT) {
+    options.served = DEFAULT_SERVED;
   }
   return options;
 }
@@ -326,6 +343,14 @@ async function main() {
     for (const [name, text] of Object.entries(files)) {
       writeFileSync(join(out, name), text);
       console.log(`wrote ${join(options.out, name)}`);
+    }
+    if (options.served) {
+      const served = resolve(REPO_ROOT, options.served);
+      mkdirSync(served, { recursive: true });
+      for (const name of SERVED_FILES) {
+        writeFileSync(join(served, name), files[name]);
+        console.log(`wrote ${join(options.served, name)}`);
+      }
     }
     return;
   }
