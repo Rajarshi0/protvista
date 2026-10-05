@@ -82,8 +82,10 @@ smoothing.
   - A residue is included if its score is at least the value at ascending
     index ⌊0.9 × (n − 1)⌋ among the n scored residues. Adjacent residues are
     merged into runs.
-  - This is "at or above the 90th percentile". Ties can make the set larger than
-    10%: here it is 6 of 46.
+  - This is "at or above the 90th percentile". It is not "the top 10%": with
+    distinct scores the rule keeps n − ⌊0.9 × (n − 1)⌋ residues, which here is
+    6 of 46 (13%). No tie is involved; the sixth, W37 (0.759), is the threshold
+    itself.
   - The rule is applied to the published 3 dp values, so `conserved-sites.csv`
     can be re-derived exactly from `conservation.csv`.
 

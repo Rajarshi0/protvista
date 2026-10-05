@@ -357,8 +357,9 @@ export function isContiguous(points) {
 /**
  * The most conserved residues: those scoring at least the value at ascending
  * index `floor(0.9 × (n − 1))` among the `n` scored residues (the 90th
- * percentile, so ties can make it more than 10%), with adjacent residues
- * merged into runs.
+ * percentile), with adjacent residues merged into runs. With distinct scores
+ * that keeps `n − floor(0.9 × (n − 1))` residues, which is more than 10% by
+ * construction (6 of 46, with no tie); a tie at the threshold adds more.
  *
  * @param {Point[]} points In residue order.
  * @returns {Run[]}
@@ -412,15 +413,15 @@ export function conservationCsv(points) {
 }
 
 /**
- * The description of every row of the conserved-sites CSV. It says "among the
- * most conserved 10%" rather than "top 10%" because ties at the threshold can
- * make the set larger than 10%.
+ * The description of every row of the conserved-sites CSV. It names the 90th
+ * percentile and no share of residues, because the rule in
+ * {@link topDecileRuns} keeps more than 10% of them.
  *
  * @param {string} pfam
  * @returns {string}
  */
 export function conservedSitesDescription(pfam) {
-  return `Among the most conserved 10% of scored residues in Pfam ${pfam} (≥ 90th percentile)`;
+  return `At or above the 90th percentile of the scored residues in Pfam ${pfam}`;
 }
 
 /**

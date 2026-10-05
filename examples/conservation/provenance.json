@@ -104,7 +104,7 @@
   },
   "outputs": {
     "conservation.csv": "a0d14b4ed8710e201d9287ca42e33e64e7adeabb450a8f7e648dc65d0a6d9f63",
-    "conserved-sites.csv": "f211bf4f65920efda218a8979ef2b727fc87cd2cf9dd340d8425e6f5b9e429e7"
+    "conserved-sites.csv": "f615db37e1e3bfa5acf948f2eba324d467cdf83d6028bc472e60f07dd7e8a4bd"
   },
   "citations": [
     "Capra JA, Singh M. Predicting functionally important residues from sequence conservation. Bioinformatics 2007;23(15):1875-1882. doi:10.1093/bioinformatics/btm270",
