@@ -230,21 +230,21 @@ export async function lintConfig(
   const declaresSequence = own != null || inherited !== undefined;
   // Validated as the sequence config it is once merged, so `{accession}` is
   // checked as sequence mode checks it, not as a missing accession.
+  let validated = parsed;
   if (inherited !== undefined) {
-    parsed = { ...(parsed as object), sequence: inherited };
+    validated = { ...(parsed as object), sequence: inherited };
   }
 
   // Only when the config declares no accession itself — an authored
   // `accession:` takes precedence, exactly as the element treats it — and
   // no `sequence:`, which shows a protein of its own.
-  let validated = parsed;
   if (
     accession &&
     isObject &&
     !declaresSequence &&
     (parsed as { accession?: unknown }).accession == null
   ) {
-    validated = { ...(parsed as object), accession };
+    validated = { ...(validated as object), accession };
   }
 
   const result = validateConfig(validated, createRegistry());

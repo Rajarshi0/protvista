@@ -210,6 +210,8 @@ rows:
     const result = await lint('sequence: |\n  >base\n  MKTAYIAKQR\nrows: []\n');
     expect(result.diagnostics).toEqual([]);
     expect(result.declaresSequence).toBe(true);
+    // The parsed config is still the editor text's own, without the base's.
+    expect(result.parsed).not.toHaveProperty('sequence');
     expect(fetched).toEqual(['https://lab.example/base.yaml']);
     // A base with no sequence, or one that can't be fetched, says no.
     expect((await lint('rows: []\n')).declaresSequence).toBe(false);
