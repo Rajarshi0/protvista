@@ -137,7 +137,13 @@ export function notFoundPageRelative(url: string): Response | undefined {
 
 export interface PlaygroundOptions {
   /** The state the page opens with, as a shared link would carry it. */
-  state: PlaygroundState;
+  state?: PlaygroundState;
+  /**
+   * The hash the page opens with instead of `state`'s, for a link
+   * `encodeState` never writes: a docs link such as `#preset=conservation`,
+   * which names no accession.
+   */
+  hash?: string;
   /** Every non-`blob:` URL fetched is pushed here, in order. */
   recorded?: string[];
   /**
@@ -183,7 +189,9 @@ export async function openPlayground(
   const parsed = new DOMParser().parseFromString(SKELETON, 'text/html');
   fixture.push(...parsed.body.children);
   document.body.append(...fixture);
-  history.replaceState(null, '', `#${encodeState(options.state)}`);
+  const hash =
+    options.hash ?? (options.state ? `#${encodeState(options.state)}` : '');
+  history.replaceState(null, '', hash);
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

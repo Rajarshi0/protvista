@@ -51,6 +51,8 @@ import jsonConfig from '../../examples/json/config.yaml?raw';
 // which extends the dev-only `/src/` path — it resolves on the hosted
 // playground (the element fetches it over the network at render time).
 import extendUniprotConfig from '../../starter-kit/recipes/extend-uniprot.yaml?raw';
+import sequenceInlineConfig from '../../examples/sequence-inline/config.yaml?raw';
+import smallPeptideConfig from '../../examples/small-peptide/config.yaml?raw';
 import { DEFAULT_ACCESSION } from './url-state.js';
 
 /**
@@ -179,6 +181,26 @@ export const PRESETS: readonly Preset[] = [
       'Your own track layered on the entire default UniProt viewer via ' +
       'extends: — fetches the published base config over the network.',
     config: withServedExtends(withServedExtendsData(extendUniprotConfig)),
+    accession: DEFAULT_ACCESSION,
+  },
+  {
+    id: 'own-sequence',
+    label: 'Your own sequence (FASTA, no UniProt)',
+    description:
+      'sequence: with inline FASTA and a features track. Paste your own ' +
+      'FASTA over it, or press Load data file… and pick a .fasta. No request ' +
+      'leaves the page.',
+    config: sequenceInlineConfig,
+    // Not used: a `sequence:` config disables the accession box.
+    accession: DEFAULT_ACCESSION,
+  },
+  {
+    id: 'small-peptide',
+    label: 'Small peptide, your own sequence (20 aa)',
+    description:
+      'Trp-cage TC5b, a designed 20-residue miniprotein (PDB 1L2Y), with its ' +
+      'helices from a CSV.',
+    config: withServedData(smallPeptideConfig, 'small-peptide'),
     accession: DEFAULT_ACCESSION,
   },
 ];
