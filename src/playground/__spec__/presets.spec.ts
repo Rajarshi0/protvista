@@ -10,10 +10,13 @@ import { createRegistry } from '../../schema/registry.js';
 import {
   ALL_PRESETS,
   DEFAULT_PRESET_ID,
+  DEV_PRESETS,
+  PRESETS,
   getPreset,
   isDevPreset,
   withServedData,
 } from '../presets.js';
+import { sequenceTargetSummary } from '../config-edit.js';
 import { createLocalFileStore, localDataDiagnostics } from '../local-files.js';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -129,6 +132,23 @@ describe('presets', () => {
     }
   );
 
+  it.each([
+    ['own-sequence', 240, 'my construct v2'],
+    ['small-peptide', 20, 'Trp-cage TC5b'],
+  ] as const)(
+    'preset "%s" shows its own %i-residue protein, written inline',
+    async (id, residues, header) => {
+      const config = await loadConfig(getPreset(id)!.config, {
+        registry: createRegistry(),
+        sequenceFetcher,
+        requireProtein: true,
+      });
+      expect(config.accession).toBeUndefined();
+      expect(config.sequence?.residues).toHaveLength(residues);
+      expect(config.sequence?.header).toBe(header);
+    }
+  );
+
   it.each(ALL_PRESETS.map((p) => [p.id, p] as const))(
     'preset "%s" names no file the playground would report as not loaded',
     async (_id, preset) => {
@@ -209,6 +229,27 @@ describe('presets', () => {
     });
   });
 
+  it('the main picker offers the examples of your own sequence and small proteins', () => {
+    const main = PRESETS.map((p) => p.id);
+    const dev = DEV_PRESETS.map((p) => p.id);
+    for (const id of ['own-sequence', 'small-peptide']) {
+      expect(main).toContain(id);
+      expect(dev).not.toContain(id);
+    }
+  });
+
+  it('loading a FASTA over own-sequence replaces its inline block and keeps its track', async () => {
+    // What the "Use as sequence" form defaults to: "This config", because
+    // nothing in it needs UniProt data.
+    const parsed = await parseConfigText(getPreset('own-sequence')!.config);
+    expect(sequenceTargetSummary(parsed)).toEqual({
+      needsUniprot: 0,
+      extends: false,
+      parses: true,
+      replaces: { inline: true, residues: 240 },
+    });
+  });
+
   it('every served sample-data path a preset names exists on the docs site', () => {
     const missing: string[] = [];
     for (const preset of ALL_PRESETS) {
@@ -219,6 +260,11 @@ describe('presets', () => {
       }
     }
     expect(missing).toEqual([]);
+    // A preset set that named no example's own file would pass by checking
+    // nothing.
+    expect(ALL_PRESETS.flatMap((p) => servedPathsIn(p.config))).toEqual(
+      expect.arrayContaining(['small-peptide/structure.csv'])
+    );
   });
 
   it('every file the docs site serves as sample data is byte-identical to its source under examples/', () => {

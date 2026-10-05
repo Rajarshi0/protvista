@@ -2050,6 +2050,101 @@ exports[`golden: examples/linegraph-csv > resolution (expected to change with th
 }
 `;
 
+exports[`golden: examples/sequence-inline > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "hotspots": [
+      {
+        "description": "Binding domain (designed)",
+        "end": 140,
+        "score": 0.95,
+        "start": 18,
+        "tooltipContent": "<h5>Type</h5><p>DOMAIN</p><h5>Description</h5><p>Binding domain (designed)</p><h5>Start</h5><p>18</p><h5>End</h5><p>140</p>",
+        "type": "DOMAIN",
+      },
+      {
+        "description": "Predicted heparin-binding site",
+        "end": 70,
+        "score": 0.87,
+        "start": 62,
+        "tooltipContent": "<h5>Type</h5><p>BINDING</p><h5>Description</h5><p>Predicted heparin-binding site</p><h5>Start</h5><p>62</p><h5>End</h5><p>70</p>",
+        "type": "BINDING",
+      },
+      {
+        "description": "Flexible linker",
+        "end": 190,
+        "score": 0.6,
+        "start": 150,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Flexible linker</p><h5>Start</h5><p>150</p><h5>End</h5><p>190</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Lab-observed loss-of-function point mutation",
+        "end": 214,
+        "score": 0.75,
+        "start": 214,
+        "tooltipContent": "<h5>Type</h5><p>MUTAGEN</p><h5>Description</h5><p>Lab-observed loss-of-function point mutation</p><h5>Start</h5><p>214</p><h5>End</h5><p>214</p>",
+        "type": "MUTAGEN",
+      },
+    ],
+    "hotspots-hotspots": [
+      {
+        "description": "Binding domain (designed)",
+        "end": 140,
+        "score": 0.95,
+        "start": 18,
+        "tooltipContent": "<h5>Type</h5><p>DOMAIN</p><h5>Description</h5><p>Binding domain (designed)</p><h5>Start</h5><p>18</p><h5>End</h5><p>140</p>",
+        "type": "DOMAIN",
+      },
+      {
+        "description": "Predicted heparin-binding site",
+        "end": 70,
+        "score": 0.87,
+        "start": 62,
+        "tooltipContent": "<h5>Type</h5><p>BINDING</p><h5>Description</h5><p>Predicted heparin-binding site</p><h5>Start</h5><p>62</p><h5>End</h5><p>70</p>",
+        "type": "BINDING",
+      },
+      {
+        "description": "Flexible linker",
+        "end": 190,
+        "score": 0.6,
+        "start": 150,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Flexible linker</p><h5>Start</h5><p>150</p><h5>End</h5><p>190</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Lab-observed loss-of-function point mutation",
+        "end": 214,
+        "score": 0.75,
+        "start": 214,
+        "tooltipContent": "<h5>Type</h5><p>MUTAGEN</p><h5>Description</h5><p>Lab-observed loss-of-function point mutation</p><h5>Start</h5><p>214</p><h5>End</h5><p>214</p>",
+        "type": "MUTAGEN",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/sequence-inline > resolution (expected to change with the refactor) 1`] = `
+{
+  "hotspots-hotspots": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": "uniprot-features-json",
+        "format": null,
+        "from": "inline",
+        "inline": true,
+        "shape": "feature",
+        "url": null,
+      },
+    ],
+  },
+}
+`;
+
 exports[`golden: examples/sequence-only > payloads (must survive the refactor byte-identically) 1`] = `
 {
   "data": {
@@ -2139,6 +2234,93 @@ exports[`golden: examples/sequence-only > resolution (expected to change with th
         "inline": false,
         "shape": "feature",
         "url": "./hotspots.csv",
+      },
+    ],
+  },
+}
+`;
+
+exports[`golden: examples/small-peptide > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "structure": [
+      {
+        "description": "α-helix",
+        "end": 8,
+        "start": 2,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>α-helix</p><h5>Start</h5><p>2</p><h5>End</h5><p>8</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "3₁₀-helix",
+        "end": 14,
+        "start": 11,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>3₁₀-helix</p><h5>Start</h5><p>11</p><h5>End</h5><p>14</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "Polyproline II segment",
+        "end": 19,
+        "start": 17,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Polyproline II segment</p><h5>Start</h5><p>17</p><h5>End</h5><p>19</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Trp6, buried in the cage",
+        "end": 6,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Trp6, buried in the cage</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+    ],
+    "structure-structure": [
+      {
+        "description": "α-helix",
+        "end": 8,
+        "start": 2,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>α-helix</p><h5>Start</h5><p>2</p><h5>End</h5><p>8</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "3₁₀-helix",
+        "end": 14,
+        "start": 11,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>3₁₀-helix</p><h5>Start</h5><p>11</p><h5>End</h5><p>14</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "Polyproline II segment",
+        "end": 19,
+        "start": 17,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Polyproline II segment</p><h5>Start</h5><p>17</p><h5>End</h5><p>19</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Trp6, buried in the cage",
+        "end": 6,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Trp6, buried in the cage</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/small-peptide > resolution (expected to change with the refactor) 1`] = `
+{
+  "structure-structure": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "feature",
+        "url": "./structure.csv",
       },
     ],
   },
