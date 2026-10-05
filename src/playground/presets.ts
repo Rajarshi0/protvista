@@ -137,6 +137,15 @@ export const PRESETS: readonly Preset[] = [
     accession: DEFAULT_ACCESSION,
   },
   {
+    id: 'small-protein',
+    label: 'Small protein: crambin (46 aa)',
+    description:
+      'The default UniProt viewer on a 46-residue entry (P01542): how a short ' +
+      'protein renders.',
+    config: defaultConfigYaml,
+    accession: 'P01542',
+  },
+  {
     id: 'basic',
     label: 'Basic (URL-sourced track)',
     description: 'A minimal config: one group, one track from a URL source.',
