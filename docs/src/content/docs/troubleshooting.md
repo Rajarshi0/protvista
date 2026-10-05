@@ -158,8 +158,9 @@ on screen — a track inside a collapsed group, a track with no data to draw, a
 customize-mode placeholder, or the "No feature data available" view — prefixed
 with the track's name. A track you hid from the layout tells visitors nothing
 until Customize shows it again. The notes are announced once to screen
-readers, politely, and the ⓘ is a keyboard-reachable button: Escape or a click
-elsewhere closes its note.
+readers, politely, and the ⓘ is a keyboard-reachable button: Escape, a click
+elsewhere or moving focus on closes its note. A note too long for the room
+beside its button scrolls.
 
 Visitor notices are on by default. The **`quiet-notices`** attribute turns
 them off:
