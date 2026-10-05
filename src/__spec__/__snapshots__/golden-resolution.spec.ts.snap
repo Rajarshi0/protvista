@@ -126,6 +126,557 @@ exports[`golden: examples/bed > resolution (expected to change with the refactor
 }
 `;
 
+exports[`golden: examples/conservation > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "binding_sites": [],
+    "binding_sites-binding_sites": [],
+    "conservation": [
+      {
+        "color": "#3d4451",
+        "name": "value",
+        "range": [
+          0.11,
+          0.877,
+        ],
+        "tooltipContent": "<h5>Name</h5><p>value</p>",
+        "values": [
+          {
+            "position": 4,
+            "value": 0.606,
+          },
+          {
+            "position": 5,
+            "value": 0.288,
+          },
+          {
+            "position": 6,
+            "value": 0.877,
+          },
+          {
+            "position": 7,
+            "value": 0.11,
+          },
+          {
+            "position": 8,
+            "value": 0.121,
+          },
+          {
+            "position": 9,
+            "value": 0.821,
+          },
+          {
+            "position": 10,
+            "value": 0.348,
+          },
+          {
+            "position": 11,
+            "value": 0.518,
+          },
+          {
+            "position": 12,
+            "value": 0.338,
+          },
+          {
+            "position": 13,
+            "value": 0.781,
+          },
+          {
+            "position": 14,
+            "value": 0.522,
+          },
+          {
+            "position": 15,
+            "value": 0.512,
+          },
+          {
+            "position": 16,
+            "value": 0.264,
+          },
+          {
+            "position": 17,
+            "value": 0.138,
+          },
+          {
+            "position": 18,
+            "value": 0.614,
+          },
+          {
+            "position": 19,
+            "value": 0.376,
+          },
+          {
+            "position": 20,
+            "value": 0.323,
+          },
+          {
+            "position": 21,
+            "value": 0.161,
+          },
+          {
+            "position": 22,
+            "value": 0.166,
+          },
+          {
+            "position": 23,
+            "value": 0.336,
+          },
+          {
+            "position": 24,
+            "value": 0.451,
+          },
+          {
+            "position": 25,
+            "value": 0.295,
+          },
+          {
+            "position": 26,
+            "value": 0.465,
+          },
+          {
+            "position": 27,
+            "value": 0.549,
+          },
+          {
+            "position": 28,
+            "value": 0.522,
+          },
+          {
+            "position": 29,
+            "value": 0.262,
+          },
+          {
+            "position": 30,
+            "value": 0.706,
+          },
+          {
+            "position": 31,
+            "value": 0.324,
+          },
+          {
+            "position": 32,
+            "value": 0.363,
+          },
+          {
+            "position": 33,
+            "value": 0.532,
+          },
+          {
+            "position": 34,
+            "value": 0.643,
+          },
+          {
+            "position": 35,
+            "value": 0.322,
+          },
+          {
+            "position": 36,
+            "value": 0.401,
+          },
+          {
+            "position": 37,
+            "value": 0.759,
+          },
+          {
+            "position": 38,
+            "value": 0.179,
+          },
+          {
+            "position": 39,
+            "value": 0.862,
+          },
+          {
+            "position": 40,
+            "value": 0.702,
+          },
+          {
+            "position": 41,
+            "value": 0.183,
+          },
+          {
+            "position": 42,
+            "value": 0.844,
+          },
+          {
+            "position": 43,
+            "value": 0.352,
+          },
+          {
+            "position": 44,
+            "value": 0.3,
+          },
+          {
+            "position": 45,
+            "value": 0.222,
+          },
+          {
+            "position": 46,
+            "value": 0.59,
+          },
+          {
+            "position": 47,
+            "value": 0.211,
+          },
+          {
+            "position": 48,
+            "value": 0.153,
+          },
+          {
+            "position": 49,
+            "value": 0.748,
+          },
+        ],
+      },
+    ],
+    "conservation-conservation": [
+      {
+        "color": "#3d4451",
+        "name": "value",
+        "range": [
+          0.11,
+          0.877,
+        ],
+        "tooltipContent": "<h5>Name</h5><p>value</p>",
+        "values": [
+          {
+            "position": 4,
+            "value": 0.606,
+          },
+          {
+            "position": 5,
+            "value": 0.288,
+          },
+          {
+            "position": 6,
+            "value": 0.877,
+          },
+          {
+            "position": 7,
+            "value": 0.11,
+          },
+          {
+            "position": 8,
+            "value": 0.121,
+          },
+          {
+            "position": 9,
+            "value": 0.821,
+          },
+          {
+            "position": 10,
+            "value": 0.348,
+          },
+          {
+            "position": 11,
+            "value": 0.518,
+          },
+          {
+            "position": 12,
+            "value": 0.338,
+          },
+          {
+            "position": 13,
+            "value": 0.781,
+          },
+          {
+            "position": 14,
+            "value": 0.522,
+          },
+          {
+            "position": 15,
+            "value": 0.512,
+          },
+          {
+            "position": 16,
+            "value": 0.264,
+          },
+          {
+            "position": 17,
+            "value": 0.138,
+          },
+          {
+            "position": 18,
+            "value": 0.614,
+          },
+          {
+            "position": 19,
+            "value": 0.376,
+          },
+          {
+            "position": 20,
+            "value": 0.323,
+          },
+          {
+            "position": 21,
+            "value": 0.161,
+          },
+          {
+            "position": 22,
+            "value": 0.166,
+          },
+          {
+            "position": 23,
+            "value": 0.336,
+          },
+          {
+            "position": 24,
+            "value": 0.451,
+          },
+          {
+            "position": 25,
+            "value": 0.295,
+          },
+          {
+            "position": 26,
+            "value": 0.465,
+          },
+          {
+            "position": 27,
+            "value": 0.549,
+          },
+          {
+            "position": 28,
+            "value": 0.522,
+          },
+          {
+            "position": 29,
+            "value": 0.262,
+          },
+          {
+            "position": 30,
+            "value": 0.706,
+          },
+          {
+            "position": 31,
+            "value": 0.324,
+          },
+          {
+            "position": 32,
+            "value": 0.363,
+          },
+          {
+            "position": 33,
+            "value": 0.532,
+          },
+          {
+            "position": 34,
+            "value": 0.643,
+          },
+          {
+            "position": 35,
+            "value": 0.322,
+          },
+          {
+            "position": 36,
+            "value": 0.401,
+          },
+          {
+            "position": 37,
+            "value": 0.759,
+          },
+          {
+            "position": 38,
+            "value": 0.179,
+          },
+          {
+            "position": 39,
+            "value": 0.862,
+          },
+          {
+            "position": 40,
+            "value": 0.702,
+          },
+          {
+            "position": 41,
+            "value": 0.183,
+          },
+          {
+            "position": 42,
+            "value": 0.844,
+          },
+          {
+            "position": 43,
+            "value": 0.352,
+          },
+          {
+            "position": 44,
+            "value": 0.3,
+          },
+          {
+            "position": 45,
+            "value": 0.222,
+          },
+          {
+            "position": 46,
+            "value": 0.59,
+          },
+          {
+            "position": 47,
+            "value": 0.211,
+          },
+          {
+            "position": 48,
+            "value": 0.153,
+          },
+          {
+            "position": 49,
+            "value": 0.748,
+          },
+        ],
+      },
+    ],
+    "conserved_sites": [
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 6,
+        "score": 0.877,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 9,
+        "score": 0.821,
+        "start": 9,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>9</p><h5>End</h5><p>9</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 13,
+        "score": 0.781,
+        "start": 13,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>13</p><h5>End</h5><p>13</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 37,
+        "score": 0.759,
+        "start": 37,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>37</p><h5>End</h5><p>37</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 39,
+        "score": 0.862,
+        "start": 39,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>39</p><h5>End</h5><p>39</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 42,
+        "score": 0.844,
+        "start": 42,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>42</p><h5>End</h5><p>42</p>",
+        "type": "SITE",
+      },
+    ],
+    "conserved_sites-conserved_sites": [
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 6,
+        "score": 0.877,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 9,
+        "score": 0.821,
+        "start": 9,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>9</p><h5>End</h5><p>9</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 13,
+        "score": 0.781,
+        "start": 13,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>13</p><h5>End</h5><p>13</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 37,
+        "score": 0.759,
+        "start": 37,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>37</p><h5>End</h5><p>37</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 39,
+        "score": 0.862,
+        "start": 39,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>39</p><h5>End</h5><p>39</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)",
+        "end": 42,
+        "score": 0.844,
+        "start": 42,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Among the most conserved 10% of scored residues in Pfam PF00301 (≥ 90th percentile)</p><h5>Start</h5><p>42</p><h5>End</h5><p>42</p>",
+        "type": "SITE",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/conservation > resolution (expected to change with the refactor) 1`] = `
+{
+  "binding_sites-binding_sites": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": "uniprot-features-json",
+        "format": null,
+        "from": "url",
+        "inline": false,
+        "shape": "feature",
+        "url": "https://www.ebi.ac.uk/proteins/api/features/{accession}",
+      },
+    ],
+  },
+  "conservation-conservation": {
+    "component": "nightingale-linegraph-track",
+    "kind": "linegraph",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "point",
+        "url": "./conservation.csv",
+      },
+    ],
+  },
+  "conserved_sites-conserved_sites": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "feature",
+        "url": "./conserved-sites.csv",
+      },
+    ],
+  },
+}
+`;
+
 exports[`golden: examples/csv > payloads (must survive the refactor byte-identically) 1`] = `
 {
   "data": {

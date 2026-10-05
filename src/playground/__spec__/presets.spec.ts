@@ -232,16 +232,46 @@ describe('presets', () => {
   it('the main picker offers the examples of your own sequence and small proteins', () => {
     const main = PRESETS.map((p) => p.id);
     const dev = DEV_PRESETS.map((p) => p.id);
-    for (const id of ['small-protein', 'own-sequence', 'small-peptide']) {
+    for (const id of [
+      'small-protein',
+      'conservation',
+      'own-sequence',
+      'small-peptide',
+    ]) {
       expect(main).toContain(id);
       expect(dev).not.toContain(id);
     }
+  });
+
+  it('the main picker lists its presets in order', () => {
+    expect(PRESETS.map((p) => p.id)).toEqual([
+      'uniprot-default',
+      'small-protein',
+      'basic',
+      'inline-data',
+      'linegraph',
+      'conservation',
+      'csv',
+      'json',
+      'extend-uniprot',
+      'own-sequence',
+      'small-peptide',
+    ]);
   });
 
   it('small-protein is the shipped default viewer on crambin', () => {
     const preset = getPreset('small-protein')!;
     expect(preset.config).toBe(defaultConfigYaml);
     expect(preset.accession).toBe('P01542');
+  });
+
+  it('conservation opens on the protein its data belongs to', async () => {
+    const preset = getPreset('conservation')!;
+    expect(preset.accession).toBe('P24297');
+    const parsed = (await parseConfigText(preset.config)) as {
+      accession?: string;
+    };
+    expect(parsed.accession).toBe(preset.accession);
   });
 
   it('loading a FASTA over own-sequence replaces its inline block and keeps its track', async () => {
@@ -269,7 +299,11 @@ describe('presets', () => {
     // A preset set that named no example's own file would pass by checking
     // nothing.
     expect(ALL_PRESETS.flatMap((p) => servedPathsIn(p.config))).toEqual(
-      expect.arrayContaining(['small-peptide/structure.csv'])
+      expect.arrayContaining([
+        'small-peptide/structure.csv',
+        'conservation/conservation.csv',
+        'conservation/conserved-sites.csv',
+      ])
     );
   });
 

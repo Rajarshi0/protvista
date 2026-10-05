@@ -10,19 +10,33 @@
  *
  * Which examples are surfaced here is deliberately curated for a single
  * hosted page:
+ *   - `small-protein` is the shipped default viewer on crambin (P01542, 46
+ *     residues), like the dev presets below, to show a short UniProt entry.
  *   - `basic` / `inline-data` / `linegraph` render fully standalone
  *     (`inline-data` also carries a `theme:` block — no-code config theming;
  *     `linegraph` is the bring-your-own-metric line graph, inline so it needs
  *     nothing served).
+ *   - `conservation` is real per-residue conservation for rubredoxin
+ *     (P24297) as a line graph, its most conserved residues, and UniProt's
+ *     binding sites. Its accession is its config's own, because its data
+ *     belongs to that protein.
  *   - `csv` (a single standalone track — one row, no group) and `json` (a
  *     live UniProt API track next to the BYO file) are bring-your-own-file.
- *     The examples reference `data: ./hotspots.*`, which the loader resolves
- *     against the *page*, not the config's directory — so for the playground
- *     we repoint them at the site-absolute `/protvista/sample-data/hotspots.*`
- *     (base-absolute so it resolves regardless of the page's trailing slash).
- *     Those files are served from `docs/public/sample-data/` (copies of the
- *     canonical `examples/csv|json/hotspots.*`). That is the only edit from
- *     verbatim, and it makes the presets render on the native Astro page.
+ *   - `own-sequence` and `small-peptide` show a protein from its own
+ *     sequence (`sequence:`, inline FASTA) rather than an accession:
+ *     `own-sequence` with its records inline, so it makes no request, and
+ *     `small-peptide` (Trp-cage, 20 residues) with a served CSV.
+ *
+ *   The file-backed examples reference `data: ./<file>`, which the loader
+ *   resolves against the *page*, not the config's directory — so for the
+ *   playground `withServedData` repoints them at the site-absolute
+ *   `/protvista/sample-data/[<example>/]<file>` (base-absolute so it resolves
+ *   regardless of the page's trailing slash). Those files are copies in
+ *   `docs/public/sample-data/` of the canonical files under `examples/`
+ *   (`hotspots.*` at the top, for the tutorial's links; the rest under the
+ *   example's own name), and `presets.spec.ts` checks every copy is
+ *   byte-identical to its source. That is the only edit from verbatim, and it
+ *   makes the presets render on the native Astro page.
  *   - `extend-uniprot` (from `starter-kit/recipes/`) layers a custom track
  *     on the full default viewer via `extends:`. Its exact-version jsDelivr
  *     pin is repointed here at `/protvista/default-config.yaml` (see
@@ -33,9 +47,11 @@
  *     `examples/extend-default`, whose `extends: /src/default-config.yaml`
  *     is dev-only). Its `./data/` sample is repointed at the served
  *     `hotspots.csv` like the presets above.
- *   - `extend-default` / `tsv` / `bed` are intentionally omitted:
- *     `extend-default` is the dev-only `/src/`-extends variant just described;
- *     `tsv` duplicates `csv`'s shape and `bed` is niche.
+ *   - `extend-default` / `tsv` / `bed` / `sequence-only` are intentionally
+ *     omitted: `extend-default` is the dev-only `/src/`-extends variant just
+ *     described; `tsv` duplicates `csv`'s shape and `bed` is niche;
+ *     `sequence-only` names its FASTA file, which `own-sequence` writes
+ *     inline.
  *
  * `__spec__/presets.spec.ts` loads every preset through `loadConfig`, so
  * a broken seed can never ship.
@@ -53,6 +69,7 @@ import jsonConfig from '../../examples/json/config.yaml?raw';
 import extendUniprotConfig from '../../starter-kit/recipes/extend-uniprot.yaml?raw';
 import sequenceInlineConfig from '../../examples/sequence-inline/config.yaml?raw';
 import smallPeptideConfig from '../../examples/small-peptide/config.yaml?raw';
+import conservationConfig from '../../examples/conservation/config.yaml?raw';
 import { DEFAULT_ACCESSION } from './url-state.js';
 
 /**
@@ -168,6 +185,18 @@ export const PRESETS: readonly Preset[] = [
       '{ position, value } records.',
     config: linegraphConfig,
     accession: DEFAULT_ACCESSION,
+  },
+  {
+    id: 'conservation',
+    label: 'Conservation line graph (rubredoxin)',
+    description:
+      'Per-residue conservation of P24297 across 5,852 Pfam PF00301 ' +
+      "sequences, its most conserved residues, and UniProt's iron-binding " +
+      'sites.',
+    config: withServedData(conservationConfig, 'conservation'),
+    // The config's own `accession:` (the protein its data belongs to) wins
+    // over the box; this keeps the box showing the protein on screen.
+    accession: 'P24297',
   },
   {
     id: 'csv',

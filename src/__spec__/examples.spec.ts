@@ -77,6 +77,8 @@ const SEQ_LEN = 770;
  */
 const PROTEIN_LENGTHS: Record<string, number> = {
   [REFERENCE_ACCESSION]: SEQ_LEN,
+  // Rubredoxin, conservation/ (UniProt release 2026_03).
+  P24297: 54,
 };
 
 const EXAMPLES_ROOT = resolve(
@@ -125,6 +127,7 @@ it('discovers the expected example directories', () => {
       'sequence-only',
       'sequence-inline',
       'small-peptide',
+      'conservation',
     ])
   );
 });
