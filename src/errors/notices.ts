@@ -103,10 +103,6 @@ export const NOTICE_TEXT: Record<NoticeCode, (facts: NoticeFacts) => string> = {
         : "A track can't be displayed in this viewer.",
 };
 
-/** Whether a code has a visitor sentence. */
-export const isNoticeCode = (code: string | undefined): code is NoticeCode =>
-  code !== undefined && Object.prototype.hasOwnProperty.call(NOTICE_TEXT, code);
-
 /** Buttons, headings and announcements. */
 export const NOTE_UI = {
   /** The track ⓘ's accessible name. */

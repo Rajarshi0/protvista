@@ -13,13 +13,36 @@
  * can pass because nothing happened.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 
 // Registers <protvista-uniprot>; nightingale packages are stubbed globally
 // via `src/__spec__/nightingale-mocks.ts` (setupFiles).
 import '../protvista-uniprot.js';
 import { CSS_PREFIX } from '../styles/css-prefix.js';
+import { ruleFor, type FailureReport } from '../errors/router.js';
 import type { NormalizedConfig } from '../schema/normalize.js';
+
+// `autoUpdate` passes through to Floating UI unless a test swaps it, so the
+// popover's cleanup can be observed.
+const floating = vi.hoisted(() => ({
+  autoUpdate: vi.fn(),
+  actual: undefined as unknown as (...args: unknown[]) => () => void,
+}));
+vi.mock('@floating-ui/dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@floating-ui/dom')>();
+  floating.actual = actual.autoUpdate as never;
+  return {
+    ...actual,
+    autoUpdate: (...args: unknown[]) => floating.autoUpdate(...args),
+  };
+});
+const autoUpdateSpy = floating.autoUpdate;
+beforeEach(() => {
+  autoUpdateSpy.mockReset();
+  autoUpdateSpy.mockImplementation((...args: unknown[]) =>
+    floating.actual(...args)
+  );
+});
 
 const PANEL = `.${CSS_PREFIX}-error-panel`;
 const BADGE = `.${CSS_PREFIX}-error-badge`;
@@ -270,5 +293,712 @@ describe('author mode off: errors look exactly as they did', () => {
     });
     await el.updateComplete;
     expect(normalize(el.querySelector(PANEL)!.outerHTML)).toMatchSnapshot();
+  });
+});
+
+// ── Visitor notices ─────────────────────────────────────────────
+
+const NOTE = `.${CSS_PREFIX}-note`;
+const TOP_BAR = `.${CSS_PREFIX}-nav-track-label`;
+
+/** The label cell of a standalone row, or of a track inside a group. */
+const rowLabel = (el: El, rowId: string) =>
+  el.querySelector(`#${CSS_PREFIX}-group_${rowId} .${CSS_PREFIX}-track-label`);
+const trackLabel = (el: El, trackId: string) =>
+  el.querySelector(
+    `#${CSS_PREFIX}-track_${trackId} .${CSS_PREFIX}-track-label`
+  );
+const topNote = (el: El) =>
+  el.querySelector<HTMLButtonElement>(`${TOP_BAR} ${NOTE}`);
+const noResultsNote = (el: El) =>
+  el.querySelector<HTMLButtonElement>(`.protvista-no-results ${NOTE}`);
+
+const popoverOf = (button: Element) =>
+  document.getElementById(button.getAttribute('aria-controls')!)!;
+const linesOf = (button: Element) =>
+  [...popoverOf(button).querySelectorAll('li')].map((li) =>
+    li.textContent!.replace(/\s+/g, ' ').trim()
+  );
+/** Every line in every note popover the element draws. */
+const allLines = (el: El) =>
+  [...el.querySelectorAll(NOTE)].flatMap((b) => linesOf(b));
+
+const csvTrack = (
+  id: string,
+  label: string,
+  rows: string[],
+  extra: Record<string, unknown> = {}
+) => ({
+  id,
+  label,
+  kind: 'features',
+  data: {
+    from: 'inline',
+    format: 'csv',
+    inlineData: ['type,start,end,description,color', ...rows].join('\n'),
+  },
+  ...extra,
+});
+/** A track that draws one feature and warns about nothing. */
+const okTrack = (id = 'ok', label = 'Fine') =>
+  csvTrack(id, label, ['DOMAIN,2,8,fine,#2a7']);
+
+const TWO_OUTSIDE =
+  "2 features extend beyond this sequence, so they aren't shown in full.";
+const COLOUR_TEXT =
+  "Some colours in the data couldn't be shown, so some features may be in the wrong colour.";
+
+/** Wait for an event matching `pred`. */
+const eventFired = (events: Detail[], pred: (d: Detail) => boolean) =>
+  vi.waitFor(() => {
+    if (!events.some(pred)) throw new Error('event not fired yet');
+  });
+const hasCode = (code: string) => (d: Detail) =>
+  d.issues.some((i) => i.code === code);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe('visitor notices, one per routing-table row', () => {
+  type Scenario = {
+    name: string;
+    config: Record<string, unknown>;
+    /** The report the warning routes as, for `ruleFor`. */
+    report: Pick<FailureReport, 'severity' | 'phase' | 'code'> & {
+      scope: 'viewer' | 'track';
+    };
+    /** The event (or console line) that proves the scenario happened. */
+    fired: (events: Detail[]) => Promise<void>;
+    /** Row whose label would carry a track notice. */
+    row?: string;
+    after?: (el: El) => void;
+  };
+
+  const SCENARIOS: Scenario[] = [
+    {
+      name: 'coordinates outside the sequence',
+      config: {
+        sequence: RESIDUES,
+        rows: [
+          csvTrack('lab', 'Lab hits', ['DOMAIN,5,20,a,', 'REGION,30,60,b,']),
+        ],
+      },
+      report: {
+        severity: 'warning',
+        scope: 'track',
+        phase: 'track-data',
+        code: 'coordinate-out-of-range',
+      },
+      fired: (ev) => eventFired(ev, hasCode('coordinate-out-of-range')),
+      row: 'lab',
+    },
+    {
+      name: 'an unpaintable colour',
+      config: {
+        sequence: RESIDUES,
+        rows: [csvTrack('lab', 'Lab hits', ['DOMAIN,5,20,a,bleu'])],
+      },
+      report: {
+        severity: 'warning',
+        scope: 'track',
+        phase: 'track-data',
+        code: 'unpaintable-color',
+      },
+      fired: (ev) => eventFired(ev, hasCode('unpaintable-color')),
+      row: 'lab',
+    },
+    {
+      name: 'an ignored column',
+      config: {
+        sequence: RESIDUES,
+        rows: [
+          labHits({
+            dataTooltip: undefined,
+            data: {
+              from: 'inline',
+              format: 'csv',
+              inlineData:
+                'type,start,end,description,tooltipContent\nDOMAIN,5,20,a,x',
+            },
+          }),
+        ],
+      },
+      report: {
+        severity: 'warning',
+        scope: 'track',
+        phase: 'track-data',
+        code: 'data-field-ignored',
+      },
+      fired: (ev) => eventFired(ev, hasCode('data-field-ignored')),
+      row: 'lab',
+    },
+    {
+      name: 'a tooltip field no record has',
+      config: {
+        sequence: RESIDUES,
+        rows: [okTrack('lab', 'Lab hits')].map((t) => ({
+          ...t,
+          dataTooltip: { kind: 'markdown', template: '{% $gene %}' },
+        })),
+      },
+      report: {
+        severity: 'warning',
+        scope: 'track',
+        phase: 'tooltip-field-miss',
+      },
+      fired: (ev) => eventFired(ev, hasCode('tooltip-field-miss')),
+      row: 'lab',
+    },
+    {
+      name: 'a skipped fetch',
+      config: { sequence: RESIDUES, rows: [okTrack(), partner()] },
+      report: {
+        severity: 'warning',
+        scope: 'viewer',
+        phase: 'track-fetch',
+        code: 'url-variable-unresolved',
+      },
+      fired: (ev) =>
+        eventFired(ev, (d) => d.message.startsWith('Not fetching')),
+    },
+    {
+      name: 'a component with no renderer',
+      config: { sequence: RESIDUES, rows: [okTrack(), mine()] },
+      report: {
+        severity: 'warning',
+        scope: 'viewer',
+        phase: 'config',
+        code: 'unrendered-component',
+      },
+      fired: (ev) => eventFired(ev, (d) => d.message.startsWith('No renderer')),
+    },
+    {
+      name: 'a theme colour that does not resolve',
+      config: {
+        sequence: RESIDUES,
+        theme: { accentColor: 'not-a-colour' },
+        rows: [okTrack()],
+      },
+      report: {
+        severity: 'warning',
+        scope: 'viewer',
+        phase: 'config',
+        code: 'theme-color-ignored',
+      },
+      fired: (ev) =>
+        eventFired(ev, (d) => d.message.startsWith('Ignoring theme')),
+    },
+    {
+      name: 'a rejected setTrackData() call',
+      config: { sequence: RESIDUES, rows: [okTrack()] },
+      report: { severity: 'warning', scope: 'viewer', phase: 'set-track-data' },
+      fired: (ev) => eventFired(ev, (d) => d.phase === 'set-track-data'),
+      after: (el) => el.setTrackData('nope', 'x', []),
+    },
+    {
+      name: 'a config validation warning',
+      config: {
+        sequence: RESIDUES,
+        rows: [{ ...okTrack(), detailOnly: true }],
+      },
+      report: { severity: 'warning', scope: 'viewer', phase: 'config' },
+      fired: (ev) => eventFired(ev, hasCode('detail-only-standalone')),
+    },
+    {
+      name: 'a payload rejected under a key no row owns',
+      config: { sequence: RESIDUES, rows: [okTrack()] },
+      report: { severity: 'warning', scope: 'viewer', phase: 'track-fetch' },
+      fired: (ev) => eventFired(ev, (d) => d.message.includes('no-such-key')),
+      after: (el) => el._assignComponentData(rejecting(), [], 'no-such-key'),
+    },
+    {
+      name: 'a track error',
+      config: { sequence: RESIDUES, rows: [okTrack(), broken()] },
+      report: { severity: 'error', scope: 'track', phase: 'track-fetch' },
+      fired: (ev) => eventFired(ev, (d) => d.severity === 'error'),
+      row: 'broken',
+    },
+    {
+      name: 'a provider 404 (info)',
+      config: {
+        sequence: RESIDUES,
+        sources: { features: 'https://example.org/features' },
+        rows: [
+          okTrack(),
+          { id: 'prov', label: 'Provider', kind: 'features', data: 'features' },
+        ],
+      },
+      report: { severity: 'info', scope: 'track', phase: 'track-fetch' },
+      fired: () =>
+        vi.waitFor(() => {
+          const info = vi.mocked(console.info).mock.calls;
+          if (!info.some((c) => String(c[0]).includes('no data (HTTP 404)'))) {
+            throw new Error('no info line yet');
+          }
+        }),
+      row: 'prov',
+    },
+  ];
+
+  it.each(SCENARIOS)('$name', async ({ config, report, fired, row, after }) => {
+    quiet();
+    const { el, events } = mountEl(config);
+    await ready(el, events, '');
+    after?.(el);
+    await fired(events);
+    await el.updateComplete;
+
+    const expected = ruleFor({
+      ...report,
+      scope: report.scope === 'viewer' ? 'viewer' : { trackKey: 'x' },
+      message: '',
+      consoleLevel: 'warn',
+    }).notice;
+    const onRow = row ? (rowLabel(el, row)?.querySelector(NOTE) ?? null) : null;
+    const onTop = topNote(el);
+    expect(!!onRow, 'track notice').toBe(expected === 'track');
+    expect(!!onTop, 'viewer notice').toBe(expected === 'viewer');
+    if (expected === 'none') expect(el.querySelector(NOTE)).toBeNull();
+  });
+});
+
+describe('what a visitor notice says', () => {
+  it('counts the features outside the sequence', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [
+        csvTrack('lab', 'Lab hits', [
+          'DOMAIN,5,20,a,',
+          'REGION,30,60,b,',
+          'SITE,0,3,c,',
+        ]),
+      ],
+    });
+    await ready(el, events);
+    const note = rowLabel(el, 'lab')!.querySelector(NOTE)!;
+    expect(note.getAttribute('aria-label')).toBe('Note about Lab hits');
+    expect(linesOf(note)).toEqual([TWO_OUTSIDE]);
+  });
+
+  it('counts them in accession mode too', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      accession: 'P05067',
+      rows: [
+        csvTrack('lab', 'Lab hits', [
+          'DOMAIN,5,20,a,',
+          'REGION,30,60,b,',
+          'SITE,0,3,c,',
+        ]),
+      ],
+    });
+    // The entry answers with the same 40 residues.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) =>
+        String(input).includes('/proteins/api/proteins/')
+          ? ({
+              ok: true,
+              status: 200,
+              json: async () => ({ sequence: { sequence: RESIDUES } }),
+              text: async () => '',
+            } as unknown as Response)
+          : notFound()()
+      )
+    );
+    await ready(el, events);
+    expect(linesOf(rowLabel(el, 'lab')!.querySelector(NOTE)!)).toEqual([
+      TWO_OUTSIDE,
+    ]);
+  });
+
+  it('names the skipped tracks on the top bar, and nothing on a row', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    const top = topNote(el)!;
+    expect(top.getAttribute('aria-label')).toBe('Notes about this view (2)');
+    expect(popoverOf(top).textContent).toContain('About this view');
+    expect(linesOf(top)).toEqual([
+      "“Mine” can't be displayed in this viewer.",
+      "“Partner data” isn't shown: its data couldn't be loaded.",
+    ]);
+    // Lab hits carries its own two lines.
+    expect(linesOf(rowLabel(el, 'lab')!.querySelector(NOTE)!)).toEqual([
+      COLOUR_TEXT,
+      TWO_OUTSIDE,
+    ]);
+    // Visitors never see a URL, a file, a field or a variable.
+    for (const line of allLines(el)) {
+      expect(line).not.toMatch(/https?:|\{|\.csv|tooltipContent|gene/);
+    }
+  });
+
+  it('says a track that fetched some of its URLs is incomplete', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      sources: {
+        here: 'https://example.org/here',
+        there: 'https://example.org/{dataset}/there',
+      },
+      rows: [
+        okTrack(),
+        {
+          id: 'two',
+          label: 'Two sources',
+          kind: 'features',
+          data: { source: ['here', 'there'] },
+        },
+      ],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el.updateComplete;
+    expect(linesOf(topNote(el)!)).toEqual([
+      "“Two sources” is incomplete: some of its data couldn't be loaded.",
+    ]);
+  });
+});
+
+describe('quiet-notices', () => {
+  it('removes every notice, and a runtime toggle brings them back', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['quiet-notices'] });
+    await ready(el, events);
+    expect(el.querySelector(NOTE)).toBeNull();
+
+    el.removeAttribute('quiet-notices');
+    await el.updateComplete;
+    expect(topNote(el)).not.toBeNull();
+    expect(rowLabel(el, 'lab')!.querySelector(NOTE)).not.toBeNull();
+
+    el.setAttribute('quiet-notices', '');
+    await el.updateComplete;
+    expect(el.querySelector(NOTE)).toBeNull();
+  });
+});
+
+describe('where a note goes', () => {
+  /** A grouped track whose rows are all filtered out: a colour note, no data. */
+  const emptyColour = () =>
+    csvTrack('pale', 'Pale', ['DOMAIN,5,20,a,bleu'], { filter: 'NOPE' });
+
+  const grouped = (tracks: unknown[], extra: Record<string, unknown> = {}) => ({
+    sequence: RESIDUES,
+    rows: [{ id: 'G', label: 'Group', tracks }, okTrack('other', 'Other')],
+    ...extra,
+  });
+
+  /** Each line once in the whole viewer; `on` says where. */
+  const expectOnce = (el: El, text: string, on: 'row' | 'top') => {
+    const hits = allLines(el).filter((l) => l.endsWith(text));
+    expect(hits, text).toHaveLength(1);
+    const top = topNote(el) ?? noResultsNote(el);
+    const inTop = top ? linesOf(top).some((l) => l.endsWith(text)) : false;
+    expect(inTop ? 'top' : 'row').toBe(on);
+  };
+
+  const labInGroup = () =>
+    csvTrack('lab', 'Lab hits', [
+      'DOMAIN,5,20,a,',
+      'REGION,30,60,b,',
+      'SITE,0,3,c,',
+    ]);
+
+  it('collapsed group: on the top bar, named', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([labInGroup()]));
+    await ready(el, events);
+    expectOnce(el, TWO_OUTSIDE, 'top');
+    expect(linesOf(topNote(el)!)).toEqual([`Lab hits: ${TWO_OUTSIDE}`]);
+  });
+
+  it('expanded group: on the track only', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([labInGroup()]), {
+      props: { openGroups: ['G'] },
+    });
+    await ready(el, events);
+    expectOnce(el, TWO_OUTSIDE, 'row');
+    expect(trackLabel(el, 'lab')!.querySelector(NOTE)).not.toBeNull();
+  });
+
+  it('a group toggled open and closed moves the note, never copies it', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([labInGroup()]));
+    await ready(el, events);
+    el.openGroups = ['G'];
+    await el.updateComplete;
+    expectOnce(el, TWO_OUTSIDE, 'row');
+    el.openGroups = [];
+    await el.updateComplete;
+    expectOnce(el, TWO_OUTSIDE, 'top');
+  });
+
+  it('open group, empty track: on the top bar', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([labInGroup(), emptyColour()]), {
+      props: { openGroups: ['G'] },
+    });
+    await ready(el, events);
+    await eventFired(events, hasCode('unpaintable-color'));
+    await el.updateComplete;
+    expectOnce(el, COLOUR_TEXT, 'top');
+    expectOnce(el, TWO_OUTSIDE, 'row');
+  });
+
+  it('group-error row: on the top bar', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([broken(), emptyColour()]));
+    await ready(el, events, 'unpaintable-color');
+    // The group draws only its header and badge.
+    expect(el.querySelector(`#${CSS_PREFIX}-group_G ${BADGE}`)).not.toBeNull();
+    expectOnce(el, COLOUR_TEXT, 'top');
+  });
+
+  it('a hidden track has no visitor line, until customize mode shows it', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      grouped([okTrack('shown', 'Shown'), { ...labInGroup(), hidden: true }]),
+      { props: { openGroups: ['G'] } }
+    );
+    await ready(el, events);
+    expect(allLines(el).filter((l) => l.endsWith(TWO_OUTSIDE))).toEqual([]);
+
+    // A ghost row draws its label, so the note is on it.
+    el._customizeMode = true;
+    await el.updateComplete;
+    expectOnce(el, TWO_OUTSIDE, 'row');
+  });
+
+  it('customize stub: on the top bar', async () => {
+    quiet();
+    const { el, events } = mountEl(grouped([labInGroup(), emptyColour()]), {
+      props: { openGroups: ['G'] },
+    });
+    await ready(el, events, 'unpaintable-color');
+    el._customizeMode = true;
+    await el.updateComplete;
+    // The empty track is a stub: a label with controls, but no notes.
+    expect(trackLabel(el, 'pale')).not.toBeNull();
+    expect(trackLabel(el, 'pale')!.querySelector(NOTE)).toBeNull();
+    expectOnce(el, COLOUR_TEXT, 'top');
+  });
+
+  it('no results: every note on the one control, with a live region', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [partner(), emptyColour()],
+    });
+    await vi.waitFor(() => {
+      if (!el.querySelector('.protvista-no-results'))
+        throw new Error('not yet');
+    });
+    await eventFired(events, hasCode('unpaintable-color'));
+    await el.updateComplete;
+    const note = noResultsNote(el)!;
+    expect(linesOf(note)).toEqual([
+      "“Partner data” isn't shown: its data couldn't be loaded.",
+      `Pale: ${COLOUR_TEXT}`,
+    ]);
+    expect(el.querySelector(`.${CSS_PREFIX}-live-region`)).not.toBeNull();
+  });
+});
+
+describe('notes follow the loads that raised them', () => {
+  it('a full reload replaces the load notes', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [okTrack(), partner()],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el.updateComplete;
+    expect(topNote(el)).not.toBeNull();
+
+    // Defining the variable reloads every track: the URL is now fetched (and
+    // 404s, a badge), so nothing is skipped any more.
+    el.setAttribute('data-dataset', 'v1');
+    await vi.waitFor(() => {
+      if (!el.querySelector(`#${CSS_PREFIX}-group_partner ${BADGE}`)) {
+        throw new Error('not reloaded yet');
+      }
+    });
+    await el.updateComplete;
+    expect(topNote(el)).toBeNull();
+  });
+
+  it('a targeted retry keeps every other track’s notes', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [
+        csvTrack('lab', 'Lab hits', [
+          'DOMAIN,5,20,a,',
+          'REGION,30,60,b,',
+          'SITE,0,3,c,',
+        ]),
+        broken(),
+      ],
+    });
+    await ready(el, events);
+    await el._loadData(new Set(['broken-broken']));
+    await el.updateComplete;
+    expect(linesOf(rowLabel(el, 'lab')!.querySelector(NOTE)!)).toEqual([
+      TWO_OUTSIDE,
+    ]);
+  });
+
+  it('a new config drops the old config’s notes', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [okTrack(), mine()],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('No renderer'));
+    await el.updateComplete;
+    expect(topNote(el)).not.toBeNull();
+
+    await el.setConfig({ sequence: RESIDUES, rows: [okTrack()] });
+    await ready(el, events, '');
+    expect(topNote(el)).toBeNull();
+  });
+});
+
+describe('the announcement', () => {
+  const regionText = (el: El) =>
+    el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim();
+
+  it('is made once, after the region has settled, and not again on a group toggle', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [
+        {
+          id: 'G',
+          label: 'Group',
+          tracks: [
+            csvTrack('lab', 'Lab hits', [
+              'DOMAIN,5,20,a,',
+              'REGION,30,60,b,',
+              'SITE,0,3,c,',
+            ]),
+          ],
+        },
+      ],
+    });
+    const announce = vi.spyOn(
+      el as unknown as { _announce(m: string): void },
+      '_announce'
+    );
+    await ready(el, events);
+    const expected = `Note about Lab hits: ${TWO_OUTSIDE}`;
+    // The control is up, but the region does not hold the text yet: it
+    // arrives as an update to a region already on screen.
+    expect(regionText(el)).not.toBe(expected);
+    await vi.waitFor(() => expect(regionText(el)).toBe(expected));
+    const said = () => announce.mock.calls.filter(([m]) => m === expected);
+    expect(said()).toHaveLength(1);
+
+    el.openGroups = ['G'];
+    await el.updateComplete;
+    el.openGroups = [];
+    await el.updateComplete;
+    await sleep(250);
+    expect(said()).toHaveLength(1);
+  });
+
+  it('counts several notes and points at the controls', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    await vi.waitFor(() =>
+      expect(regionText(el)).toBe(
+        "4 notes about what's shown. Use the information buttons beside the track names and the Customize button to read them."
+      )
+    );
+  });
+
+  it('says nothing under quiet-notices', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['quiet-notices'] });
+    const announce = vi.spyOn(
+      el as unknown as { _announce(m: string): void },
+      '_announce'
+    );
+    await ready(el, events);
+    await sleep(250);
+    expect(announce.mock.calls.filter(([m]) => /note/i.test(m))).toEqual([]);
+  });
+});
+
+describe('the popover', () => {
+  const open = async (el: El, button: HTMLElement) => {
+    button.click();
+    await el.updateComplete;
+  };
+
+  it('opens on click, closes on Escape and hands focus back', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    const button = rowLabel(el, 'lab')!.querySelector<HTMLElement>(NOTE)!;
+    expect(popoverOf(button).hidden).toBe(true);
+    await open(el, button);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(popoverOf(button).hidden).toBe(false);
+
+    popoverOf(button).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    );
+    await el.updateComplete;
+    expect(popoverOf(button).hidden).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('closes on a press outside it, and not on one inside', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    const button = topNote(el)!;
+    await open(el, button);
+    popoverOf(button).dispatchEvent(
+      new Event('pointerdown', { bubbles: true })
+    );
+    await el.updateComplete;
+    expect(popoverOf(button).hidden).toBe(false);
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await el.updateComplete;
+    expect(popoverOf(button).hidden).toBe(true);
+  });
+
+  it('keeps one popover open at a time', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    const track = rowLabel(el, 'lab')!.querySelector<HTMLElement>(NOTE)!;
+    const top = topNote(el)!;
+    await open(el, track);
+    await open(el, top);
+    expect(popoverOf(track).hidden).toBe(true);
+    expect(popoverOf(top).hidden).toBe(false);
+  });
+
+  it('stops following its button when the element is removed', async () => {
+    quiet();
+    const cleanup = vi.fn();
+    autoUpdateSpy.mockImplementation(() => cleanup);
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    await open(el, topNote(el)!);
+    expect(autoUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(cleanup).not.toHaveBeenCalled();
+    el.remove();
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 });

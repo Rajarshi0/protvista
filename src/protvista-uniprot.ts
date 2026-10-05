@@ -154,9 +154,26 @@ import {
 import {
   routeFailure,
   type FailureChannels,
+  type FailureCode,
   type FailureReport,
 } from './errors/router.js';
 import type { FormattedError } from './errors/format.js';
+import {
+  NOTE_UI,
+  NOTICE_TEXT,
+  mergeFacts,
+  stripTag,
+  type NoticeCode,
+  type NoticeFacts,
+} from './errors/notices.js';
+import noticeStyles from './styles/notice-styles.js';
+import {
+  autoUpdate,
+  computePosition,
+  flip,
+  offset,
+  shift,
+} from '@floating-ui/dom';
 
 // Performance marks emitted at three lifecycle transitions:
 //   protvista:script-start    component connectedCallback runs
@@ -202,6 +219,36 @@ const LOADING_ANNOUNCEMENT = 'Loading protein data…';
  * point where a quick load would never announce at all.
  */
 const LIVE_REGION_SETTLE_MS = 100;
+
+/** At most this many notes per anchor; a runaway caller can't grow it. */
+const MAX_NOTES_PER_ANCHOR = 200;
+
+/**
+ * One warning, kept for the visitor notice and author mode. Every routed
+ * warning is recorded, whatever the display switches say, so turning either
+ * on at runtime shows what already happened.
+ *
+ * `lifecycle` says what clears it: a new config (`config`), a new load of its
+ * track (`load`), or a new config as well (`api` — `setTrackData()` misuse,
+ * which no load repeats).
+ */
+interface Note {
+  /** `'viewer'`, or the `${rowId}-${trackId}` key of the track it is about. */
+  anchor: string;
+  phase: ErrorPhase;
+  code?: FailureCode;
+  /** The routed visitor notice, if any. */
+  notice: 'track' | 'viewer' | null;
+  /** The author text: each issue's message, or the event's message. */
+  texts: string[];
+  /** Each issue's config path, where it has one. */
+  paths?: string[];
+  source?: string;
+  facts?: NoticeFacts;
+  lifecycle: 'config' | 'load' | 'api';
+  /** How many identical `api` notes this one stands for. */
+  repeat: number;
+}
 
 /**
  * How a track's data failed. See `_trackErrors`.
@@ -455,6 +502,32 @@ class ProtvistaUniprot extends LitElement {
   /** The pending loading announcement (see `LIVE_REGION_SETTLE_MS`). */
   private _announceTimer?: ReturnType<typeof setTimeout>;
   /**
+   * Every routed warning, for the visitor notices and author mode. Written
+   * only by `_report` and `_clearNotes`.
+   */
+  private _notes: Note[] = [];
+  /**
+   * The track keys whose label drew its notes in the render under way. Reset
+   * at the top of `render()` and filled as each label renders, so the top bar
+   * (built after the rows) lists exactly the notes no row carried. Render
+   * bookkeeping, not state: writing it triggers nothing.
+   */
+  private _placedNotes = new Set<string>();
+  /** The visitor lines the last render drew, for the announcement. */
+  private _renderedNoteLines: { where?: string; text: string }[] = [];
+  /** The note set last announced, so a re-render never repeats it. */
+  private _announcedNotes = '';
+  /** The pending notes announcement (see `LIVE_REGION_SETTLE_MS`). */
+  private _noteAnnounceTimer?: ReturnType<typeof setTimeout>;
+  /** The id of the note control whose popover is open, if any. */
+  private _openNote: string | null = null;
+  /** The open popover's button and panel, and `autoUpdate`'s cleanup. */
+  private _notePopover?: {
+    button: HTMLElement;
+    popover: HTMLElement;
+    cleanup: () => void;
+  };
+  /**
    * Whether `_init()`'s `loadEntry()` and its first `_loadData()` are still
    * in flight. The sequence and the track data are fetched side by side, and
    * the spinner must cover whichever finishes last — see `_settleLoading`.
@@ -489,6 +562,12 @@ class ProtvistaUniprot extends LitElement {
    * `change`-event listener pattern React hosts pair with this attribute.
    */
   notooltip?: boolean;
+  /**
+   * Turn visitor notices off (`quiet-notices` attribute): no ⓘ on tracks or
+   * the top bar, and no announcement. The `protvista-error` event is
+   * unaffected, so an embedder can show its own.
+   */
+  quietNotices: boolean;
   private hasData: boolean;
   private loading: boolean;
   private data: { [key: string]: any };
@@ -792,6 +871,7 @@ class ProtvistaUniprot extends LitElement {
     this._customizeMode = false;
     this.noPersistLayout = false;
     this.nostructure = false;
+    this.quietNotices = false;
     this.hasData = false;
     this.loading = true;
     this.data = Object.create(null);
@@ -1118,6 +1198,12 @@ class ProtvistaUniprot extends LitElement {
       configSrc: { type: String, attribute: 'config-src', reflect: true },
       notooltip: { type: Boolean, reflect: true },
       nostructure: { type: Boolean, reflect: true },
+      quietNotices: {
+        type: Boolean,
+        reflect: true,
+        attribute: 'quiet-notices',
+      },
+      _openNote: { state: true },
     };
   }
 
@@ -1135,6 +1221,7 @@ class ProtvistaUniprot extends LitElement {
     injectStyleOnce('viewer', protvistaStyles.toString());
     injectStyleOnce('error', errorStyles.toString());
     injectStyleOnce('config-panel', configPanelStyles.toString());
+    injectStyleOnce('notices', noticeStyles.toString());
   }
 
   /**
@@ -1256,6 +1343,7 @@ class ProtvistaUniprot extends LitElement {
     this._report({
       severity: 'warning',
       phase: 'config',
+      code: 'theme-color-ignored',
       scope: 'viewer',
       consoleLevel: 'warn',
       message,
@@ -1356,17 +1444,26 @@ class ProtvistaUniprot extends LitElement {
       // one row — dedupe before counting, or the wording says "rows 'MINE'".
       const rowIds = [...new Set(rows)];
       const where = rowIds.map((r) => `'${r}'`).join(', ');
-      this._report({
-        severity: 'warning',
-        phase: 'config',
-        scope: 'viewer',
-        consoleLevel: 'warn',
-        message:
-          `[protvista-uniprot] No renderer for component '${name}' ` +
-          `(row${rowIds.length === 1 ? '' : 's'} ${where}). Custom components ` +
-          `are defined and validated but not yet drawn — ` +
-          `${rowIds.length === 1 ? 'the row renders' : 'those rows render'} empty.`,
+      // The visitor knows the rows by their labels, not their ids.
+      const names = rowIds.map((id) => {
+        const row = config.rows.find((r) => r.id === id);
+        return row ? this._labelText(row.label) : id;
       });
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'config',
+          code: 'unrendered-component',
+          scope: 'viewer',
+          consoleLevel: 'warn',
+          message:
+            `[protvista-uniprot] No renderer for component '${name}' ` +
+            `(row${rowIds.length === 1 ? '' : 's'} ${where}). Custom components ` +
+            `are defined and validated but not yet drawn — ` +
+            `${rowIds.length === 1 ? 'the row renders' : 'those rows render'} empty.`,
+        },
+        { noticeFacts: { names } }
+      );
     }
   }
 
@@ -1545,19 +1642,40 @@ class ProtvistaUniprot extends LitElement {
     // newer batch's error maps. A targeted retry passes `only` so it updates
     // just those tracks' error state.
     this._trackUrls = only ? { ...this._trackUrls, ...trackUrls } : trackUrls;
+    // The notes this load supersedes, beside the errors it supersedes: a full
+    // load replaces every load note and may announce again; a targeted retry
+    // replaces only its tracks' own.
+    if (only) {
+      this._clearNotes('load', only);
+    } else {
+      this._clearNotes('load');
+      this._announcedNotes = '';
+    }
     this._collectTrackErrors(trackUrls, fetchErrors, trackFailures, only);
 
     // A URL template left unfetched because a `{token}` had no usable value.
     // Viewer-scoped: one template can feed several tracks, and the fix (a
-    // `variables:` entry or a `data-*` attribute) is not any one row's.
-    for (const { message } of skipWarnings) {
-      this._report({
-        severity: 'warning',
-        phase: 'track-fetch',
-        scope: 'viewer',
-        message,
-        consoleLevel: 'warn',
-      });
+    // `variables:` entry or a `data-*` attribute) is not any one row's. The
+    // visitor notice names the tracks: one that fetched nothing has no data
+    // (and no row), one that fetched its other URLs is incomplete.
+    for (const { message, tracks } of skipWarnings) {
+      const names: string[] = [];
+      const partial: string[] = [];
+      for (const key of tracks) {
+        const label = this._trackLabelText(key);
+        (this._trackUrls[key]?.length ? partial : names).push(label);
+      }
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'track-fetch',
+          code: 'url-variable-unresolved',
+          scope: 'viewer',
+          message,
+          consoleLevel: 'warn',
+        },
+        { noticeFacts: { names, partial } }
+      );
     }
 
     // What a feature decoder noticed without rejecting the file — a column it
@@ -1882,6 +2000,7 @@ class ProtvistaUniprot extends LitElement {
           {
             severity: 'warning',
             phase: 'track-data',
+            code: 'coordinate-out-of-range',
             scope: { trackKey: key },
             ...(coordinates.url !== undefined
               ? { source: coordinates.url }
@@ -1890,6 +2009,7 @@ class ProtvistaUniprot extends LitElement {
             consoleLevel: 'warn',
           },
           {
+            noticeFacts: { count: found.count },
             issues: [
               {
                 path: issuePath(group, track.id),
@@ -1941,6 +2061,7 @@ class ProtvistaUniprot extends LitElement {
             {
               severity: 'warning',
               phase: 'track-data',
+              code,
               scope: { trackKey: key },
               ...(url !== undefined ? { source: url } : {}),
               message: `[protvista] ${message}`,
@@ -2325,6 +2446,9 @@ class ProtvistaUniprot extends LitElement {
       clearTimeout(this._announceTimer);
       if (this._announcement === LOADING_ANNOUNCEMENT) this._announce('');
     }
+
+    this._announceNotes();
+    this._syncNotePopover();
 
     // First render with content — manager is in the DOM, not the loader.
     if (this.hasData && !this.loading) {
@@ -2764,6 +2888,10 @@ class ProtvistaUniprot extends LitElement {
   private _dropConfig(): void {
     for (const batch of this._loadBatches) batch.controller.abort();
     this._loadBatches = [];
+    // Every note belonged to the config being dropped: its warnings, its
+    // loads, and the API calls checked against it. Every `_applyConfig`
+    // follows this (or a fresh element), so this is the one config clear.
+    this._clearNotes();
     this.config = undefined;
     this.loading = true;
   }
@@ -2979,9 +3107,14 @@ class ProtvistaUniprot extends LitElement {
        * The routing decision is still made here and returned.
        */
       deferPanel?: boolean;
+      /** What the visitor notice counts or names, for a warning that has one. */
+      noticeFacts?: NoticeFacts;
     } = {}
   ): FailureChannels {
     const channels = this._route(report);
+    // What a person reads: the panel's summary when there is one, and never
+    // the console's `[protvista…]` tag.
+    const personMessage = stripTag(opts.panelSummary ?? report.message);
 
     if (channels.console) {
       console[channels.console](report.message, ...(opts.consoleArgs ?? []));
@@ -3006,10 +3139,7 @@ class ProtvistaUniprot extends LitElement {
             // the panel carries the panel's own summary rather than the
             // developer line, and the console's `[protvista…]` tag is dropped:
             // the documented use is putting this text in front of a user.
-            message: (opts.panelSummary ?? report.message).replace(
-              /^\[protvista(?:-uniprot)?\] /,
-              ''
-            ),
+            message: personMessage,
             ...(report.source !== undefined ? { source: report.source } : {}),
             issues: opts.issues ?? [],
             context: { accession: this.accession, ...opts.context },
@@ -3028,8 +3158,82 @@ class ProtvistaUniprot extends LitElement {
       );
     }
 
+    // Every warning is kept for the notices and author mode, whatever the
+    // display switches say, so turning one on later shows what happened.
+    // Errors are not: author mode reads them from `_trackErrors` and
+    // `_mountError`, which already hold them and already clear on Retry.
+    if (report.severity === 'warning') {
+      const anchor =
+        report.scope === 'viewer' ? 'viewer' : report.scope.trackKey;
+      const issues = opts.issues ?? [];
+      const texts = issues.length
+        ? issues.map((i) => i.message)
+        : [personMessage];
+      const lifecycle =
+        report.phase === 'config'
+          ? 'config'
+          : report.phase === 'set-track-data'
+            ? 'api'
+            : 'load';
+      const same = this._notes.find(
+        (n) =>
+          n.anchor === anchor &&
+          n.phase === report.phase &&
+          n.code === report.code &&
+          n.texts.join('\n') === texts.join('\n')
+      );
+      if (same) {
+        // Three identical `setTrackData()` misuses are three calls. A load or
+        // config warning reported again — a targeted Retry re-reporting a
+        // skipped template it shares — is the same fact, not a second one.
+        if (same.lifecycle === 'api') same.repeat += 1;
+      } else if (
+        this._notes.filter((n) => n.anchor === anchor).length <
+        MAX_NOTES_PER_ANCHOR
+      ) {
+        this._notes = [
+          ...this._notes,
+          {
+            anchor,
+            phase: report.phase,
+            ...(report.code !== undefined ? { code: report.code } : {}),
+            notice: channels.notice,
+            texts,
+            ...(issues.some((i) => i.path)
+              ? { paths: issues.map((i) => i.path) }
+              : {}),
+            ...(report.source !== undefined ? { source: report.source } : {}),
+            ...(opts.noticeFacts ? { facts: opts.noticeFacts } : {}),
+            lifecycle,
+            repeat: 1,
+          },
+        ];
+      }
+    }
+
     this.requestUpdate();
     return channels;
+  }
+
+  /**
+   * Forget the notes a new config or load supersedes: those of one lifecycle
+   * (all of them when none is given), and with `keys`, only those anchored on
+   * these tracks — a targeted Retry keeps every other track's notes and the
+   * viewer's.
+   */
+  private _clearNotes(lifecycle?: Note['lifecycle'], keys?: Set<string>) {
+    this._notes = this._notes.filter(
+      (n) =>
+        !(
+          (lifecycle === undefined || n.lifecycle === lifecycle) &&
+          (keys === undefined || keys.has(n.anchor))
+        )
+    );
+  }
+
+  /** Whether visitor notices are drawn. The one read of `quietNotices`. */
+  private get _noticesOn(): boolean {
+    return !this.quietNotices;
   }
 
   /**
@@ -3677,6 +3881,8 @@ class ProtvistaUniprot extends LitElement {
   disconnectedCallback() {
     clearTimeout(this._movedTimer);
     clearTimeout(this._announceTimer);
+    clearTimeout(this._noteAnnounceTimer);
+    this._closeNotePopover();
     this._variablesObserver?.disconnect();
     this._variablesObserver = undefined;
     if (this._variablesFrame !== undefined) {
@@ -3781,11 +3987,9 @@ class ProtvistaUniprot extends LitElement {
                 this.getFilterComponent(key)) ||
               unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
-          >${this._renderTrackBadge(key)}${this._renderRowControls(
-            group,
-            index,
-            total
-          )}
+          >${this._renderTrackBadge(key)}${this._renderTrackNotes(
+            key
+          )}${this._renderRowControls(group, index, total)}
         </div>
         ${
           trackHasData
@@ -3927,6 +4131,14 @@ class ProtvistaUniprot extends LitElement {
 
     const groupAttrs = renderingToAttrs(group.rendering);
     const expanded = this.openGroups.includes(group.id);
+    // Built now, not in `repeat`'s callback, which runs at commit — after the
+    // top bar has been built. Each label records its notes as it renders, so
+    // the top bar can list the ones no row carried.
+    const trackViews = expanded
+      ? tracks.map((t, i) =>
+          this._renderExpandedTrack(group, t, i, tracks.length)
+        )
+      : [];
     return html`
       <div
         class="${CSS_PREFIX}-group ${this._ghostClass(
@@ -4008,7 +4220,7 @@ class ProtvistaUniprot extends LitElement {
           ? html`${repeat(
               tracks,
               (t) => t.id,
-              (t, i) => this._renderExpandedTrack(group, t, i, tracks.length)
+              (_t, i) => trackViews[i]
             )}`
           : ''
       }
@@ -4023,9 +4235,23 @@ class ProtvistaUniprot extends LitElement {
     // dropped rather than left dangling.
     const label = this._proteinLabel;
     const forWhat = label ? ` for ${label}` : '';
-    return html`<div class="protvista-no-results">
-      No feature data available${forWhat}
-    </div>`;
+    // No row draws, so every note goes on the one control here — with a live
+    // region to announce it, since this view has none of its own.
+    const notes = this._renderViewerNotes();
+    return html`${
+        notes
+          ? html`<div
+              class="${CSS_PREFIX}-live-region"
+              role="status"
+              aria-live="polite"
+            >
+              ${this._announcement}
+            </div>`
+          : ''
+      }
+      <div class="protvista-no-results">
+        No feature data available${forWhat}${notes}
+      </div>`;
   }
 
   /**
@@ -4096,12 +4322,9 @@ class ProtvistaUniprot extends LitElement {
                 this.getFilterComponent(key)) ||
               unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
-          >${this._renderTrackBadge(key)}${this._renderTrackControls(
-            group,
-            track,
-            index,
-            total
-          )}
+          >${this._renderTrackBadge(key)}${this._renderTrackNotes(
+            key
+          )}${this._renderTrackControls(group, track, index, total)}
         </div>
         ${
           trackHasData
@@ -4200,6 +4423,30 @@ class ProtvistaUniprot extends LitElement {
         <div class="${CSS_PREFIX}-track-content"></div>
       </div>
     `;
+  }
+
+  /**
+   * The row and track a `${rowId}-${trackId}` key names, or the row a bare
+   * row id names (a collapsed group's aggregate). Track keys are tried first:
+   * a row id may itself contain `-`.
+   */
+  private _trackByKey(
+    key: string
+  ): { row: NormalizedRow; track?: NormalizedTrack } | undefined {
+    const rows = this.config?.rows ?? [];
+    for (const row of rows) {
+      for (const track of row.tracks) {
+        if (trackKey(row.id, track.id) === key) return { row, track };
+      }
+    }
+    const row = rows.find((r) => r.id === key);
+    return row ? { row } : undefined;
+  }
+
+  /** The plain-text label a visitor knows a track (or aggregate) key by. */
+  private _trackLabelText(key: string): string {
+    const found = this._trackByKey(key);
+    return found ? this._labelText((found.track ?? found.row).label) : key;
   }
 
   /** Plain-text label (Markdoc → text), for `aria-label`s and announcements. */
@@ -4647,6 +4894,9 @@ class ProtvistaUniprot extends LitElement {
   }
 
   render() {
+    // Note placement is recorded afresh by every render (see `_placedNotes`).
+    this._placedNotes = new Set();
+    this._renderedNoteLines = [];
     // Suspend still wins over everything (unchanged semantics).
     if (this.suspend) {
       return html``;
@@ -4708,6 +4958,12 @@ class ProtvistaUniprot extends LitElement {
     ) {
       return this._renderNoResults();
     }
+    // Rows first, so each label has recorded its notes before the top bar
+    // lists the rest. `repeat` would only build them at commit.
+    const rowViews = rows.map((display, i) =>
+      this._renderRow(display, i, rows.length)
+    );
+    const viewerNotes = this._renderViewerNotes();
     return html`
       <div class="${CSS_PREFIX}-live-region" role="status" aria-live="polite">
         ${this._announcement}
@@ -4719,7 +4975,7 @@ class ProtvistaUniprot extends LitElement {
         <div class="${CSS_PREFIX}-nav-container">
           <div class="${CSS_PREFIX}-nav-track-label">
             <div class="${CSS_PREFIX}-toolbar-row">
-              ${this._renderCustomizeToggle()}
+              ${this._renderCustomizeToggle()}${viewerNotes}
             </div>
             <div
               class="${CSS_PREFIX}-toolbar-row ${
@@ -4756,7 +5012,7 @@ class ProtvistaUniprot extends LitElement {
           // nightingale-manager alignment intact.
           rows,
           (display) => display.row.id,
-          (display, i) => this._renderRow(display, i, rows.length)
+          (_display, i) => rowViews[i]
         )}
         <div
           class="${CSS_PREFIX}-nav-container ${CSS_PREFIX}-nav-container--footer"
@@ -4943,6 +5199,276 @@ class ProtvistaUniprot extends LitElement {
             </button>`
           : ''
       }`;
+  }
+
+  // ── Visitor notices and author mode ─────────────────────────
+  // A warning that changes what is on screen gets a quiet ⓘ: on its track's
+  // label when that label is drawn, otherwise on the top bar beside
+  // Customize. Where a note goes is recorded as the labels render, never
+  // predicted, so collapse, hide, customize mode and empty tracks cannot
+  // strand or duplicate one.
+
+  /** The visitor's lines for some notes: one per code, its facts merged. */
+  private _visitorLines(notes: Note[]): string[] {
+    const byCode = new Map<NoticeCode, NoticeFacts>();
+    for (const note of notes) {
+      // The routing table decides; a row with a notice always has a code
+      // with a sentence (pinned in `router.spec.ts`).
+      if (note.notice === null) continue;
+      const code = note.code as NoticeCode;
+      const facts = note.facts ?? {};
+      const merged = byCode.get(code);
+      byCode.set(code, merged ? mergeFacts(merged, facts) : facts);
+    }
+    return [...byCode].map(([code, facts]) => NOTICE_TEXT[code](facts));
+  }
+
+  /**
+   * Whether the layout hides a track (or its whole row). Outside customize
+   * mode the visitor is not looking at it, so it has no visitor line.
+   */
+  private _hiddenByLayout(key: string): boolean {
+    const found = this._trackByKey(key);
+    return !!found && (isRowHidden(found.row) || !!found.track?.hidden);
+  }
+
+  /**
+   * The note control on a track's label, after its badge. Records that this
+   * label was drawn, so the top bar leaves its notes to it.
+   */
+  private _renderTrackNotes(key: string) {
+    this._placedNotes.add(key);
+    if (!this._noticesOn) return '';
+    const lines = this._visitorLines(
+      this._notes.filter((n) => n.anchor === key)
+    );
+    if (!lines.length) return '';
+    const label = this._trackLabelText(key);
+    for (const text of lines)
+      this._renderedNoteLines.push({ where: label, text });
+    return this._renderNoteControl({
+      anchor: key,
+      tone: 'notice',
+      label: NOTE_UI.trackLabel(lines.length, label),
+      heading: label,
+      entries: lines.map((text) => html`<li>${text}</li>`),
+    });
+  }
+
+  /**
+   * The top-bar control: the viewer's own notes, then every track note whose
+   * label this render did not draw (a collapsed group, an empty track, a
+   * customize-mode stub), prefixed with the track's name. Built after the
+   * rows, which is what makes `_placedNotes` complete.
+   */
+  private _renderViewerNotes() {
+    if (!this._noticesOn) return '';
+    const offscreen = new Map<string, Note[]>();
+    for (const note of this._notes) {
+      if (note.anchor === 'viewer' || this._placedNotes.has(note.anchor)) {
+        continue;
+      }
+      offscreen.set(note.anchor, [...(offscreen.get(note.anchor) ?? []), note]);
+    }
+    const lines: string[] = [];
+    for (const text of this._visitorLines(
+      this._notes.filter((n) => n.anchor === 'viewer')
+    )) {
+      lines.push(text);
+      this._renderedNoteLines.push({ text });
+    }
+    for (const [key, notes] of offscreen) {
+      if (!this._customizeMode && this._hiddenByLayout(key)) continue;
+      const label = this._trackLabelText(key);
+      for (const text of this._visitorLines(notes)) {
+        lines.push(NOTE_UI.offscreen(label, text));
+        this._renderedNoteLines.push({ where: label, text });
+      }
+    }
+    if (!lines.length) return '';
+    return this._renderNoteControl({
+      anchor: 'viewer',
+      tone: 'notice',
+      label: NOTE_UI.viewerLabel(lines.length),
+      heading: NOTE_UI.viewerHeading,
+      entries: lines.map((text) => html`<li>${text}</li>`),
+    });
+  }
+
+  /**
+   * One disclosure: a button and the popover it opens, rendered right after
+   * it so it follows in reading order. The popover is always rendered —
+   * `hidden` while closed — so `aria-controls` always resolves. It is
+   * positioned by `_syncNotePopover`. Its title is a styled `<p>`, never a
+   * heading, so it never enters the host page's outline.
+   */
+  private _renderNoteControl(control: {
+    anchor: string;
+    tone: 'notice' | 'author' | 'error';
+    label: string;
+    heading: string;
+    entries: unknown[];
+    glyph?: string;
+    footer?: string;
+  }) {
+    const id =
+      `${CSS_PREFIX}-note-${this._instanceId}-${control.anchor}`.replace(
+        /[^A-Za-z0-9_-]/g,
+        '-'
+      );
+    const popoverId = `${id}-pop`;
+    const open = this._openNote === id;
+    return html`<button
+        type="button"
+        id="${id}"
+        class="${CSS_PREFIX}-note ${CSS_PREFIX}-note--${control.tone}"
+        aria-label="${control.label}"
+        aria-expanded="${open ? 'true' : 'false'}"
+        aria-controls="${popoverId}"
+        @click="${(e: Event) => this._toggleNote(e, id)}"
+        @keydown="${this._onNoteKeydown}"
+      >
+        <span aria-hidden="true">${control.glyph ?? 'ⓘ'}</span>
+      </button>
+      <div
+        id="${popoverId}"
+        class="${CSS_PREFIX}-note-popover"
+        ?hidden="${!open}"
+        @keydown="${this._onNoteKeydown}"
+        @click="${(e: Event) => e.stopPropagation()}"
+      >
+        <p class="${CSS_PREFIX}-note-popover__title">${control.heading}</p>
+        <ul class="${CSS_PREFIX}-note-popover__list">
+          ${control.entries}
+        </ul>
+        ${
+          control.footer
+            ? html`<p class="${CSS_PREFIX}-note-popover__footer">
+                ${control.footer}
+              </p>`
+            : ''
+        }
+      </div>`;
+  }
+
+  /** Open a note's popover, or close it if it is the one open. */
+  private _toggleNote(e: Event, id: string) {
+    // A label may be inside something clickable; the note is not a toggle
+    // for anything but itself.
+    e.stopPropagation();
+    this._openNote = this._openNote === id ? null : id;
+  }
+
+  /** Escape closes the open popover and hands focus back to its button. */
+  private _onNoteKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape' || this._openNote === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const button =
+      this._notePopover?.button ??
+      this.querySelector<HTMLElement>(`#${this._openNote}`);
+    this._openNote = null;
+    button?.focus();
+  };
+
+  /** A press anywhere but the open control closes it (focus stays put). */
+  private _onNoteOutside = (e: Event): void => {
+    const open = this._notePopover;
+    if (!open) return;
+    const target = e.target as Node | null;
+    if (
+      target &&
+      (open.button.contains(target) || open.popover.contains(target))
+    ) {
+      return;
+    }
+    this._openNote = null;
+  };
+
+  /**
+   * Keep the open popover placed against its button. Floating UI with a
+   * `fixed` strategy escapes the label cell's `overflow: hidden` in customize
+   * mode, `flip` and `shift` keep it on screen whatever the host's offset,
+   * and `autoUpdate` follows scrolling and resizing while it is open. Runs on
+   * every update: a re-render can replace the button (a group toggled), and
+   * a button that no longer renders closes its popover.
+   */
+  private _syncNotePopover(): void {
+    const id = this._openNote;
+    const current = this._notePopover;
+    if (id === null && !current) return;
+    const button = id ? this.querySelector<HTMLElement>(`#${id}`) : null;
+    const popover = id ? this.querySelector<HTMLElement>(`#${id}-pop`) : null;
+    if (current && current.button === button && current.popover === popover) {
+      return;
+    }
+    this._closeNotePopover();
+    if (!id) return;
+    if (!button || !popover) {
+      this._openNote = null;
+      return;
+    }
+    const place = () => {
+      void computePosition(button, popover, {
+        strategy: 'fixed',
+        placement: 'bottom-start',
+        middleware: [offset(4), flip(), shift({ padding: 8 })],
+      }).then(({ x, y }) => {
+        popover.style.left = `${x}px`;
+        popover.style.top = `${y}px`;
+      });
+    };
+    this._notePopover = {
+      button,
+      popover,
+      cleanup: autoUpdate(button, popover, place),
+    };
+    document.addEventListener('pointerdown', this._onNoteOutside, true);
+  }
+
+  /** Stop following the open popover, and stop listening for outside presses. */
+  private _closeNotePopover(): void {
+    this._notePopover?.cleanup();
+    this._notePopover = undefined;
+    document.removeEventListener('pointerdown', this._onNoteOutside, true);
+  }
+
+  /**
+   * Which notes an announcement covers, independent of where they render: a
+   * group toggle moves a note between a row and the top bar without anything
+   * new to say.
+   */
+  private _noteSignature(): string {
+    return this._notes
+      .filter((n) => n.notice !== null)
+      .map((n) => `${n.anchor}\u0001${n.code}\u0001${n.texts.join('\u0002')}`)
+      .sort()
+      .join('\u0003');
+  }
+
+  /**
+   * Announce the notes once, politely, after the region has settled (see
+   * `LIVE_REGION_SETTLE_MS`). Latched on the note set and reset by a full
+   * load, so neither a re-render nor a group toggle repeats it; a note that
+   * arrives later changes the set and is announced.
+   */
+  private _announceNotes(): void {
+    const lines = this._renderedNoteLines;
+    if (this.loading || this._mountError || this.suspend || !lines.length) {
+      return;
+    }
+    const signature = this._noteSignature();
+    if (signature === this._announcedNotes) return;
+    this._announcedNotes = signature;
+    const text =
+      lines.length === 1
+        ? NOTE_UI.announceOne(lines[0].where, lines[0].text)
+        : NOTE_UI.announceMany(lines.length);
+    clearTimeout(this._noteAnnounceTimer);
+    this._noteAnnounceTimer = setTimeout(
+      () => this._announce(text),
+      LIVE_REGION_SETTLE_MS
+    );
   }
 
   /**
