@@ -305,6 +305,15 @@ describe('topDecileRuns, ranks and the CSV helpers', () => {
     expect(topDecileRuns(points)).toEqual([{ start: 9, end: 10, score: 0.95 }]);
   });
 
+  it('keeps more than 10% of distinct scores, with no tie needed', () => {
+    // n = 46 distinct, non-adjacent scores: 46 − floor(0.9 × 45) = 6 are kept.
+    const spread = Array.from({ length: 46 }, (_, i) => ({
+      position: 2 * i + 1,
+      value: i / 100,
+    }));
+    expect(topDecileRuns(spread)).toHaveLength(6);
+  });
+
   it('ranks the highest 1 and gives tied scores the same rank', () => {
     const rank = ranks([
       { position: 1, value: 0.5 },
