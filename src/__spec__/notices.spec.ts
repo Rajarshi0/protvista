@@ -818,6 +818,61 @@ describe('where a note goes', () => {
     expectOnce(el, TWO_OUTSIDE, 'row');
   });
 
+  it('a hidden track is not named on the top bar either, until customize mode shows it', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [okTrack(), { ...partner(), hidden: true }],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el.updateComplete;
+    expect(topNote(el)).toBeNull();
+    // Author mode lists the skip, and says visitors see nothing of it.
+    el.setAttribute('show-warnings', '');
+    await el.updateComplete;
+    const author = popoverOf(topNote(el)!).textContent!;
+    expect(author).toContain('Not fetching');
+    expect(author).not.toContain('Visitors see');
+    el.removeAttribute('show-warnings');
+
+    el._customizeMode = true;
+    await el.updateComplete;
+    expect(linesOf(topNote(el)!)).toEqual([
+      "“Partner data” isn't shown: its data couldn't be loaded.",
+    ]);
+  });
+
+  it('names only the shown tracks of a skip several tracks share', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [
+        okTrack(),
+        partner(),
+        { ...partner('p2', 'Hidden'), hidden: true },
+      ],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el.updateComplete;
+    expect(linesOf(topNote(el)!)).toEqual([
+      "“Partner data” isn't shown: its data couldn't be loaded.",
+    ]);
+  });
+
+  it('a hidden row with no renderer is not named', async () => {
+    quiet();
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: [okTrack(), { ...mine(), hidden: true }],
+    });
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('No renderer'));
+    await el.updateComplete;
+    expect(allLines(el).filter((l) => l.includes('Mine'))).toEqual([]);
+  });
+
   it('customize stub: on the top bar', async () => {
     quiet();
     const { el, events } = mountEl(grouped([labInGroup(), emptyColour()]), {

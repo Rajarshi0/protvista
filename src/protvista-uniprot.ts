@@ -248,6 +248,11 @@ interface Note {
   paths?: string[];
   source?: string;
   facts?: NoticeFacts;
+  /**
+   * The track (or row) key behind each name in `facts`, in the same order,
+   * so a name can be left out while the layout hides its track.
+   */
+  factKeys?: { names?: string[]; partial?: string[] };
   lifecycle: 'config' | 'load' | 'api';
   /** How many identical `api` notes this one stands for. */
   repeat: number;
@@ -1484,7 +1489,7 @@ class ProtvistaUniprot extends LitElement {
             `are defined and validated but not yet drawn — ` +
             `${rowIds.length === 1 ? 'the row renders' : 'those rows render'} empty.`,
         },
-        { noticeFacts: { names } }
+        { noticeFacts: { names }, noticeKeys: { names: rowIds } }
       );
     }
   }
@@ -1683,9 +1688,11 @@ class ProtvistaUniprot extends LitElement {
     for (const { message, tracks } of skipWarnings) {
       const names: string[] = [];
       const partial: string[] = [];
+      const keys = { names: [] as string[], partial: [] as string[] };
       for (const key of tracks) {
-        const label = this._trackLabelText(key);
-        (this._trackUrls[key]?.length ? partial : names).push(label);
+        const which = this._trackUrls[key]?.length ? 'partial' : 'names';
+        (which === 'partial' ? partial : names).push(this._trackLabelText(key));
+        keys[which].push(key);
       }
       this._report(
         {
@@ -1696,7 +1703,7 @@ class ProtvistaUniprot extends LitElement {
           message,
           consoleLevel: 'warn',
         },
-        { noticeFacts: { names, partial } }
+        { noticeFacts: { names, partial }, noticeKeys: keys }
       );
     }
 
@@ -3134,6 +3141,8 @@ class ProtvistaUniprot extends LitElement {
       deferPanel?: boolean;
       /** What the visitor notice counts or names, for a warning that has one. */
       noticeFacts?: NoticeFacts;
+      /** The track or row key behind each of `noticeFacts`' names. */
+      noticeKeys?: { names?: string[]; partial?: string[] };
     } = {}
   ): FailureChannels {
     const channels = this._route(report);
@@ -3235,6 +3244,7 @@ class ProtvistaUniprot extends LitElement {
               : {}),
             ...(report.source !== undefined ? { source: report.source } : {}),
             ...(opts.noticeFacts ? { facts: opts.noticeFacts } : {}),
+            ...(opts.noticeKeys ? { factKeys: opts.noticeKeys } : {}),
             lifecycle,
             repeat: 1,
           },
@@ -5276,11 +5286,34 @@ class ProtvistaUniprot extends LitElement {
       // with a sentence (pinned in `router.spec.ts`).
       if (note.notice === null) continue;
       const code = note.code as NoticeCode;
-      const facts = note.facts ?? {};
+      const facts = this._visitorFacts(note);
+      if (!facts) continue;
       const merged = byCode.get(code);
       byCode.set(code, merged ? mergeFacts(merged, facts) : facts);
     }
     return [...byCode].map(([code, facts]) => NOTICE_TEXT[code](facts));
+  }
+
+  /**
+   * A note's facts as a visitor gets them. A viewer note names its tracks,
+   * and outside customize mode a track the layout hides is left out, as its
+   * own notes are. `null` when every track it names is hidden: then the note
+   * tells the visitor nothing.
+   */
+  private _visitorFacts(note: Note): NoticeFacts | null {
+    const facts = note.facts ?? {};
+    const keys = note.factKeys;
+    if (!keys || this._customizeMode) return facts;
+    const shown = (names: string[] = [], of: string[] = []) =>
+      names.filter((_, i) => !(of[i] && this._hiddenByLayout(of[i])));
+    const names = shown(facts.names, keys.names);
+    const partial = shown(facts.partial, keys.partial);
+    if (!names.length && !partial.length) return null;
+    return {
+      ...(facts.count !== undefined ? { count: facts.count } : {}),
+      ...(names.length ? { names } : {}),
+      ...(partial.length ? { partial } : {}),
+    };
   }
 
   /**
@@ -5324,6 +5357,7 @@ class ProtvistaUniprot extends LitElement {
 
   /** A warning note as an author entry. */
   private _noteEntry(note: Note, where?: string) {
+    const visitorFacts = this._visitorFacts(note);
     return this._authorEntry({
       texts: note.texts,
       meta: [note.phase, note.code, ...(note.paths ?? [])]
@@ -5332,8 +5366,8 @@ class ProtvistaUniprot extends LitElement {
       ...(note.source !== undefined ? { source: note.source } : {}),
       repeat: note.repeat,
       // What the visitor is told about it, when they are told anything.
-      ...(note.notice !== null && this._noticesOn
-        ? { visitor: NOTICE_TEXT[note.code as NoticeCode](note.facts ?? {}) }
+      ...(visitorFacts && note.notice !== null && this._noticesOn
+        ? { visitor: NOTICE_TEXT[note.code as NoticeCode](visitorFacts) }
         : {}),
       ...(where !== undefined ? { where } : {}),
     });
