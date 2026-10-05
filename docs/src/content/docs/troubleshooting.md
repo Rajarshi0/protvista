@@ -124,7 +124,8 @@ Reading it:
   answering 404 for an entity with no data of this kind, or a `from: custom`
   track nobody injected data into. It gets a console line and no user surface.
 - **Author mode** lists everything the `protvista-error` event carries — every
-  error and every warning, never `info` — so its column is the event's.
+  error and every warning, never `info` — so its column is the event's. See
+  [What visitors and authors see](#what-visitors-and-authors-see).
 
 A **Retry** control appears on whichever surface carried the failure, and only
 when retrying could plausibly change the answer: a network error or a 5xx may
@@ -137,6 +138,66 @@ temporary as a 5xx. A
 malformed file, a malformed `setTrackData()` payload, an unregistered adapter
 name and a payload the track could not draw all get no Retry: they would fail
 the same way again with no action available in between.
+
+### What visitors and authors see
+
+The console and the `protvista-error` event reach you; a visitor to a page
+that embeds the viewer sees neither. So the viewer follows one rule: **tell
+visitors when what they're looking at is incomplete or misleading, and tell
+authors everything.**
+
+**Visitor notices.** A warning whose row in the table above has a visitor
+notice puts a quiet ⓘ on the affected track's label. It opens a short,
+plain-language note — "2 features extend beyond this sequence, so they aren't
+shown in full.", "Some colours in the data couldn't be shown, so some features
+may be in the wrong colour." — that never names a file, a URL, a field or a
+variable. A viewer-level notice ("“Partner data” isn't shown: its data
+couldn't be loaded.", "“Mine” can't be displayed in this viewer.") goes on an ⓘ
+in the top bar, beside **Customize**. So does a track notice whose label isn't
+on screen — a track inside a collapsed group, a track with no data to draw, a
+customize-mode placeholder, or the "No feature data available" view — prefixed
+with the track's name. A track you hid from the layout tells visitors nothing
+until Customize shows it again. The notes are announced once to screen
+readers, politely, and the ⓘ is a keyboard-reachable button: Escape or a click
+elsewhere closes its note.
+
+Visitor notices are on by default. The **`quiet-notices`** attribute turns
+them off:
+
+```html
+<protvista-uniprot accession="P05067" quiet-notices></protvista-uniprot>
+```
+
+The `protvista-error` event is unchanged either way, so an embedder that wants
+its own UI can keep listening to it.
+
+**Author mode.** The **`show-warnings`** attribute, or `showWarnings: true` in
+the config, turns author mode on; either one is enough. It is off by default,
+so visitors never see authoring notes. Each track with a warning, and the top
+bar, then carries a muted ⚠ with a count instead of the ⓘ. Its list holds
+every warning in full: the same text the console, the event and the
+playground's diagnostics show, with its phase, code and config path, the file
+or URL it came from, and the note visitors see for it (unless `quiet-notices`
+is set). A rejected `setTrackData()` call made three times is listed once,
+marked ×3.
+
+Author mode shows errors in full too. A track's red `⚠` badge becomes a
+button whose list starts with the error's whole text and its source (Retry
+stays beside it). An error on a track whose label isn't drawn — inside a
+collapsed group, which shows only the group's count badge — is listed beside
+Customize under the track's name. The alert panel adds the console's text
+under its summary. With author mode off, errors look exactly as they always
+have.
+
+Setting or removing either attribute on a live element takes effect at once,
+with no reload.
+
+In the [playground](/protvista/playground/), the preview keeps visitor notices
+on and author mode off, so it shows what your visitors will see; the
+diagnostics list beside the editor is the author view there.
+`showWarnings: true` in the config turns author mode on in the preview too,
+but it names a loaded file by the `blob:` URL the preview fetched, where the
+diagnostics list says `./name`.
 
 ### The `context` object
 

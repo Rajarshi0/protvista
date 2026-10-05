@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added: tell visitors when the view is incomplete
+
+A warning that changes what is on screen now tells the person looking at the
+viewer, not only the console and the `protvista-error` event. Features that
+fall outside the sequence, colours in the data the canvas cannot paint, a
+track whose data URL has an undefined `{variable}` (so its data never loads),
+and a component with no renderer each put a quiet ⓘ on the track's label, or
+beside **Customize** for a viewer-level note or a track whose label isn't on
+screen (a collapsed group, an empty track). It opens one plain-language line
+— "2 features extend beyond this sequence, so they aren't shown in full." —
+and the notes are announced once to screen readers. Warnings that change
+nothing a visitor sees (an ignored column, a tooltip field no record has, a
+`theme:` colour that didn't resolve) stay off it. The `quiet-notices`
+attribute turns the notices off; the event is unchanged. The routing table in
+[Where a failure shows up](https://ebi-webcomponents.github.io/protvista/troubleshooting#where-a-failure-shows-up)
+gains Code, Visitor notice and Author mode columns. See
+[What visitors and authors see](https://ebi-webcomponents.github.io/protvista/troubleshooting#what-visitors-and-authors-see).
+
+### Added: author mode (`show-warnings` / `showWarnings`)
+
+The `show-warnings` attribute, or `showWarnings: true` in the config, lists
+every warning on its track or beside Customize, with the text the console and
+the playground show (file, row and field), its phase, code and source, and
+what visitors see for it. Error badges become buttons that list their full
+text, an error on a track inside a collapsed group is listed beside
+Customize, and the alert panel adds the console's text under its summary.
+Off by default; with it off, errors look exactly as before. Both attributes
+take effect on a live element with no reload, and the JSX types in
+`protvista-uniprot/react` declare both.
+
 ### Added: playground examples for your own sequence, small proteins and conservation
 
 The playground's picker has four new presets. Three load a new CI-validated

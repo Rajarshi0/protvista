@@ -100,6 +100,8 @@ Set these as HTML attributes (or as JavaScript properties on the element).
 | `nostructure` | boolean | Hides the 3D structure group. |
 | `notooltip` | boolean | Suppresses the built-in click tooltip (set this when you render your own — see [Rich tooltips in React](/protvista/react-integration)). |
 | `suspend` | boolean | Holds off loading (and rendering) until it is removed, e.g. while you configure the element or an accession is about to change. |
+| `quiet-notices` | boolean | Turns off the visitor notices: the quiet ⓘ that tells a visitor when what they see is incomplete (features outside the sequence, colours not painted, a track whose data couldn't be loaded). See [What visitors and authors see](/protvista/troubleshooting#what-visitors-and-authors-see). |
+| `show-warnings` | boolean | Author mode: lists every warning on its track or beside Customize, with the console's text, and expands error badges and the error panel. Same as `showWarnings: true` in the config. Off by default. |
 | `adapters` | object | A map of adapter name to function, assigned as a JS property — the declarative form of `registerAdapter()`. May be set before the element is defined. See [Escape hatches](/protvista/escape-hatches). |
 
 ## Driving it with your own config

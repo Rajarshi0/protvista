@@ -177,7 +177,7 @@ The XSS regression suite lives in `src/utils/__spec__/security.spec.ts` — quot
 
 The custom element. Roughly:
 
-- **Reactive properties.** `accession`, `configSrc`, `config`, `nostructure`, `notooltip`, `suspend`. Lit watches these and triggers `updated()`.
+- **Reactive properties.** `accession`, `configSrc`, `config`, `nostructure`, `notooltip`, `suspend`, `quietNotices`, `showWarnings`. Lit watches these and triggers `updated()`.
 - **`updated(changedProperties)`.** First mount → `_init()`. `accession` change after mount → re-`_init()` with cancellation of any in-flight `_loadData()`. On a sequence-mode element (`sequence:` config) an accession set after mount drops the config and re-`_init()`s, so the loader reports `accession-and-sequence`; `setConfig()` clearing an accession the previous config supplied is not treated as a change.
 - **`_init()`.** Resolves the effective config via `resolveViewerConfig()` (`viewerConfig` property > `configSrc` attribute > bundled default), runs `loadConfig()`, mounts the Nightingale components into the DOM, then calls `_loadData()`.
 - **`_loadData()`.** Calls `loadProtvistaData()` and writes the result onto each Nightingale component instance, scoped to this element's `_instanceId` so two viewers on the same page don't cross-talk.

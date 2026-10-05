@@ -17,7 +17,7 @@ the "Representation". Documentation is licensed CC BY 4.0.
 - [Embed the viewer](https://ebi-webcomponents.github.io/protvista/embed): load the component (module script or npm) and the key attributes (`accession`, `config-src`, `viewerConfig`, `notooltip`, …).
 - [Author a config](https://ebi-webcomponents.github.io/protvista/configure): `accession`, `sources`, `rows`/`tracks`, `kind`, `data`, `filter`; the minimal config and `extends`.
 - [Load your own data](https://ebi-webcomponents.github.io/protvista/your-data): the feature record (`type`, `start`, `end`, `description?`, `score?`); CSV/TSV/JSON/BED by file extension; inline data; the page-relative path caveat.
-- [Troubleshoot errors](https://ebi-webcomponents.github.io/protvista/troubleshooting): the `protvista-error` event, its phases (`config`, `sequence`, `track-fetch`, `set-track-data`) and context; common causes.
+- [Troubleshoot errors](https://ebi-webcomponents.github.io/protvista/troubleshooting): the `protvista-error` event, its phases (`config`, `sequence`, `track-fetch`, `set-track-data`) and context; visitor notices and author mode (`quiet-notices`, `show-warnings` / `showWarnings`); common causes.
 - [Escape hatches](https://ebi-webcomponents.github.io/protvista/escape-hatches): `registerAdapter` / `registerSemanticKind` / `registerTheme` / `registerComponent` on the element, called before mount.
 
 ## Reference

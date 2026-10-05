@@ -105,6 +105,8 @@ Reactive properties on the `<protvista-uniprot>` element (HTML attribute name in
 - `suspend` [`suspend`]: `boolean` (default `false`) — holds off loading and rendering until cleared. Useful when the accession is about to change and you want to avoid a flash of intermediate state.
 - `adapters`: `Record<string, AdapterFunction>` — adapters to register by name, assigned as a JS property (no HTML attribute); the declarative form of `registerAdapter()`. May be set before the element is defined; applied before loading starts.
 - `noPersistLayout` [`no-persist-layout`]: `boolean` (default `false`) — opts out of layout persistence (a user's reorder/show-hide is neither restored on mount nor saved to localStorage or the `?layout=` URL). See [Customize the layout](https://ebi-webcomponents.github.io/protvista/customize-layout).
+- `quietNotices` [`quiet-notices`]: `boolean` (default `false`) — turns off the visitor notices, the quiet ⓘ that tells a visitor when the view is incomplete or misleading. The `protvista-error` event is unaffected. See [What visitors and authors see](https://ebi-webcomponents.github.io/protvista/troubleshooting#what-visitors-and-authors-see).
+- `showWarnings` [`show-warnings`]: `boolean` (default `false`) — author mode: lists every warning on its track or the viewer, with the console's text, and expands error badges and the error panel into their full detail. Equivalent to `showWarnings: true` in the config; either turns it on.
 
 ### Layout (Customize layout)
 
