@@ -30,6 +30,11 @@ UniProt, use `accession:` — you get the sequence, the structure panel and ever
 UniProt track for free, and you can still [add your own
 tracks](/protvista/your-data).
 
+It suits a short protein too. The
+[small-peptide preset](/protvista/playground/#preset=small-peptide) shows
+Trp-cage, a designed 20-residue miniprotein, from its own sequence with its
+secondary structure from a CSV file.
+
 `accession:` and `sequence:` are alternatives: set one, never both. Pairing your
 own sequence with UniProt annotations would place UniProt's coordinates on a
 sequence they don't describe.
@@ -57,6 +62,10 @@ sequence: |
 Use `|`, not `>`. YAML's folded `>` joins the lines into one, so the residues
 end up inside the header and the viewer reports that the sequence "has no
 residues".
+
+The [own-sequence preset](/protvista/playground/#preset=own-sequence) is this
+form, with its track's records written inline too, so it makes no request at
+all. Paste your own FASTA over the block, or load a `.fasta` file (below).
 
 **Raw residues** — just the letters:
 
