@@ -53,14 +53,22 @@ import jsonConfig from '../../examples/json/config.yaml?raw';
 import extendUniprotConfig from '../../starter-kit/recipes/extend-uniprot.yaml?raw';
 import { DEFAULT_ACCESSION } from './url-state.js';
 
-// Repoint a file-backed example's page-relative data path at the sample data
-// served with the docs site (docs/public/sample-data/*, served at
-// /protvista/sample-data/). Base-absolute so it resolves regardless of the
-// playground page's URL. Keeps the rest of the example config verbatim.
-const withServedData = (config: string): string =>
+/**
+ * Repoint every page-relative `data: ./<name>.(csv|tsv|json|bed)` in a
+ * file-backed example at the copy served with the docs site
+ * (`docs/public/sample-data/[<dir>/]<name>`, served at
+ * `/protvista/sample-data/[<dir>/]<name>`). Base-absolute, so it resolves
+ * whatever the playground page's URL. Block, flow and quoted forms are all
+ * rewritten; a line whose `data:` follows a `#` is a comment and is left
+ * alone. The rest of the example config stays verbatim.
+ *
+ * `__spec__/presets.spec.ts` checks that every served path exists and that
+ * every served file is byte-identical to its source under `examples/`.
+ */
+export const withServedData = (config: string, dir?: string): string =>
   config.replace(
-    /data:\s*\.\/(hotspots\.\w+)/,
-    'data: /protvista/sample-data/$1'
+    /^([^#\n]*?\bdata:\s*)(["']?)\.\/([\w.-]+\.(?:csv|tsv|json|bed))\2/gm,
+    `$1/protvista/sample-data/${dir ? `${dir}/` : ''}$3`
   );
 
 // The extend-uniprot recipe ships its sample under `./data/`; repoint it at the
