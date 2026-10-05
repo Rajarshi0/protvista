@@ -204,6 +204,82 @@ describe('visitor notices in a browser', () => {
     });
   }
 
+  /** Lab hits and ten tracks whose URL variables are undefined. */
+  const MANY = {
+    sequence: RESIDUES,
+    rows: [
+      LAB,
+      ...Array.from({ length: 10 }, (_, i) => ({
+        id: `t${i}`,
+        label: `Track ${i}`,
+        kind: 'features',
+        data: `https://example.org/{dataset${i}}/hits.csv`,
+      })),
+    ],
+  };
+
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+  ] as const) {
+    it(`scroll a list taller than the screen at ${width}x${height}, its top and last entry in view`, async () => {
+      await page.viewport(width, height);
+      const el = await mountViewer(MANY, ['show-warnings']);
+      const top = await vi.waitFor(() => {
+        const button = el.querySelector<HTMLElement>(TOP_NOTE);
+        if (!button || popoverOf(button).querySelectorAll('li').length < 11) {
+          throw new Error('not every skip listed yet');
+        }
+        return button;
+      });
+      const popover = await opened(el, top);
+      window.scrollTo(0, 0);
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+      const box = popover.getBoundingClientRect();
+      expect(box.top, 'top edge').toBeGreaterThanOrEqual(0);
+      expect(box.bottom, 'bottom edge').toBeLessThanOrEqual(height);
+      // It scrolls, and a keyboard can reach it to scroll it.
+      expect(getComputedStyle(popover).overflowY).toBe('auto');
+      expect(popover.scrollHeight).toBeGreaterThan(popover.clientHeight);
+      expect(popover.tabIndex).toBe(0);
+      popover.scrollTop = popover.scrollHeight;
+      const entries = popover.querySelectorAll('li');
+      const last = entries[entries.length - 1];
+      const entry = last.getBoundingClientRect();
+      const inner = popover.getBoundingClientRect();
+      expect(entry.top).toBeGreaterThanOrEqual(inner.top);
+      expect(entry.bottom).toBeLessThanOrEqual(inner.bottom);
+    });
+  }
+
+  it('fits a long list into the room beside a button in mid-screen', async () => {
+    await page.viewport(1440, 900);
+    // The top bar lands mid-screen: neither side has the CSS cap's 70vh.
+    const spacer = document.createElement('div');
+    spacer.style.height = '420px';
+    document.body.prepend(spacer);
+    try {
+      const el = await mountViewer(MANY, ['show-warnings']);
+      const top = await vi.waitFor(() => {
+        const button = el.querySelector<HTMLElement>(TOP_NOTE);
+        if (!button || popoverOf(button).querySelectorAll('li').length < 11) {
+          throw new Error('not every skip listed yet');
+        }
+        return button;
+      });
+      const popover = await opened(el, top);
+      await new Promise((r) => requestAnimationFrame(r));
+      const box = popover.getBoundingClientRect();
+      expect(top.getBoundingClientRect().top).toBeGreaterThan(300);
+      expect(box.top, 'top edge').toBeGreaterThanOrEqual(0);
+      expect(box.bottom, 'bottom edge').toBeLessThanOrEqual(900);
+      expect(popover.scrollHeight).toBeGreaterThan(popover.clientHeight);
+    } finally {
+      spacer.remove();
+    }
+  });
+
   it('is not cut off by the label cell in customize mode', async () => {
     const el = await mountViewer(CONFIG);
     el._customizeMode = true;

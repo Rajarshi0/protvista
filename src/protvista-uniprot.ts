@@ -166,13 +166,16 @@ import {
   type NoticeCode,
   type NoticeFacts,
 } from './errors/notices.js';
-import noticeStyles from './styles/notice-styles.js';
+import noticeStyles, {
+  NOTE_POPOVER_MAX_HEIGHT,
+} from './styles/notice-styles.js';
 import {
   autoUpdate,
   computePosition,
   flip,
   offset,
   shift,
+  size,
 } from '@floating-ui/dom';
 
 // Performance marks emitted at three lifecycle transitions:
@@ -5582,13 +5585,36 @@ class ProtvistaUniprot extends LitElement {
       return;
     }
     const place = () => {
+      // Measured at its CSS cap, not at the height the last placement left,
+      // so `flip` compares the sides by what the list really needs.
+      popover.style.maxHeight = '';
       void computePosition(button, popover, {
         strategy: 'fixed',
         placement: 'bottom-start',
-        middleware: [offset(4), flip(), shift({ padding: 8 })],
+        middleware: [
+          offset(4),
+          flip({ padding: 8 }),
+          shift({ padding: 8 }),
+          // A long list (author mode allows 200 entries) is cut to the room
+          // on the chosen side and scrolls, so its top and its last entry
+          // both stay reachable: a fixed popover never scrolls into view.
+          size({
+            padding: 8,
+            apply({ availableHeight }) {
+              const room = Math.max(Math.floor(availableHeight), 80);
+              popover.style.maxHeight = `min(${NOTE_POPOVER_MAX_HEIGHT}, ${room}px)`;
+            },
+          }),
+        ],
       }).then(({ x, y }) => {
         popover.style.left = `${x}px`;
         popover.style.top = `${y}px`;
+        // A list that scrolls is a tab stop, so a keyboard can scroll it.
+        if (popover.scrollHeight > popover.clientHeight) {
+          popover.tabIndex = 0;
+        } else {
+          popover.removeAttribute('tabindex');
+        }
       });
     };
     this._notePopover = {

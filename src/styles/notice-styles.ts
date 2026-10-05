@@ -20,6 +20,14 @@ import { tokenRef } from './tokens.js';
 const p = unsafeCSS(CSS_PREFIX);
 const ref = (name: string) => unsafeCSS(tokenRef(name));
 
+/**
+ * The tallest a note popover gets. Author mode can list up to 200 entries on
+ * one control, and a `position: fixed` popover taller than the viewport could
+ * never be scrolled into view, so it scrolls inside this instead. Floating UI
+ * lowers it further to the room beside the button (`_syncNotePopover`).
+ */
+export const NOTE_POPOVER_MAX_HEIGHT = 'min(70vh, 36rem)';
+
 export default css`
   protvista-uniprot .${p}-note {
     /* Wraps whole under Customize at narrow widths rather than squeezing. */
@@ -66,6 +74,9 @@ export default css`
     box-sizing: border-box;
     width: max-content;
     max-width: min(22rem, calc(100vw - 16px));
+    max-height: ${unsafeCSS(NOTE_POPOVER_MAX_HEIGHT)};
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0.5rem 0.75rem;
     overflow-wrap: anywhere;
     white-space: normal;
@@ -79,6 +90,12 @@ export default css`
     border-radius: var(--protvista-radius, 4px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     cursor: auto;
+  }
+
+  /* Focusable only when it scrolls, so a keyboard can scroll it. */
+  protvista-uniprot .${p}-note-popover:focus-visible {
+    outline: 2px solid ${ref('--protvista-color-accent')};
+    outline-offset: 1px;
   }
 
   protvista-uniprot .${p}-note-popover[hidden] {
