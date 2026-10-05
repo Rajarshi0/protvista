@@ -1,11 +1,17 @@
 /**
- * Tests for the conservation scoring in `score.mjs`.
+ * Tests for the conservation scoring in `score.mjs`, and for the data it
+ * produced under `examples/conservation/`.
  *
  * Everything here is offline. The scoring runs on the committed Pfam PF00301
  * seed alignment (`__fixtures__/PF00301.seed.sto`, 21 sequences) and on small
- * hand-made columns. It imports `score.mjs` only, never `src/`.
+ * hand-made columns; the full alignment behind the shipped numbers is not
+ * committed, so the shipped files are checked for their own invariants and
+ * against their `provenance.json` instead. It imports `score.mjs` only, never
+ * `src/`: parsing the shipped CSVs through the viewer's real pipeline is
+ * `src/__spec__/examples.spec.ts`'s job.
  */
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +22,7 @@ import {
   columnDistribution,
   columnsOf,
   conservationCsv,
+  conservedSitesDescription,
   henikoffWeights,
   isContiguous,
   mapRowToResidues,
@@ -33,6 +40,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '../..');
 const read = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8');
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 const SEED = read('scripts/conservation/__fixtures__/PF00301.seed.sto');
 
@@ -313,6 +321,54 @@ describe('topDecileRuns, ranks and the CSV helpers', () => {
 
   it('refuses a site description that would break the CSV', () => {
     expect(() => sitesCsv([], 'a, b')).toThrow(/must not contain/);
+  });
+});
+
+describe('the shipped conservation data (S5)', () => {
+  const conservationText = read('examples/conservation/conservation.csv');
+  const sitesText = read('examples/conservation/conserved-sites.csv');
+  const provenance = JSON.parse(read('examples/conservation/provenance.json'));
+  const points = readPointCsv(conservationText);
+
+  it('covers residues 4–49 of P24297 contiguously, with scores in [0, 1]', () => {
+    expect(points.map((p) => p.position)).toEqual(
+      Array.from({ length: 46 }, (_, i) => i + 4)
+    );
+    for (const { value } of points) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("puts UniProt's four Fe-binding cysteines at the top", () => {
+    expect(topPositions(points, 4)).toEqual(FE_CYSTEINES);
+  });
+
+  it('records the same ranks and scores in provenance.json', () => {
+    const rank = ranks(points);
+    const sites = provenance.result.knownSites.sites;
+    expect(sites.map((site) => site.position)).toEqual(FE_CYSTEINES);
+    for (const site of sites) {
+      expect(site.rank, `rank of ${site.position}`).toBe(
+        rank.get(site.position)
+      );
+      expect(site.score).toBe(
+        points.find((p) => p.position === site.position).value
+      );
+    }
+  });
+
+  it('derives conserved-sites.csv from conservation.csv', () => {
+    expect(sitesText).toBe(
+      sitesCsv(topDecileRuns(points), conservedSitesDescription('PF00301'))
+    );
+  });
+
+  it('matches the sha256 values in provenance.json', () => {
+    expect(provenance.outputs).toEqual({
+      'conservation.csv': sha256(conservationText),
+      'conserved-sites.csv': sha256(sitesText),
+    });
   });
 });
 
