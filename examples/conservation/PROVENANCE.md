@@ -12,6 +12,7 @@ hand: `scripts/conservation/score.spec.mjs` checks their sha256 values against
 | `conservation.csv`    | `position,value`: one score for each of residues 4–49, to 3 decimal places.                                                                          |
 | `conserved-sites.csv` | `type,start,end,description,score`: the most conserved residues as `SITE` features, each with its score.                                             |
 | `provenance.json`     | The machine-readable record: sources, releases, retrieval dates, sha256 values of inputs and outputs, method parameters, and the sanity check below. |
+| `config.yaml`         | The viewer config (written by hand, not generated): the line graph, the most conserved residues, and UniProt's binding sites.                        |
 
 ## Sources
 

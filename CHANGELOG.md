@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added: playground examples for your own sequence, small proteins and conservation
+
+The playground's picker has four new presets, each backed by a CI-validated
+example. **Your own sequence** (`own-sequence`, from
+[`examples/sequence-inline/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-inline))
+shows a 240-residue construct from inline FASTA with a features track and makes
+no request at all; paste your own FASTA over it, or load a `.fasta` file.
+**Small protein** (`small-protein`) is the default UniProt viewer on crambin
+(P01542, 46 residues). **Small peptide** (`small-peptide`, from
+[`examples/small-peptide/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/small-peptide))
+is Trp-cage TC5b (20 residues, PDB 1L2Y) from its own sequence, with its
+secondary structure from a CSV. **Conservation** (`conservation`, from
+[`examples/conservation/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/conservation))
+draws real per-residue conservation for rubredoxin (P24297) as a line graph,
+beside its most conserved residues and UniProt's iron-binding sites, which
+score highest. The scores come from the Pfam PF00301 full alignment (Pfam
+38.2), computed as Jensen–Shannon divergence with Henikoff weights and a gap
+penalty by a committed generator, `scripts/conservation/`, and ship with their
+provenance. The served sample data are copies under
+`docs/public/sample-data/`, checked byte for byte against `examples/`. See
+[Per-residue conservation](https://ebi-webcomponents.github.io/protvista/your-data#per-residue-conservation).
+
+### Fixed: a playground `#preset=` link without an accession opens the preset's own protein
+
+A link such as `/protvista/playground/#preset=dev-multimer` used to show the
+preset's config against P05067, the default accession, instead of the
+preset's own protein. A link that names an accession (as every shared link
+does) still uses it.
+
 ### Added: per-feature colour, shape and custom tooltip fields from your own files
 
 Feature records from your own CSV, TSV or JSON file now keep every column
