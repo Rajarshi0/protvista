@@ -911,7 +911,7 @@ function initialState(): { text: string; accession: string; presetId: string } {
   if (restored?.config != null) {
     return {
       text: restored.config,
-      accession: restored.accession,
+      accession: restored.accession ?? DEFAULT_ACCESSION,
       // Mark as custom so an edited link doesn't masquerade as a preset.
       presetId: CUSTOM_OPTION,
     };
@@ -933,6 +933,8 @@ function initialState(): { text: string; accession: string; presetId: string } {
   const queryAccession = restored
     ? null
     : accessionFromSearch(window.location.search);
+  // A `#preset=` link without `&accession=` decodes with no accession, so it
+  // opens the preset's own protein rather than the default one.
   return {
     text: preset.config,
     accession: restored?.accession ?? queryAccession ?? preset.accession,

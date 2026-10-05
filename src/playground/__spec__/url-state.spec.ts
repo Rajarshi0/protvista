@@ -65,6 +65,22 @@ describe('decodeState edge cases', () => {
     });
   });
 
+  // A docs link `#preset=small-protein` names no accession. If it decoded
+  // with DEFAULT_ACCESSION, the playground would prefer that over the
+  // preset's own accession and show the wrong protein.
+  it('leaves the accession out of a preset link that has none', () => {
+    const decoded = decodeState('#preset=small-protein');
+    expect(decoded).toEqual({ preset: 'small-protein' });
+    expect(decoded).not.toHaveProperty('accession');
+  });
+
+  it('keeps the accession of a preset link that has one', () => {
+    expect(decodeState('#preset=x&accession=P12345')).toEqual({
+      preset: 'x',
+      accession: 'P12345',
+    });
+  });
+
   it('returns null for a malformed config payload', () => {
     expect(decodeState('#accession=P05067&config=@@not-base64@@')).toBeNull();
   });

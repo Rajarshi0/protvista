@@ -30,6 +30,15 @@ export interface PlaygroundState {
   accession: string;
 }
 
+/**
+ * What a link decodes to. A `#preset=` link may carry no `accession`, and then
+ * has none here, so the playground can fall back to the preset's own protein
+ * rather than to {@link DEFAULT_ACCESSION}.
+ */
+export type DecodedState = Omit<PlaygroundState, 'accession'> & {
+  accession?: string;
+};
+
 /** Base64(UTF-8) encode — handles non-ASCII config content losslessly. */
 function encodeConfig(text: string): string {
   const bytes = new TextEncoder().encode(text);
@@ -65,9 +74,10 @@ export function encodeState(state: PlaygroundState): string {
  * Parse a hash string back into state. Returns `null` when the hash
  * carries no recognised keys (a bare `#` or an unrelated fragment), so
  * the caller can fall back to its default preset. A malformed `config`
- * payload also yields `null` rather than throwing.
+ * payload also yields `null` rather than throwing. A `preset` link without an
+ * `accession` decodes without one; the other shapes default it.
  */
-export function decodeState(hash: string): PlaygroundState | null {
+export function decodeState(hash: string): DecodedState | null {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const accession = params.get('accession') || DEFAULT_ACCESSION;
   const config = params.get('config');
@@ -79,7 +89,9 @@ export function decodeState(hash: string): PlaygroundState | null {
       return null;
     }
   }
-  if (preset != null) return { accession, preset };
+  if (preset != null) {
+    return params.get('accession') ? { accession, preset } : { preset };
+  }
   // Only an accession (or nothing) — not enough to restore a session.
   return params.has('accession') ? { accession } : null;
 }
@@ -96,7 +108,7 @@ export function accessionFromSearch(search: string): string | null {
 }
 
 /** Read and decode the current `location.hash`. */
-export function readHash(): PlaygroundState | null {
+export function readHash(): DecodedState | null {
   return decodeState(window.location.hash);
 }
 
