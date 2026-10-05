@@ -141,8 +141,8 @@ export interface LintResult {
   declaresSequence: boolean;
   /**
    * The config as parsed, before `accession` (or an inherited `sequence:`)
-   * is injected, so a caller needs no second parse. Absent when the text is blank or does not parse (a
-   * parsed config is never `undefined`).
+   * is injected, so a caller needs no second parse. Absent when the text is
+   * blank or does not parse (a parsed config is never `undefined`).
    */
   parsed?: unknown;
 }
