@@ -460,11 +460,13 @@ so into any link you share: the playground adds a track with
 - If the config already names the file — say you pasted a Starter Kit config
   with `data: ./data/hits.csv` — just load `hits.csv`. It renders in that
   track with no edit to the config.
-- A `.fasta`, `.fa`, `.faa` or `.fas` file — or a text file whose first line
-  starts with `>` — becomes the config's `sequence:` instead of a track (see
+- A `.fasta`, `.fa`, `.faa` or `.fas` file — or any other file, bar a CSV,
+  TSV, JSON or BED one, whose first non-blank line starts with `>` — becomes
+  the config's `sequence:` instead of a track (see
   [Try your FASTA in the playground](/protvista/sequence-only#try-your-fasta-in-the-playground)).
-  Raw residues with no `>` line are read as data, so give them a `.fasta`
-  name or a header line.
+  So does any file the config's `sequence:` already names. Otherwise raw
+  residues with no `>` line are read as data, so give them a `.fasta` name or
+  a header line.
 - Problems with the file are listed under the editor, naming it: a parse error
   (`./hits.csv (parsed as CSV): row 3, column "start": …`) with the same advice
   a hosted viewer gives, and, once it renders, any rows that fall outside the

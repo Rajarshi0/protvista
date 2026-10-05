@@ -104,18 +104,21 @@ its text into the config, and dropping one elsewhere on the page no longer
 navigates away.
 
 The same button (and drop) also takes a FASTA file — `.fasta`, `.fa`, `.faa`,
-`.fas`, or any text file whose first line starts with `>` — as the config's
+`.fas`, or any other file whose first non-blank line starts with `>` (a `.csv`,
+`.tsv`, `.json` or `.bed` is still read as data) — as the config's
 `sequence:`. It is parsed as a hosted viewer would parse it before anything
 changes, so a file with two records or a stray character is refused with the
-viewer's own `invalid-sequence` message. The config again names only the file
-(`sequence: ./my-protein.fasta`), never its residues or header. If the config
-already names it, it just loads, so `examples/sequence-only/` renders from its
+viewer's own `invalid-sequence` message, and one over 2 MB (the most a hosted
+viewer fetches) is refused too. The config again names only the file
+(`sequence: ./my-protein.fasta`), never its residues or header. If the config's
+`sequence:` already names it, it just loads — whatever its name, so a
+headerless `seq.txt` works too — and `examples/sequence-only/` renders from its
 own two files; otherwise you choose between setting this config's `sequence:`
 (which removes `accession:`) and a new sequence-only config, undoable with
 Ctrl/Cmd+Z. A shared link whose `sequence:` names a file you haven't loaded
 lists `local-file-missing` and shows no preview, rather than requesting the
-file from the docs site. A binary file's refusal now names every format the
-button reads.
+file from the docs site; the preview pane says which file to load. A binary
+file's refusal now names every format the button reads.
 
 ### Added: view a protein that isn't in UniProt (`sequence:`)
 

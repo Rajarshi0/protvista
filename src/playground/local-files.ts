@@ -10,6 +10,15 @@
  * fetch path: the same decoder, the same routed errors and warnings, as a
  * hosted copy would get.
  *
+ * A FASTA file stands in for the config's `sequence:` the same way: the
+ * config says `sequence: ./protein.fasta`, and the store holds the file as a
+ * `kind: 'sequence'` entry, parsed before it was registered. The element
+ * takes no `blob:` URL there, so {@link withLocalFiles} hands the preview the
+ * parsed sequence inline instead, and {@link localDataDiagnostics} lists a
+ * `sequence:` naming a file that isn't loaded as `local-file-missing` at
+ * `/sequence` — the page holds the preview back for it
+ * (`sequenceMissing`), as it could only fail as a whole.
+ *
  * Two things the preview cannot do for the author are done here instead:
  *
  *   - {@link localDataDiagnostics} pre-flights each loaded file through the
