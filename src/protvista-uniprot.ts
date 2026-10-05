@@ -5484,11 +5484,15 @@ class ProtvistaUniprot extends LitElement {
     glyph?: string;
     footer?: string;
   }) {
-    const id =
-      `${CSS_PREFIX}-note-${this._instanceId}-${control.anchor}`.replace(
-        /[^A-Za-z0-9_-]/g,
-        '-'
-      );
+    // Spelled out, never flattened: ids such as 'α' and 'β', or 'a b' and
+    // 'a.b', must stay two ids, since the id is what opens and places a
+    // popover. `_` only ever opens or closes an escape, so the mapping is
+    // one-to-one.
+    const anchor = control.anchor.replace(
+      /[^A-Za-z0-9-]/gu,
+      (c) => `_${c.codePointAt(0)!.toString(16)}_`
+    );
+    const id = `${CSS_PREFIX}-note-${this._instanceId}-${anchor}`;
     const popoverId = `${id}-pop`;
     const open = this._openNote === id;
     return html`<button

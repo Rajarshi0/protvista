@@ -1035,6 +1035,34 @@ describe('the popover', () => {
     expect(popoverOf(top).hidden).toBe(false);
   });
 
+  it('gives each control its own id, so one click opens one popover', async () => {
+    quiet();
+    // Ids that flatten to the same characters: two of a length outside
+    // ASCII, and two that differ only by punctuation.
+    const ids = ['α', 'β', 'a b', 'a.b'];
+    const { el, events } = mountEl({
+      sequence: RESIDUES,
+      rows: ids.map((id) => csvTrack(id, `Track ${id}`, ['REGION,30,60,b,'])),
+    });
+    await ready(el, events);
+    await vi.waitFor(() => {
+      if (el.querySelectorAll(`.${CSS_PREFIX}-track-label ${NOTE}`).length < 4)
+        throw new Error('not every note yet');
+    });
+    const buttons = [
+      ...el.querySelectorAll<HTMLElement>(`.${CSS_PREFIX}-track-label ${NOTE}`),
+    ];
+    expect(new Set(buttons.map((b) => b.id)).size).toBe(4);
+    for (const button of buttons) {
+      await open(el, button);
+      const shown = [
+        ...el.querySelectorAll<HTMLElement>(`.${CSS_PREFIX}-note-popover`),
+      ].filter((p) => !p.hidden);
+      expect(shown).toEqual([popoverOf(button)]);
+      expect(button.getAttribute('aria-expanded')).toBe('true');
+    }
+  });
+
   it('stops following its button when the element is removed', async () => {
     quiet();
     const cleanup = vi.fn();
