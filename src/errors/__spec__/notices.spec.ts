@@ -132,6 +132,21 @@ describe('controls and announcements', () => {
     );
   });
 
+  it('quotes the visitor sentence, single-quoting a track name inside it', () => {
+    expect(NOTE_UI.visitorsSee('Some colours were not shown.')).toBe(
+      'Visitors see: “Some colours were not shown.”'
+    );
+    const skipped = NOTICE_TEXT['url-variable-unresolved']({
+      names: ['Partner data'],
+    });
+    expect(skipped).toBe(
+      "“Partner data” isn't shown: its data couldn't be loaded."
+    );
+    expect(NOTE_UI.visitorsSee(skipped)).toBe(
+      "Visitors see: “‘Partner data’ isn't shown: its data couldn't be loaded.”"
+    );
+  });
+
   it('drops the console tag, and nothing else', () => {
     expect(stripTag('[protvista] a')).toBe('a');
     expect(stripTag('[protvista-uniprot] b')).toBe('b');

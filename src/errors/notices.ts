@@ -124,7 +124,12 @@ export const NOTE_UI = {
     "Shown because author mode (show-warnings) is on. Visitors don't see this list.",
   source: (url: string) => `Source: ${url}`,
   repeat: (n: number) => `×${n}`,
-  visitorsSee: (text: string) => `Visitors see: “${text}”`,
+  /**
+   * The visitor's sentence, quoted. A track name quoted inside it becomes
+   * single-quoted, so the two never run together as `““`.
+   */
+  visitorsSee: (text: string) =>
+    `Visitors see: “${text.replace(/“/g, '‘').replace(/”/g, '’')}”`,
   /** Sent once to the polite live region. */
   announceOne: (where: string | undefined, text: string) =>
     `Note about ${where ?? 'this view'}: ${text}`,
