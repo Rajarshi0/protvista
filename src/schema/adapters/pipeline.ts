@@ -222,6 +222,11 @@ export function sourceLabel(
   return `${what} (parsed as ${format.toUpperCase()})`;
 }
 
+/** The shared opening of both semicolon hints in {@link delimiterHint}. */
+const SEMICOLON_LEAD =
+  'The header looks semicolon-separated, which ProtVista does not read. ' +
+  'If it came from Excel, ';
+
 /**
  * The sentence appended to a missing-column error whose header seems to use
  * `suspected` rather than the delimiter `declared` implies.
@@ -251,8 +256,8 @@ function delimiterHint(
     // Already read as TSV, so "read it as TSV" is no remedy on its own: the
     // tab export must be re-saved, and a comma export must switch to CSV.
     return (
-      'The header looks semicolon-separated, which ProtVista does not read. ' +
-      'If it came from Excel, save it again as "Text (Tab delimited)" and ' +
+      SEMICOLON_LEAD +
+      'save it again as "Text (Tab delimited)" and ' +
       'keep reading it as TSV (`format: tsv`), or re-export it ' +
       'comma-separated and read it as CSV: set `format: csv`' +
       (renamable ? ' (or rename the file to .csv)' : '') +
@@ -264,8 +269,8 @@ function delimiterHint(
       ? '`format: tsv` or a .tsv name — Excel names that export .txt'
       : '`format: tsv`';
     return (
-      'The header looks semicolon-separated, which ProtVista does not read. ' +
-      'If it came from Excel, save it as "Text (Tab delimited)" and read it ' +
+      SEMICOLON_LEAD +
+      'save it as "Text (Tab delimited)" and read it ' +
       `as TSV (${how}), or re-export it comma-separated.`
     );
   }
