@@ -112,8 +112,13 @@ async function formOpens(): Promise<HTMLInputElement> {
 
 /** Press the form's Use button. */
 async function use(): Promise<void> {
+  await press('Use');
+}
+
+/** Press one of the form's buttons. */
+async function press(label: 'Use' | 'Cancel'): Promise<void> {
   const button = [...sequenceForm()!.querySelectorAll('button')].find(
-    (b) => b.textContent === 'Use'
+    (b) => b.textContent === label
   )!;
   await userEvent.click(button);
 }
@@ -323,6 +328,86 @@ describe('playground: load a FASTA file as the sequence', () => {
     editorView().focus();
     await userEvent.keyboard('{Control>}z{/Control}');
     expect(editorText()).toBe(REMOTE_CONFIG);
+
+    // This config anyway: the track that needs UniProt is listed, and the
+    // status says to fix it rather than that the sequence is shown.
+    dropOnPane([new File([CONSTRUCT], 'construct.fasta')]);
+    await formOpens();
+    await userEvent.click(radio('this'));
+    await use();
+    await vi.waitFor(() =>
+      expect(status()).toBe(
+        'Loaded construct.fasta as the sequence (my construct v2, 66 ' +
+          'residues). Fix the config problems listed below, then press Run.'
+      )
+    );
+    expect(editorText()).toBe(
+      REMOTE_CONFIG.replace('accession: P05067', 'sequence: ./construct.fasta')
+    );
+    expect(listItems().map((li) => li.dataset.code)).toContain(
+      'needs-accession'
+    );
+  });
+
+  it('defaults an extends: child to a new config, saying the base may need UniProt', async () => {
+    setEditorText('extends: /protvista/base.yaml\nrows: []\n');
+    dropOnPane([new File([CONSTRUCT], 'construct.fasta')]);
+    await formOpens();
+    expect(radio('new').checked).toBe(true);
+    expect(consequences('this')).toEqual([
+      'Sets sequence: ./construct.fasta',
+      'Keeps the tracks',
+      'Keeps extends: — anything the base adds that needs UniProt is listed after Run',
+    ]);
+    await press('Cancel');
+  });
+
+  it('shows the line to set by hand when the config layout cannot be spliced', async () => {
+    const flow = '# Flow style\n{ accession: P05067, rows: [] }\n';
+    setEditorText(flow);
+    await pick('construct.fasta', CONSTRUCT);
+    await formOpens();
+    expect(radio('this').checked).toBe(true);
+    await use();
+    await vi.waitFor(() =>
+      expect(status()).toBe(
+        "Loaded construct.fasta as ./construct.fasta. Couldn't set the " +
+          'sequence automatically — set it by hand, and remove accession: ' +
+          'if there is one:'
+      )
+    );
+    expect(byId('data-snippet').hidden).toBe(false);
+    expect(byId('data-snippet').textContent).toBe(
+      'sequence: ./construct.fasta'
+    );
+    expect(editorText()).toBe(flow);
+  });
+
+  it('loads only the FASTA of a multi-file drop, says so, and names the sequence: a later one replaces', async () => {
+    setEditorText(ACCESSION_CONFIG);
+    dropOnPane([
+      new File([CONSTRUCT], 'other.fasta'),
+      new File(['type,start,end\nDOMAIN,1,5\n'], 'x.csv'),
+    ]);
+    await formOpens();
+    await use();
+    await vi.waitFor(() =>
+      expect(status()).toBe(
+        'Load one file at a time — loaded other.fasta only. ' +
+          LOADED('other.fasta', 'my construct v2', 66)
+      )
+    );
+    expect(byId('data-snippet').hidden).toBe(true);
+
+    dropOnPane([new File([CONSTRUCT], 'construct.fasta')]);
+    await formOpens();
+    expect(radio('this').checked).toBe(true);
+    expect(consequences('this')).toEqual([
+      'Sets sequence: ./construct.fasta',
+      'Replaces ./other.fasta',
+      'Keeps the tracks',
+    ]);
+    await press('Cancel');
   });
 
   it.each([
@@ -405,6 +490,14 @@ describe('playground: load a FASTA file as the sequence', () => {
       if (!byId('data-attach-format')) throw new Error('attach form not open');
     });
     expect(sequenceForm()).toBeNull();
+    await userEvent.keyboard('{Escape}');
+
+    // Raw residues in a .fa: no header to show, so the form says so.
+    await pick('raw.fa', 'MKTAYIAKQR\n');
+    await formOpens();
+    expect(document.querySelector('.sequence-summary')?.textContent).toBe(
+      'No FASTA header — shown as "your sequence". 10 residues.'
+    );
     await userEvent.keyboard('{Escape}');
   });
 
