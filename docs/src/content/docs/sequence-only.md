@@ -131,14 +131,16 @@ config sets `sequence:`, itself or through an `extends:` base.
 
 Press **Load data file…** in the [playground](/protvista/playground/) (or drop
 the file onto the config editor) and pick a one-record FASTA file: `.fasta`,
-`.fa`, `.faa` or `.fas`, or any text file whose first line starts with `>`. It
+`.fa`, `.faa` or `.fas`, or any other file whose first non-blank line starts
+with `>` (a `.csv`, `.tsv`, `.json` or `.bed` file is always read as data). It
 is read in your browser and never uploaded. Only its *name* goes into the
 config — `sequence: ./my-protein.fasta` — so neither the residues nor the
 header reach a link you share.
 
 If the config already names the file, as
 [`examples/sequence-only/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-only)
-does, it just loads. Otherwise you choose where it goes:
+does, it just loads — whatever its name, so a `seq.txt` of raw residues
+works too. Otherwise you choose where it goes:
 
 - **This config** sets its `sequence:` (replacing an inline one) and removes
   `accession:`, keeping your tracks. Tracks that need UniProt are then listed
@@ -147,10 +149,11 @@ does, it just loads. Otherwise you choose where it goes:
   only your file. Press Ctrl/Cmd+Z in the editor to get the old config back.
 
 A file the viewer would reject — two records, a character outside A–Z, no
-residues, over 2 MB — is not loaded, and the playground shows the
-`invalid-sequence` message a hosted viewer would. Someone who opens a shared
-link is asked to load the file themselves: until they do, the playground lists
-`local-file-missing` and shows no preview. If your header is a UniProt one
+residues — is not loaded, and the playground shows the `invalid-sequence`
+message a hosted viewer would. A file over 2 MB, the most a hosted viewer
+fetches, is refused too. Someone who opens a shared link is asked to load the
+file themselves: until they do, the playground lists `local-file-missing`, and
+the preview pane, which shows no preview, says which file to load. If your header is a UniProt one
 (`>sp|P01542|…`), the protein is in UniProt: `accession: P01542` gives you its
 UniProt tracks as well.
 
