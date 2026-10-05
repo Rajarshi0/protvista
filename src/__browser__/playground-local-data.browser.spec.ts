@@ -13,9 +13,13 @@ import { userEvent } from 'vitest/browser';
 import { EditorView } from 'codemirror';
 
 import { CSS_PREFIX } from '../styles/css-prefix.js';
+import { parseConfigText } from '../schema/parse.js';
 import { decodeState, encodeState } from '../playground/url-state.js';
 import { MAX_FILE_BYTES, PRIVACY_NOTE } from '../playground/local-files.js';
 import { expectNoA11yViolations } from './axe.js';
+
+// The real parser, wrapped in a spy so a validation's parses can be counted.
+vi.mock('../schema/parse.js', { spy: true });
 
 const BADGE = `.${CSS_PREFIX}-error-badge`;
 
@@ -248,6 +252,26 @@ describe('playground: load a local data file', () => {
     const shared = decodeState(location.hash)?.config ?? '';
     expect(shared).toContain('./hits.csv');
     expect(shared).not.toContain('Kinase');
+  });
+
+  it('parses the config once per validation, pre-flight included', async () => {
+    const before = editorText();
+    const parses = vi.mocked(parseConfigText);
+    parses.mockClear();
+    const edited = `${before}# an edit\n`;
+    setEditorText(edited);
+    // The share link is written once the validation, pre-flight and all, is done.
+    await vi.waitFor(
+      () => expect(decodeState(location.hash)?.config).toBe(edited),
+      { timeout: 3000 }
+    );
+    expect(parses).toHaveBeenCalledTimes(1);
+
+    setEditorText(before);
+    await vi.waitFor(
+      () => expect(decodeState(location.hash)?.config).toBe(before),
+      { timeout: 3000 }
+    );
   });
 
   it('reloads the same file with no form, and names it in the out-of-range warning', async () => {

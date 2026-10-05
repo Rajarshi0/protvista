@@ -19,7 +19,7 @@ import '../protvista-uniprot.js';
 import { parseConfigText } from '../schema/parse.js';
 import { createEditor, type PlaygroundEditor } from './editor.js';
 import { createDiagnosticsView } from './diagnostics-view.js';
-import { computeDiagnostics, type PlaygroundDiagnostic } from './lint.js';
+import { lintConfig, type LintResult } from './lint.js';
 import { initSplitter } from './splitter.js';
 import {
   KIND_FOR_SHAPE,
@@ -245,21 +245,23 @@ function syncPicker(text: string): void {
 async function computeSafe(
   text: string,
   accession: string
-): Promise<PlaygroundDiagnostic[]> {
+): Promise<LintResult> {
   try {
-    return await computeDiagnostics(text, accession);
+    return await lintConfig(text, accession);
   } catch (error) {
     // Validation is not supposed to throw, but never let an unexpected
     // failure silently freeze the pipeline — surface it as an error.
-    return [
-      {
-        from: 0,
-        to: 0,
-        severity: 'error',
-        code: 'internal',
-        message: `Internal validation error: ${(error as Error).message}`,
-      },
-    ];
+    return {
+      diagnostics: [
+        {
+          from: 0,
+          to: 0,
+          severity: 'error',
+          code: 'internal',
+          message: `Internal validation error: ${(error as Error).message}`,
+        },
+      ],
+    };
   }
 }
 
@@ -284,8 +286,8 @@ const LOCAL_FILE_HINT = new RegExp(
 
 /**
  * Whether the text could name a local data file. A cheap test, so the
- * default config is not parsed a second time on every keystroke when nothing
- * is loaded.
+ * default config is not pre-flighted on every keystroke when nothing is
+ * loaded.
  */
 const mayNameLocalFile = (text: string): boolean => LOCAL_FILE_HINT.test(text);
 
@@ -307,20 +309,26 @@ async function validateCurrent(): Promise<ValidateResult> {
   syncPicker(text);
 
   const files = store.version;
-  const configDiagnostics = await computeSafe(text, accession);
+  const lint = await computeSafe(text, accession);
+  const configDiagnostics = lint.diagnostics;
   if (seq !== updateSeq) return null;
   // Only the config's own errors hold the preview back. A data problem in a
   // loaded file renders that track empty, as a hosted viewer would.
   const valid = !configDiagnostics.some((d) => d.severity === 'error');
 
+  // The config the lint parsed, not a second parse of the same text.
   let parsed: unknown;
   let local: LocalDataResult | undefined;
-  if (valid && (store.list().length > 0 || mayNameLocalFile(text))) {
+  if (
+    valid &&
+    lint.parsed !== undefined &&
+    (store.list().length > 0 || mayNameLocalFile(text))
+  ) {
+    parsed = lint.parsed;
     try {
-      parsed = await parseConfigText(text);
       local = await localDataDiagnostics(text, parsed, store);
     } catch {
-      // Validated a moment ago; a throw here leaves the data unchecked.
+      // A throw here leaves the data unchecked.
     }
     if (seq !== updateSeq) return null;
   }

@@ -5,7 +5,8 @@
  * codes (so the editor and `src/schema/validate.ts` never drift).
  */
 import { describe, it, expect } from 'vitest';
-import { computeDiagnostics } from '../lint.js';
+import { parseConfigText } from '../../schema/parse.js';
+import { computeDiagnostics, lintConfig } from '../lint.js';
 
 const VALID = `accession: P05067
 rows:
@@ -123,5 +124,22 @@ rows:
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0].code).toBe('format-overrides-extension');
     expect(diagnostics[0].severity).toBe('warning');
+  });
+});
+
+describe('lintConfig', () => {
+  it('returns the config it parsed, without the injected accession', async () => {
+    const text = VALID.replace('accession: P05067\n', '');
+    const result = await lintConfig(text, 'P05067');
+    expect(result.diagnostics).toEqual([]);
+    expect(result.parsed).toEqual(await parseConfigText(text));
+    expect(result.parsed).not.toHaveProperty('accession');
+  });
+
+  it('returns no config for a blank or broken editor', async () => {
+    expect(await lintConfig('  \n')).toEqual({ diagnostics: [] });
+    const broken = await lintConfig('rows: [\n');
+    expect(broken.diagnostics[0].code).toBe('syntax');
+    expect(broken).not.toHaveProperty('parsed');
   });
 });

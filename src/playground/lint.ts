@@ -123,26 +123,48 @@ export async function computeDiagnostics(
   text: string,
   accession?: string
 ): Promise<PlaygroundDiagnostic[]> {
-  if (text.trim() === '') return [];
+  return (await lintConfig(text, accession)).diagnostics;
+}
+
+/** What {@link lintConfig} found. */
+export interface LintResult {
+  diagnostics: PlaygroundDiagnostic[];
+  /**
+   * The config as parsed, before `accession` is injected, so a caller needs
+   * no second parse. Absent when the text is blank or does not parse (a
+   * parsed config is never `undefined`).
+   */
+  parsed?: unknown;
+}
+
+/** {@link computeDiagnostics}, also returning the config it parsed. */
+export async function lintConfig(
+  text: string,
+  accession?: string
+): Promise<LintResult> {
+  if (text.trim() === '') return { diagnostics: [] };
 
   let parsed: unknown;
   try {
     parsed = await parseConfigText(text);
   } catch (error) {
     const at = Math.min(offsetFromParseError(error, text), text.length);
-    return [
-      {
-        from: at,
-        to: Math.min(at + 1, text.length),
-        severity: 'error',
-        code: 'syntax',
-        message: (error as Error).message || 'Could not parse config',
-      },
-    ];
+    return {
+      diagnostics: [
+        {
+          from: at,
+          to: Math.min(at + 1, text.length),
+          severity: 'error',
+          code: 'syntax',
+          message: (error as Error).message || 'Could not parse config',
+        },
+      ],
+    };
   }
 
   // Only when the config declares no accession itself — an authored
   // `accession:` takes precedence, exactly as the element treats it.
+  let validated = parsed;
   if (
     accession &&
     parsed !== null &&
@@ -150,11 +172,11 @@ export async function computeDiagnostics(
     !Array.isArray(parsed) &&
     (parsed as { accession?: unknown }).accession == null
   ) {
-    parsed = { ...(parsed as object), accession };
+    validated = { ...(parsed as object), accession };
   }
 
-  const result = validateConfig(parsed, createRegistry());
-  return result.issues.map((issue) => ({
+  const result = validateConfig(validated, createRegistry());
+  const diagnostics = result.issues.map((issue) => ({
     ...locate(text, issue.path),
     // An issue's own severity, not a blanket 'error': a warning names
     // something legal (an explicit `format:` overriding an extension) and
@@ -165,4 +187,5 @@ export async function computeDiagnostics(
     path: issue.path,
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
+  return { diagnostics, parsed };
 }
