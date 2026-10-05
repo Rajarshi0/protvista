@@ -296,20 +296,29 @@ const LOCAL_DATA_HINT = new RegExp(
 );
 
 /**
- * Whether the config could name a local file, so the page runs
- * {@link localDataDiagnostics} on it even with nothing loaded.
- *
- * The sequence is decided from the parsed config — `ownSequence` is its own
- * top-level `sequence:` value — because the text cannot be trusted to show
- * it: a quoted key, a comment between key and value, a JSON `\/` escape or a
- * path with no extension all hide it, and a missed one would mount a
- * preview that requests the private file by name. Track data keeps a cheap
- * text test, so a config that names no data file is not pre-flighted on
- * every keystroke; a miss there costs only the missing-file row until
- * something is loaded, and the preview renders the track empty.
+ * The config's own top-level `sequence:` value, not one inherited through
+ * `extends:` (that is the base's, resolved against the page).
  */
-export function mayNameLocalFile(text: string, ownSequence?: unknown): boolean {
-  return isLocalSequenceReference(ownSequence) || LOCAL_DATA_HINT.test(text);
+const ownSequence = (parsed: unknown): unknown =>
+  isPlainObject(parsed) ? parsed.sequence : undefined;
+
+/**
+ * Whether the config could name a local file, so the page runs
+ * {@link localDataDiagnostics} on it even with nothing loaded. `parsed` is
+ * `text` as parsed (the page passes the one `lintConfig` already made).
+ *
+ * The sequence is decided from the parsed config, because the text cannot be
+ * trusted to show it: a quoted key, a comment between key and value, a JSON
+ * `\/` escape or a path with no extension all hide it, and a missed one
+ * would mount a preview that requests the private file by name. Track data
+ * keeps a cheap text test, so a config that names no data file is not
+ * pre-flighted on every keystroke; a miss there costs only the missing-file
+ * row until something is loaded, and the preview renders the track empty.
+ */
+export function mayNameLocalFile(text: string, parsed: unknown): boolean {
+  return (
+    isLocalSequenceReference(ownSequence(parsed)) || LOCAL_DATA_HINT.test(text)
+  );
 }
 
 // ── The store ─────────────────────────────────────────────────
@@ -928,7 +937,7 @@ function checkSequence(
   store: LocalFileStore,
   result: LocalDataResult
 ): void {
-  const value = isPlainObject(parsed) ? parsed.sequence : undefined;
+  const value = ownSequence(parsed);
   if (!isLocalSequenceReference(value)) return;
   const ref = value.trim();
   const file = store.get(ref);

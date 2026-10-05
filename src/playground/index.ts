@@ -374,11 +374,7 @@ async function validateCurrent(): Promise<ValidateResult> {
 
   const files = store.version;
   const lint = await computeSafe(text, accession);
-  const {
-    diagnostics: configDiagnostics,
-    declaresSequence,
-    ownSequence,
-  } = lint;
+  const { diagnostics: configDiagnostics, declaresSequence } = lint;
   if (seq !== updateSeq) return null;
   syncAccessionInput(declaresSequence);
   // Only the config's own errors make it invalid. A data problem in a loaded
@@ -393,7 +389,7 @@ async function validateCurrent(): Promise<ValidateResult> {
   if (
     valid &&
     lint.parsed !== undefined &&
-    (store.list().length > 0 || mayNameLocalFile(text, ownSequence))
+    (store.list().length > 0 || mayNameLocalFile(text, lint.parsed))
   ) {
     parsed = lint.parsed;
     try {

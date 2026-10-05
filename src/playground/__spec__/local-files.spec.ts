@@ -981,11 +981,11 @@ describe('answersFor', () => {
 });
 
 describe('mayNameLocalFile', () => {
-  /** The page's gate, given the config's own sequence: as `lintConfig` reads it. */
+  /** The page's gate, given the config `lintConfig` parsed, as the page does. */
   async function gate(text: string): Promise<boolean> {
     const lint = await lintConfig(text, 'P05067');
     expect(lint.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
-    return mayNameLocalFile(text, lint.ownSequence);
+    return mayNameLocalFile(text, lint.parsed);
   }
 
   it.each([
