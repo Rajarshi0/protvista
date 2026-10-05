@@ -12,7 +12,9 @@ import {
   isSequenceReference,
   parseSequenceText,
 } from '../../schema/sequence.js';
+import defaultConfigYaml from '../../default-config.yaml?raw';
 import { PRESETS, DEV_PRESETS } from '../presets.js';
+import { lintConfig } from '../lint.js';
 import { appendTrack } from '../config-edit.js';
 import {
   KIND_FOR_SHAPE,
@@ -979,30 +981,78 @@ describe('answersFor', () => {
 });
 
 describe('mayNameLocalFile', () => {
+  /** The page's gate, given the config's own sequence: as `lintConfig` reads it. */
+  async function gate(text: string): Promise<boolean> {
+    const lint = await lintConfig(text, 'P05067');
+    expect(lint.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    return mayNameLocalFile(text, lint.ownSequence);
+  }
+
   it.each([
-    ['a data path', 'rows:\n  - id: a\n    data: ./x.csv\n'],
+    [
+      'a data path',
+      'rows:\n  - id: a\n    kind: features\n    data: ./x.csv\n',
+    ],
     [
       'a format: key',
-      'rows:\n  - id: a\n    data: { url: ./x.txt, format: csv }\n',
+      'rows:\n  - id: a\n    kind: features\n    data: { url: ./x.txt, format: csv }\n',
     ],
+    [
+      'a quoted data path',
+      "rows:\n  - id: a\n    kind: features\n    data: 'my hits.tsv'\n",
+    ],
+    [
+      'a JSON data path',
+      '{ "rows": [{ "id": "a", "kind": "features", "data": ".\\/x.csv" }] }',
+    ],
+  ])('is true for %s', async (_, text) => expect(await gate(text)).toBe(true));
+
+  // Each names a local sequence file that isn't loaded: the gate must open,
+  // so the check it guards lists it and the preview is held back.
+  it.each([
     ['a ./ sequence', 'sequence: ./p.txt\nrows: []\n'],
     ['a ../ sequence', "sequence: '../p.txt'\nrows: []\n"],
     ['a bare FASTA name', 'sequence: protein.fasta\nrows: []\n'],
     ['a JSON sequence path', '{ "sequence": "./p.txt", "rows": [] }'],
-  ])('is true for %s', (_, text) => expect(mayNameLocalFile(text)).toBe(true));
+    ['a single-quoted key', "'sequence': ./private-construct.txt\nrows: []\n"],
+    ['a JSON escaped slash', '{ "sequence": ".\\/q.txt", "rows": [] }'],
+    [
+      'a comment between key and value',
+      'sequence: # a comment\n  ./construct\nrows: []\n',
+    ],
+    ['an extensionless path', 'sequence: ./construct\nrows: []\n'],
+    ['a folded scalar', 'sequence: >-\n  ./construct\nrows: []\n'],
+  ])('is true for %s, which the missing-file check lists', async (_, text) => {
+    expect(await gate(text)).toBe(true);
+    const local = await localDataDiagnostics(
+      text,
+      await parseConfigText(text),
+      makeStore().store
+    );
+    expect(local.sequenceMissing).toBe(true);
+    expect(local.diagnostics.map((d) => d.code)).toEqual([
+      'local-file-missing',
+    ]);
+  });
 
   it.each([
     [
       'an inline-data config',
-      'accession: P05067\nrows:\n  - id: a\n    data:\n      from: inline\n      inlineData: []\n',
+      'accession: P05067\nrows:\n  - id: a\n    kind: features\n    data:\n      from: inline\n      inlineData: []\n',
     ],
     ['inline residues', 'sequence: MKTAYIAKQR\nrows: []\n'],
     [
       'an inline FASTA block',
       'sequence: |\n  >my construct v2\n  MKTAYIAKQR\nrows: []\n',
     ],
-  ])('is false for %s', (_, text) =>
-    expect(mayNameLocalFile(text)).toBe(false)
+    [
+      'a hosted sequence and data',
+      'sequence: https://lab.example/p.fasta\nrows:\n  - id: a\n    kind: features\n    data: /protvista/sample-data/x.csv\n',
+    ],
+    // Its `$schema:` URL ends in `.json`, which names no local file.
+    ['the shipped default-config.yaml', defaultConfigYaml],
+  ])('is false for %s', async (_, text) =>
+    expect(await gate(text)).toBe(false)
   );
 });
 
@@ -1232,7 +1282,7 @@ describe('localDataDiagnostics and a sequence: reference', () => {
         'warning',
         'local-file-missing',
         '/sequence',
-        './p.txt is loaded as track data, not as the sequence — Remove it and load it again.',
+        './p.txt is loaded as track data, not as the sequence — load p.txt again to use it as the sequence.',
       ],
       [
         'error',

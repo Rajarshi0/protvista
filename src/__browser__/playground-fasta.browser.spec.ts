@@ -16,6 +16,7 @@ import { userEvent } from 'vitest/browser';
 import exampleConfig from '../../examples/sequence-only/config.yaml?raw';
 import exampleProtein from '../../examples/sequence-only/protein.fasta?raw';
 import exampleHotspots from '../../examples/sequence-only/hotspots.csv?raw';
+import playgroundPage from '../../docs/src/pages/playground.astro?raw';
 import { decodeState } from '../playground/url-state.js';
 import { PRIVACY_NOTE } from '../playground/local-files.js';
 import { expectNoA11yViolations } from './axe.js';
@@ -78,6 +79,10 @@ rows:
 const LOADED = (name: string, label: string, residues: number) =>
   `Loaded ${name} as the sequence (${label}, ${residues} residues) — ` +
   'read in your browser, never uploaded.';
+
+/** The preview banner while the shared link's sequence file isn't loaded. */
+const HELD_BACK =
+  "Load missing.fasta to see the preview — the config's sequence: names it.";
 
 /** Every non-`blob:` URL the page fetched, in order. */
 const recorded: string[] = [];
@@ -145,6 +150,14 @@ describe('playground: load a FASTA file as the sequence', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(preview()).toBeNull();
     expect(byId('preview-stale').hidden).toBe(false);
+    expect(byId('preview-stale').textContent).toBe(HELD_BACK);
+
+    // Run can't help, and the banner keeps saying what would.
+    await userEvent.click(byId('run'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(preview()).toBeNull();
+    expect(byId('preview-stale').hidden).toBe(false);
+    expect(byId('preview-stale').textContent).toBe(HELD_BACK);
     expect(recorded.filter((url) => url.includes('missing.fasta'))).toEqual([]);
   });
 
@@ -353,6 +366,7 @@ describe('playground: load a FASTA file as the sequence', () => {
   );
 
   it('keeps the copy loaded earlier when the file has since broken, and says so', async () => {
+    setEditorText('sequence: ./construct.fasta\nrows: []\n');
     const files = fileList();
     expect(files).toContain('construct.fasta — sequence, 66 residues (84 B)');
     await pick('construct.fasta', `${CONSTRUCT}>second\nMK\n`);
@@ -364,6 +378,19 @@ describe('playground: load a FASTA file as the sequence', () => {
       )
     );
     expect(fileList()).toEqual(files);
+  });
+
+  it('claims no earlier copy is in use when the config no longer names it', async () => {
+    setEditorText(ACCESSION_CONFIG);
+    byId('data-status').textContent = '';
+    await pick('construct.fasta', `${CONSTRUCT}>second\nMK\n`);
+    await vi.waitFor(() =>
+      expect(status()).toBe(
+        "construct.fasta wasn't loaded: ./construct.fasta (parsed as FASTA): " +
+          "contains 2 records; the viewer shows one protein. Keep a single '>' " +
+          'record.'
+      )
+    );
   });
 
   it('sends a .txt by its content: a > first line to the sequence form, CSV to the attach form', async () => {
@@ -380,6 +407,33 @@ describe('playground: load a FASTA file as the sequence', () => {
     expect(sequenceForm()).toBeNull();
     await userEvent.keyboard('{Escape}');
   });
+
+  it.each([
+    ['seq.txt', 'a headerless .txt'],
+    ['seq.csv', 'a data extension'],
+  ])(
+    'loads %s (%s) as the sequence when the config’s sequence: names it',
+    async (name) => {
+      const config = `sequence: ./${name}\nrows: []\n`;
+      setEditorText(config);
+      byId('data-status').textContent = '';
+      await pick(name, 'MKTAYIAKQR\n');
+      await vi.waitFor(() =>
+        expect(status()).toBe(LOADED(name, 'your sequence', 10))
+      );
+      expect(sequenceForm()).toBeNull();
+      expect(byId('data-attach').hidden).toBe(true);
+      expect(editorText()).toBe(config);
+      expect(
+        listItems().filter((li) => li.dataset.code === 'local-file-missing')
+      ).toEqual([]);
+      await vi.waitFor(() =>
+        expect(preview()?.textContent).toContain(
+          'No feature data available for your sequence'
+        )
+      );
+    }
+  );
 
   it('flags the preview out of date and lists the sequence as missing once its file is removed', async () => {
     setEditorText(
@@ -426,6 +480,39 @@ describe('playground: load a FASTA file as the sequence', () => {
     await expectNoA11yViolations(document.querySelector('.local-files')!);
     await userEvent.keyboard('{Escape}');
     expect(document.activeElement).toBe(byId('load-data'));
+  });
+
+  it('wraps a long file name within a phone-width pane, in the form and in the loaded list', async () => {
+    // The page's own stylesheet, on the skeleton, with the pane as wide as
+    // a 390 px phone leaves it.
+    const css = /<style is:global>([\s\S]*?)<\/style>/.exec(playgroundPage)![1];
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.append(style);
+    const pane = document.querySelector<HTMLElement>('.local-files')!;
+    pane.style.width = '390px';
+    const overflowing = () => {
+      const right = pane.getBoundingClientRect().right;
+      return [...pane.querySelectorAll('*')]
+        .filter((el) => el.getBoundingClientRect().right > right + 0.5)
+        .map((el) => `${el.tagName.toLowerCase()}.${el.className}`);
+    };
+    const name =
+      'AF-P05067-F1-model_v4_reference_sequence_isoform_canonical_long_name.fasta';
+    try {
+      setEditorText(ACCESSION_CONFIG);
+      await pick(name, CONSTRUCT);
+      await formOpens();
+      expect(overflowing()).toEqual([]);
+      await use();
+      await vi.waitFor(() =>
+        expect(status()).toBe(LOADED(name, 'my construct v2', 66))
+      );
+      expect(overflowing()).toEqual([]);
+    } finally {
+      style.remove();
+      pane.style.width = '';
+    }
   });
 
   it('renders the shipped examples/sequence-only from its own two files, with no form and no request', async () => {

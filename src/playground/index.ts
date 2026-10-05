@@ -275,10 +275,34 @@ function currentState(): PlaygroundState {
     : { config: text, accession };
 }
 
-/** Toggle the "preview is out of date, press Run" indicator. */
-function setStale(stale: boolean): void {
+/** The banner's own text, from the page markup. */
+const staleText = [...previewStale.childNodes];
+/** The text that replaces it while the preview is held back, if any. */
+let staleReason: string | undefined;
+
+/**
+ * Toggle the "preview is out of date, press Run" indicator. With a `reason`,
+ * the banner says that instead: pressing Run would not help, and the banner
+ * says what would. The text changes only when the reason does, so the live
+ * region is not re-announced on every edit.
+ */
+function setStale(stale: boolean, reason?: string): void {
   previewStale.hidden = !stale;
   previewHost.classList.toggle('stale', stale);
+  if (reason === staleReason) return;
+  staleReason = reason;
+  if (reason === undefined) previewStale.replaceChildren(...staleText);
+  else previewStale.textContent = reason;
+}
+
+/**
+ * Why the preview is held back although the config is valid: its own
+ * `sequence:` names a local file that no loaded sequence file answers.
+ */
+function heldBackReason(result: ValidateResult): string | undefined {
+  if (!result?.local?.sequenceMissing) return undefined;
+  const missing = basename(localSequenceRef(result.parsed) ?? '');
+  return `Load ${missing} to see the preview — the config's sequence: names it.`;
 }
 
 /** Reflect edited/pristine state in the preset picker. */
@@ -350,11 +374,17 @@ async function validateCurrent(): Promise<ValidateResult> {
 
   const files = store.version;
   const lint = await computeSafe(text, accession);
-  const { diagnostics: configDiagnostics, declaresSequence } = lint;
+  const {
+    diagnostics: configDiagnostics,
+    declaresSequence,
+    ownSequence,
+  } = lint;
   if (seq !== updateSeq) return null;
   syncAccessionInput(declaresSequence);
-  // Only the config's own errors hold the preview back. A data problem in a
-  // loaded file renders that track empty, as a hosted viewer would.
+  // Only the config's own errors make it invalid. A data problem in a loaded
+  // file renders that track empty, as a hosted viewer would. The one data
+  // problem that still holds the preview back, a missing sequence file, is
+  // `run()`'s to handle (`sequenceMissing`).
   const valid = !configDiagnostics.some((d) => d.severity === 'error');
 
   // The config the lint parsed, not a second parse of the same text.
@@ -363,7 +393,7 @@ async function validateCurrent(): Promise<ValidateResult> {
   if (
     valid &&
     lint.parsed !== undefined &&
-    (store.list().length > 0 || mayNameLocalFile(text))
+    (store.list().length > 0 || mayNameLocalFile(text, ownSequence))
   ) {
     parsed = lint.parsed;
     try {
@@ -393,7 +423,8 @@ async function refreshDiagnostics(): Promise<void> {
     !lastRendered ||
       result.text !== lastRendered.text ||
       result.accession !== lastRendered.accession ||
-      result.files !== lastRendered.files
+      result.files !== lastRendered.files,
+    heldBackReason(result)
   );
 }
 
@@ -405,7 +436,8 @@ async function refreshDiagnostics(): Promise<void> {
  * local file that isn't loaded (`sequenceMissing`). Unlike a missing track
  * file, which costs one track, that preview could only show the whole-viewer
  * `cannot-resolve-sequence` panel — and its request would send the private
- * file name to the docs host. The `local-file-missing` row says what to load.
+ * file name to the docs host. The `local-file-missing` row and the preview's
+ * banner say what to load.
  */
 async function run(): Promise<ValidateResult> {
   const result = await validateCurrent();
@@ -424,8 +456,9 @@ async function run(): Promise<ValidateResult> {
     };
     setStale(false);
   } else {
-    // Keep the last valid preview mounted but flagged out of date.
-    setStale(true);
+    // Keep the last valid preview mounted but flagged out of date — saying
+    // what to load when a missing sequence file is what holds it back.
+    setStale(true, result.valid ? heldBackReason(result) : undefined);
   }
   return result;
 }
@@ -537,8 +570,7 @@ async function runWithFile(
   } else if (!result.valid) {
     outcome = 'Fix the config problems listed below, then press Run.';
   } else if (result.local?.sequenceMissing) {
-    const missing = basename(localSequenceRef(result.parsed) ?? '');
-    outcome = `Load ${missing} to see the preview — the config's sequence: names it.`;
+    outcome = heldBackReason(result)!;
   } else if (result.local?.failedRefs.has(ref)) {
     outcome = "It couldn't be read — see the problem listed below.";
   } else {
@@ -557,23 +589,30 @@ async function runWithFile(
  * would get, or by a path with its name (`./data/hits.csv`, as in a pasted
  * Starter Kit config) — it answers to that reference and the preview runs
  * with no edit. Otherwise the attach form asks where it goes.
+ *
+ * A FASTA file, or any file the config's own `sequence:` names (a headerless
+ * `seq.txt`, say: the config says what it is), becomes the sequence.
  */
 async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   control.setSnippet('');
   const note =
     skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
-  if (isFastaFile(file.name, file.text)) {
+  // A reference registered to another file is not this one's; see answersFor.
+  const answers = answersFor(file, store);
+  const parsed = await parseEditor();
+  const own = localSequenceRef(parsed);
+  if (
+    isFastaFile(file.name, file.text) ||
+    (own !== undefined && answers(own))
+  ) {
     await loadSequenceFile(file, note);
     return;
   }
-  // A reference registered to another file is not this one's; see answersFor.
-  const answers = answersFor(file, store);
   // A tab-separated export saved as `.csv` is offered as `tsv`, so the new
   // track reads it the way its header is written.
   const byName = inferFormat(file.name);
   const inferred = sniffFormat(file.text, byName);
 
-  const parsed = await parseEditor();
   const matching = findLocalReferences(parsed).filter((r) => answers(r.value));
   const distinct = [...new Set(matching.map((r) => r.value))];
   if (distinct.length === 1) {
@@ -779,7 +818,8 @@ async function loadSequenceFile(file: ReadFile, note: string): Promise<void> {
 
   const read = parseSequenceText(file.text, ref);
   if (!read.ok) {
-    const earlier = store.get(ref)?.kind === 'sequence';
+    // An earlier copy is only "in use" while the config names it.
+    const earlier = named && store.get(ref)?.kind === 'sequence';
     control.setStatus(
       `${note}${file.name} wasn't loaded: ${read.message}` +
         (earlier ? ' The copy loaded earlier is still in use.' : '')
