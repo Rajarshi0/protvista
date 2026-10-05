@@ -199,13 +199,15 @@ export function parseSequenceText(
 /**
  * The plain-text name the viewer shows for a resolved sequence, wherever it
  * would show an accession: the FASTA header, cut to 80 characters with an
- * ellipsis, or {@link DEFAULT_SEQUENCE_LABEL}.
+ * ellipsis, or {@link DEFAULT_SEQUENCE_LABEL}. Characters are code points, so
+ * the cut never splits a surrogate pair (an emoji) in half.
  */
 export function sequenceDisplayLabel(sequence: ResolvedSequence): string {
   const { header } = sequence;
   if (!header) return DEFAULT_SEQUENCE_LABEL;
-  return header.length > MAX_LABEL_LENGTH
-    ? `${header.slice(0, MAX_LABEL_LENGTH - 1).trimEnd()}…`
+  const chars = Array.from(header);
+  return chars.length > MAX_LABEL_LENGTH
+    ? `${chars.slice(0, MAX_LABEL_LENGTH - 1).join('').trimEnd()}…`
     : header;
 }
 
