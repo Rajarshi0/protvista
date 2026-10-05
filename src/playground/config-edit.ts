@@ -171,9 +171,12 @@ function rowYaml(row: NewRow, indent: string): string[] {
 const indentOf = (line: string): number =>
   line.length - line.trimStart().length;
 
-/** Deep equality over parsed config data, ignoring key order. */
+/**
+ * Deep equality over parsed config data, ignoring key order. A YAML `.nan`
+ * equals itself (`Object.is`), and `0` still equals `-0` (`===`).
+ */
 function sameData(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
+  if (Object.is(a, b) || a === b) return true;
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
       Array.isArray(a) &&

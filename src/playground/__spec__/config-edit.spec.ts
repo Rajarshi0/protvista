@@ -27,6 +27,9 @@ const ROW: NewRow = {
 };
 
 const parse = (text: string) => parseConfigText(text);
+/** A row whose height YAML reads as NaN, which is not `===` itself. */
+const NAN_CONFIG =
+  'rows:\n  - id: A\n    data: ./a.csv\n    rendering:\n      height: .nan\n';
 const comments = (text: string) =>
   text.split('\n').filter((line) => line.trimStart().startsWith('#'));
 
@@ -183,6 +186,15 @@ describe('appendTrack', () => {
     });
   });
 
+  it('adds the row to a config holding a .nan elsewhere', async () => {
+    const text = NAN_CONFIG;
+    const result = await appendTrack(text, await parse(text), ROW);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(
+      `${text}  - id: hits\n    label: hits.csv\n    kind: features\n    data: ./hits.csv\n`
+    );
+  });
+
   it('suffixes a duplicate id', async () => {
     const parsed = { rows: [{ id: 'hits' }, { id: 'hits-2' }] };
     expect(rowIdFor('hits.csv', parsed)).toBe('hits-3');
@@ -320,6 +332,18 @@ describe('attachToTrack', () => {
       error: expect.stringContaining('by hand') as unknown,
       snippet: 'data: ./hits.csv',
     });
+  });
+
+  it('edits a config holding a .nan elsewhere', async () => {
+    const text = NAN_CONFIG;
+    const result = await attachToTrack(
+      text,
+      await parse(text),
+      { path: 'A', rowIndex: 0 },
+      './b.csv'
+    );
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(text.replace('./a.csv', './b.csv'));
   });
 
   it('reports a track that is not in the config', async () => {
