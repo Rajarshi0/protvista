@@ -185,6 +185,20 @@ export function isLocalReference(value: unknown, format?: unknown): boolean {
   );
 }
 
+/** A data-file extension (from the format table) or a `format:` anywhere. */
+const LOCAL_FILE_HINT = new RegExp(
+  `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b|\\bformat:`,
+  'i'
+);
+
+/**
+ * Whether the text could name a local data file. A cheap test, so a config
+ * that names none is not pre-flighted on every keystroke when nothing is
+ * loaded.
+ */
+export const mayNameLocalFile = (text: string): boolean =>
+  LOCAL_FILE_HINT.test(text);
+
 // ── The store ─────────────────────────────────────────────────
 
 export interface LocalFileStore {
@@ -252,6 +266,30 @@ export function createLocalFileStore(
       for (const ref of [...files.keys()]) drop(ref);
       version += 1;
     },
+  };
+}
+
+/**
+ * Which config references a newly read file answers to: one with its name,
+ * or its sanitised name, as the last path segment (`./data/hits.csv`, as in a
+ * pasted Starter Kit config).
+ *
+ * A reference already registered to a *different* file (`a(b.csv` under
+ * `./a-b.csv`, now loading `a b.csv`) is that file's: the new one gets a
+ * reference of its own. One registered to this file is its own, whatever its
+ * name says (`a b.csv` under `./a-b-2.csv`), so a reload replaces it in place.
+ */
+export function answersFor(
+  file: { name: string },
+  store: Pick<LocalFileStore, 'get'>
+): (value: string | undefined) => value is string {
+  const names = new Set([file.name, sanitizeName(file.name)]);
+  return (value: string | undefined): value is string => {
+    if (value === undefined) return false;
+    const owner = store.get(value)?.name;
+    return owner === undefined
+      ? names.has(basename(value))
+      : owner === file.name;
   };
 }
 
