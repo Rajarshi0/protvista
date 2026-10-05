@@ -19,6 +19,7 @@
 #   - The line has no tooltip of its own, so the most conserved residues
 #     show their scores in theirs (the `dataTooltip` below; a `kind:
 #     features` track's own tooltip leaves extra columns such as `score` out).
+#     The binding sites' tooltips name the ligand (Fe cation) the same way.
 #   - The numbers belong to P24297. Drawn on another protein they would mean
 #     nothing, even where they are in range.
 # UniProt's four iron-binding cysteines (6, 9, 39 and 42) have the four
@@ -56,4 +57,9 @@ rows:
     kind: features
     filter: BINDING
     data: features
-    description: Binding sites from UniProt for {accession}
+    description: Binding sites from UniProt for {accession}, with their ligands
+    dataTooltip:
+      kind: fields
+      fields:
+        - { path: start, label: Residue }
+        - { path: ligand.name, label: Ligand }
