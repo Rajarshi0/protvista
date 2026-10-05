@@ -448,14 +448,37 @@ const headerLine = (text: string): string =>
 const headerCells = (header: string, delimiter: Delimiter): string[] =>
   (parseDelimited(header, delimiter)[0] ?? []).map((cell) => cell.trim());
 
+/** Record shapes, most specific first, as a header is matched against them. */
+const SHAPE_ORDER: readonly ShapeName[] = ['variation', 'point', 'feature'];
+
+/** The first shape whose required fields are all among `fields`. */
+const shapeWith = (fields: readonly string[]): ShapeName | undefined =>
+  SHAPE_ORDER.find((shape) =>
+    SHAPES[shape].requiredFields.every((field) => fields.includes(field))
+  );
+
 /**
- * The delimiter a header line actually uses: `declared`, unless that reads
- * it as a single cell and another candidate splits it — the mismatch #276's
- * hint diagnoses (a tab-separated export saved as `.csv`), found by the same
- * `suspectDelimiter`.
+ * The delimiter a header line actually uses: `declared`, unless that reading
+ * misses a required column of every shape — the case #276's hint diagnoses
+ * (a tab-separated export saved as `.csv`) — and the same `suspectDelimiter`
+ * finds one that gives some shape all its columns. Failing that, a header
+ * `declared` reads as one cell takes the candidate that splits it.
  */
 function headerDelimiter(header: string, declared: Delimiter): Delimiter {
-  if (headerCells(header, declared).length !== 1) return declared;
+  if (shapeWith(headerCells(header, declared)) !== undefined) return declared;
+  for (const shape of SHAPE_ORDER) {
+    const suspected = suspectDelimiter(
+      header,
+      declared,
+      SHAPES[shape].requiredFields
+    );
+    if (
+      suspected !== undefined &&
+      shapeWith(headerCells(header, suspected)) !== undefined
+    ) {
+      return suspected;
+    }
+  }
   return (
     suspectDelimiter(header, declared, SHAPES.feature.requiredFields) ??
     declared
@@ -484,10 +507,10 @@ export function sniffFormat(
  * Which records a file seems to hold, from its header row (CSV/TSV) or its
  * first record's keys (JSON): the first shape whose required fields are all
  * present, checked most specific first. A header the format's delimiter
- * reads as one cell is split by the delimiter it seems to use instead (see
- * {@link sniffFormat}), so a tab-separated `depth.csv` still reads as a line
- * graph. A format that declares the records it emits (`emitsShape`, as BED
- * does) gets that shape. Defaults to `feature`.
+ * reads with no shape's columns is split by the delimiter it seems to use
+ * instead (see {@link sniffFormat}), so a tab-separated `depth.csv` still
+ * reads as a line graph. A format that declares the records it emits
+ * (`emitsShape`, as BED does) gets that shape. Defaults to `feature`.
  */
 export function guessShape(text: string, format: DataFormat): ShapeName {
   const emits = DATA_FORMATS[format].emitsShape;
@@ -506,12 +529,7 @@ export function guessShape(text: string, format: DataFormat): ShapeName {
       // Malformed JSON: the pre-flight says so; any shape will do here.
     }
   }
-  const order: ShapeName[] = ['variation', 'point', 'feature'];
-  return (
-    order.find((shape) =>
-      SHAPES[shape].requiredFields.every((field) => fields.includes(field))
-    ) ?? 'feature'
-  );
+  return shapeWith(fields) ?? 'feature';
 }
 
 /**
