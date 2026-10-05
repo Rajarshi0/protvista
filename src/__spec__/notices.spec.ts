@@ -1002,6 +1002,23 @@ describe('overlapping setConfig() calls', () => {
     expect(el.config!.rows.map((r) => r.id)).toEqual(['ok']);
     expect(topNote(el)).toBeNull();
   });
+
+  it('drops an API note checked against the superseded config', async () => {
+    quiet();
+    const { el, events } = mountEl({ sequence: RESIDUES, rows: [okTrack()] });
+    await ready(el, events, '');
+    const first = el.setConfig({ sequence: RESIDUES, rows: [okTrack()] });
+    const second = el.setConfig({ sequence: RESIDUES, rows: [okTrack()] });
+    // Queued while loading, replayed against the first config and rejected.
+    el.setTrackData('nope', 'x', []);
+    await Promise.all([first, second]);
+    await ready(el, events, '');
+    await el.updateComplete;
+    expect(events.some((d) => d.message.includes("'nope/x'"))).toBe(true);
+    el.setAttribute('show-warnings', '');
+    await el.updateComplete;
+    expect(authorTexts(el).filter((t) => t.includes('nope/x'))).toEqual([]);
+  });
 });
 
 describe('the announcement', () => {
