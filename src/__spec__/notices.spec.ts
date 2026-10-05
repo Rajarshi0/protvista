@@ -1326,6 +1326,63 @@ describe('author mode lists every warning, as the event and playground say it', 
     expect(popoverOf(topNote(el)!).textContent).not.toContain('×2');
   });
 
+  it('lists a shared skip once after a retry of a track that is not its first', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      {
+        sequence: RESIDUES,
+        sources: {
+          here: 'https://example.org/here',
+          there: 'https://example.org/{dataset}/there',
+        },
+        rows: [
+          {
+            id: 'one',
+            label: 'Only there',
+            kind: 'features',
+            data: { source: 'there' },
+          },
+          {
+            id: 'two',
+            label: 'Two sources',
+            kind: 'features',
+            data: { source: ['here', 'there'] },
+          },
+        ],
+      },
+      { attrs: ['show-warnings'] }
+    );
+    // `here` answers 503, so the second track can be retried on its own.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 503,
+            json: async () => ({}),
+            text: async () => '',
+          }) as unknown as Response
+      )
+    );
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el.updateComplete;
+    const before = topNote(el)!.textContent!.trim();
+    await el._loadData(new Set(['two-two']));
+    await el.updateComplete;
+    // The retry reports the skip naming the second track, not the first.
+    const skips = events.filter((d) => d.message.startsWith('Not fetching'));
+    expect(skips.map((d) => d.message.includes('track two/two'))).toEqual([
+      false,
+      true,
+    ]);
+    expect(authorTexts(el).filter((t) => t.startsWith('Not fetching'))).toEqual(
+      [skips[0].message]
+    );
+    expect(topNote(el)!.textContent!.trim()).toBe(before);
+  });
+
   it('is announced once, as a count', async () => {
     quiet();
     const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });

@@ -204,8 +204,12 @@ type LoadResult = {
    * template, in config order — the first track the message names and every
    * later one. With `trackUrls` the caller can tell a track that fetched
    * nothing (absent there) from one that lost only some of its URLs.
+   *
+   * `template` is the skipped template itself. The message names the track
+   * that met it first, which a targeted retry can make a later one, so the
+   * template is what says two reports are the same skip.
    */
-  skipWarnings: { message: string; tracks: string[] }[];
+  skipWarnings: { message: string; template: string; tracks: string[] }[];
   /**
    * Each track whose authored `dataTooltip` references a field that none of
    * the records it rendered against carries — `{% $score %}` on a track with
@@ -575,8 +579,15 @@ export async function loadProtvistaData(
   const substituted = new Map<string, string>();
   // Template → its skip warning, which also collects every track that
   // referenced it. Membership is the "was skipped" test.
-  const skipped = new Map<string, { message: string; tracks: string[] }>();
-  const skipWarnings: { message: string; tracks: string[] }[] = [];
+  const skipped = new Map<
+    string,
+    { message: string; template: string; tracks: string[] }
+  >();
+  const skipWarnings: {
+    message: string;
+    template: string;
+    tracks: string[];
+  }[] = [];
   const substitute = (
     template: string,
     key: string,
@@ -603,6 +614,7 @@ export async function loadProtvistaData(
             `Define them in top-level 'variables:' or as data-* attributes.`
           : `invalid value for ${braced(result.invalid)} ` +
             `('.', '..' and malformed Unicode are refused).`),
+      template,
       tracks: [key],
     };
     skipped.set(template, warning);

@@ -253,6 +253,8 @@ interface Note {
    * so a name can be left out while the layout hides its track.
    */
   factKeys?: { names?: string[]; partial?: string[] };
+  /** What identifies it when its text does not (see `_report`'s `noteKey`). */
+  key?: string;
   lifecycle: 'config' | 'load' | 'api';
   /** How many identical `api` notes this one stands for. */
   repeat: number;
@@ -1685,7 +1687,7 @@ class ProtvistaUniprot extends LitElement {
     // `variables:` entry or a `data-*` attribute) is not any one row's. The
     // visitor notice names the tracks: one that fetched nothing has no data
     // (and no row), one that fetched its other URLs is incomplete.
-    for (const { message, tracks } of skipWarnings) {
+    for (const { message, template, tracks } of skipWarnings) {
       const names: string[] = [];
       const partial: string[] = [];
       const keys = { names: [] as string[], partial: [] as string[] };
@@ -1703,7 +1705,12 @@ class ProtvistaUniprot extends LitElement {
           message,
           consoleLevel: 'warn',
         },
-        { noticeFacts: { names, partial }, noticeKeys: keys }
+        {
+          noticeFacts: { names, partial },
+          noticeKeys: keys,
+          // A retry of a later track re-reports the skip naming that track.
+          noteKey: template,
+        }
       );
     }
 
@@ -3150,6 +3157,11 @@ class ProtvistaUniprot extends LitElement {
       noticeFacts?: NoticeFacts;
       /** The track or row key behind each of `noticeFacts`' names. */
       noticeKeys?: { names?: string[]; partial?: string[] };
+      /**
+       * What makes two reports the same note, when their text can differ: a
+       * skipped template's message names whichever track met it first.
+       */
+      noteKey?: string;
     } = {}
   ): FailureChannels {
     const channels = this._route(report);
@@ -3227,7 +3239,9 @@ class ProtvistaUniprot extends LitElement {
           n.anchor === anchor &&
           n.phase === report.phase &&
           n.code === report.code &&
-          n.texts.join('\n') === texts.join('\n')
+          (opts.noteKey !== undefined
+            ? n.key === opts.noteKey
+            : n.texts.join('\n') === texts.join('\n'))
       );
       if (same) {
         // Three identical `setTrackData()` misuses are three calls. A load or
@@ -3252,6 +3266,7 @@ class ProtvistaUniprot extends LitElement {
             ...(report.source !== undefined ? { source: report.source } : {}),
             ...(opts.noticeFacts ? { facts: opts.noticeFacts } : {}),
             ...(opts.noticeKeys ? { factKeys: opts.noticeKeys } : {}),
+            ...(opts.noteKey !== undefined ? { key: opts.noteKey } : {}),
             lifecycle,
             repeat: 1,
           },
