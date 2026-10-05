@@ -4,8 +4,9 @@
 
 ### Added: playground examples for your own sequence, small proteins and conservation
 
-The playground's picker has four new presets, each backed by a CI-validated
-example. **Your own sequence** (`own-sequence`, from
+The playground's picker has four new presets. Three load a new CI-validated
+example under `examples/`, and `small-protein` loads the shipped default
+config. **Your own sequence** (`own-sequence`, from
 [`examples/sequence-inline/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-inline))
 shows a 240-residue construct from inline FASTA with a features track and makes
 no request at all; paste your own FASTA over it, or load a `.fasta` file.
