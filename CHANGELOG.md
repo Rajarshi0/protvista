@@ -32,6 +32,20 @@ Off by default; with it off, errors look exactly as before. Both attributes
 take effect on a live element with no reload, and the JSX types in
 `protvista-uniprot/react` declare both.
 
+### Changed: a tooltip whose fields are all missing shows the default tooltip
+
+A record that has none of the fields an authored `dataTooltip` names, and for
+which the template renders no letter or digit (only the `·` of
+`{% $gene %} · {% link href=$url /%}`, or nothing), now shows the track's
+default tooltip instead: its kind's built-in one, or the automatic tooltip,
+as with no `dataTooltip`. Before, such a record showed a tooltip with only
+punctuation in it, or, in the `fields` form, none at all. A record with any
+of the fields, and a template with its own wording for the case (an
+`{% else %}` branch, fixed text), are unchanged. The
+[data-tooltip guide](https://ebi-webcomponents.github.io/protvista/data-tooltip#guard-a-field-some-records-lack)
+now shows the `{% if $field %}` pattern for a field only some records have,
+and the guard that also leaves out blank cells.
+
 ### Added: playground examples for your own sequence, small proteins and conservation
 
 The playground's picker has four new presets. Three load a new CI-validated

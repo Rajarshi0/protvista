@@ -82,7 +82,7 @@ Any column of your own CSV or TSV file, or any key of your JSON records, is in s
 
 ## When a field is missing
 
-A field a record does not have renders as nothing: in the `fields` form its row drops out, and in a template `{% $field %}` renders empty. That is expected when only some records carry the field. When **no** record on the track carries it, the name is almost certainly wrong, so the viewer says so — once per track each time the data loads, naming every such field:
+A field a record does not have renders as nothing: in the `fields` form its row drops out, and in a template `{% $field %}` renders empty. That is expected when only some records carry the field (to drop the text around it too, see [Guard a field some records lack](#guard-a-field-some-records-lack)), and a record with none of the fields shows the default tooltip (see [A record with none of the fields](#a-record-with-none-of-the-fields)). When **no** record on the track carries it, the name is almost certainly wrong, so the viewer says so — once per track each time the data loads, naming every such field:
 
 ```
 [protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
@@ -101,7 +101,46 @@ The names to check against are the record's own: the fields a provider adapter o
 - A variation file's records carry `start` and `end` (not `position`), plus `variant` and `consequenceType`, and `wildType`, `description` and `consequence` when they have a value; its other columns are dropped.
 - For a dotted path such as `variant.wildType`, a record where `variant` is `null` counts as having it, so it does not warn. In the `fields` form that row just drops out. A template (`{% $variant.wildType %}`) currently fails the whole track on such a record, so guard it with `{% if $variant %}` or use the `fields` form.
 - `$ctx.accession`, `$ctx.trackId` and `$ctx.kind`, and any key you supply under the template's `variables:`, are checked against those values rather than the records.
-- Only a `dataTooltip` you write is checked. A track using its kind's built-in default, or the automatic tooltip, never warns, and neither do line-graph, coloured-sequence and heatmap tracks, which have no per-feature tooltip for `dataTooltip` to template (see [Line graphs](#line-graphs)).
+- Only a `dataTooltip` you write is checked, and only one you write falls back to the default (below). A track using its kind's built-in default, or the automatic tooltip, never warns, and neither do line-graph, coloured-sequence and heatmap tracks, which have no per-feature tooltip for `dataTooltip` to template (see [Line graphs](#line-graphs)).
+
+### A record with none of the fields
+
+A record shows the track's default tooltip instead of yours when both of these hold:
+
+- it has no value for any field the template names: each one is missing, `null`, or a blank cell (`''`);
+- what the template renders for it has no letter or digit: only punctuation, such as the `·` that `{% $gene %} · {% link href=$url /%}` leaves, or nothing at all.
+
+The default is what the track would show with no `dataTooltip`: its kind's built-in tooltip (Type, Description, Start and End for `features`), or the automatic tooltip for a track with no `kind`. This is decided record by record, so on one track a record with a `url` shows your template and a record with neither field shows the default. It works the same in the `fields` form, where such a record would otherwise have no tooltip at all.
+
+Your template stays in charge whenever either condition fails:
+
+- A record with a value for at least one of the fields gets your template, whatever is left of it.
+- A template that has its own words for the case is kept: `{% if $gene %}{% $gene %}{% else /%}No gene recorded{% /if %}` shows "No gene recorded", and `Lab hit {% $gene %}` shows "Lab hit".
+- `$ctx.…` and keys you supply under `variables:` are not fields of the record, so a template that names only those never falls back.
+
+The fallback is silent. A field that no record on the track carries is still reported, as above.
+
+### Guard a field some records lack
+
+To drop the text around a field that only some records have, wrap both in Markdoc's built-in `{% if %}`:
+
+```yaml
+dataTooltip:
+  kind: markdown
+  template: |
+    {% if $gene %}{% $gene %} · {% /if %}{% link href=$url /%}
+```
+
+A record with both fields shows `HBA1 · https://…`, and one with only `url` shows the link alone. One with neither renders nothing, so it shows the default tooltip.
+
+Markdoc's `if` is false only for a missing field, `null` and `false`. A blank CSV or TSV cell is an empty string, which counts as true, so the template above still shows `·` before the link for a row whose `gene` cell is empty. To leave out blank cells too, test for them:
+
+```yaml
+dataTooltip:
+  kind: markdown
+  template: |
+    {% if and($gene, not(equals($gene, ""))) %}{% $gene %} · {% /if %}{% link href=$url /%}
+```
 
 ## When to leave `dataTooltip` off
 

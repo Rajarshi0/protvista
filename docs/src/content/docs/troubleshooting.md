@@ -311,6 +311,15 @@ not missing; see
 [When a field is missing](/protvista/data-tooltip#when-a-field-is-missing) for
 the few columns where it is.
 
+A record that has none of the fields a template names, and for which the
+template renders only punctuation (the `·` of `{% $gene %} · {% $url %}`) or
+nothing, shows the track's default tooltip instead, with no warning of its
+own: see
+[A record with none of the fields](/protvista/data-tooltip#a-record-with-none-of-the-fields).
+To drop the text around a field only some records have, wrap it in
+`{% if %}`: see
+[Guard a field some records lack](/protvista/data-tooltip#guard-a-field-some-records-lack).
+
 ### Common coordinate mistakes
 
 ProtVista expects 1-based, inclusive positions on the entry's canonical

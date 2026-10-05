@@ -157,6 +157,8 @@ The popover itself (`popover.ts`) is built on `@floating-ui/dom`: click-triggere
 
 When a track has no `dataTooltip` and no per-kind default, `resolve.ts` synthesizes a compact Markdoc tooltip from common adapted payload fields (`type`, `description`, position, variant details, significance, score, xrefs, evidences, and remaining scalar fields). Configs that don't author a tooltip therefore still get a useful safety-net tooltip out of the box.
 
+An authored `dataTooltip` gives way to that same default, per record, when the record has a value for none of the fields the template names and the template renders no letter or digit for it (`createTooltipFallback`). The loader wires it under the same condition as the unknown-field tracker, so line-graph, coloured-sequence and heatmap tracks never fall back.
+
 ### `src/schema/adapters/`
 
 Per-API data shapers, plus the decode → validate → build pipeline behind them. Each adapter takes a raw response (or several, for multi-URL tracks) and returns the shape a Nightingale component expects. Adapters are named `<source>-<format>` and are all provider transforms: `uniprot-features-json`, `alphafold-prediction-json`, `interpro-entries-json`, and the rest. A bring-your-own-data file needs no adapter — `pipeline.ts` composes a decoder (chosen by the source's format) with a record builder (chosen by the kind's shape), so the ten `<shape>-<format>` adapters that used to be the cross-product of the two are computed rather than named. Every adapter has the signature `(...rawResponses: unknown[]) => unknown | Promise<unknown>` (`AdapterFunction`): one argument per entry in the track's `source:` list, in order.
