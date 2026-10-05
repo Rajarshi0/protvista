@@ -5181,10 +5181,11 @@ class ProtvistaUniprot extends LitElement {
         </div>
         ${
           // Author mode: the console's text behind the summary, when it adds
-          // anything. Off, the panel is exactly what it always was.
+          // anything. The summary may still carry the console's tag, which
+          // the detail never does. Off, the panel is exactly what it was.
           this._authorMode &&
           err.detail?.length &&
-          err.detail.join('\n') !== err.summary
+          err.detail.join('\n') !== stripTag(err.summary)
             ? html`<ul class="${CSS_PREFIX}-error-panel__detail">
                 ${err.detail.map((line) => html`<li>${line}</li>`)}
               </ul>`

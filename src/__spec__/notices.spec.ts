@@ -1463,6 +1463,32 @@ describe('author mode expands errors', () => {
     );
   });
 
+  it.each([
+    ['a missing track', ['nope', 'x', []]],
+    ['null data', ['G', 't', null]],
+  ] as const)(
+    'does not repeat a strict setTrackData() panel’s summary as its detail (%s)',
+    async (_, args) => {
+      quiet();
+      const { el, events } = mountEl(
+        {
+          sequence: RESIDUES,
+          strict: true,
+          rows: [{ id: 'G', label: 'G', tracks: [okTrack('t', 'T')] }],
+        },
+        { attrs: ['show-warnings'] }
+      );
+      await ready(el, events, '');
+      el.setTrackData(...(args as unknown as [string, string, unknown]));
+      await vi.waitFor(() => {
+        if (!el.querySelector(PANEL)) throw new Error('no panel');
+      });
+      await el.updateComplete;
+      expect(el.querySelector(PANEL)!.textContent).toContain('setTrackData');
+      expect(el.querySelector(`.${CSS_PREFIX}-error-panel__detail`)).toBeNull();
+    }
+  );
+
   it('keeps the detail on a config-failure panel through the rich upgrade', async () => {
     quiet();
     const { el } = mountEl(
