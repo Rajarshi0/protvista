@@ -398,8 +398,9 @@ records the method, the releases and the checksums. When you read them:
   here) get no point, and the line covers only the scored stretch.
 - **The y-axis is fitted to the data**, not to 0–1.
 - **The line has no hover.** Graph points have no tooltip, so the example puts
-  each top residue's score in its `SITE` feature's `score` column, which the
-  feature tooltip shows.
+  each top residue's score in its `SITE` feature's `score` column and shows it
+  with a [`dataTooltip`](/protvista/data-tooltip): a `kind: features` track's
+  own tooltip lists only type, description, start and end.
 
 ## Your own variants
 

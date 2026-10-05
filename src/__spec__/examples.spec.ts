@@ -373,6 +373,39 @@ it('sequence-inline holds the same protein and records as sequence-only', async 
 });
 
 /**
+ * The conservation line has no tooltip, so the example's most conserved
+ * residues carry the scores: each site's tooltip, as loaded, must show its
+ * own score. A `kind: features` track's default tooltip leaves `score` out.
+ */
+it('conservation shows each most conserved residue’s score in its tooltip', async () => {
+  const dir = join(EXAMPLES_ROOT, 'conservation');
+  const { extendsFetcher, sequenceFetcher, fetchOne } =
+    makeExampleFetchers(dir);
+  const config = await loadConfig(
+    await readFile(join(dir, 'config.yaml'), 'utf8'),
+    { extendsFetcher, sequenceFetcher }
+  );
+  const result = await loadProtvistaData(
+    'P24297',
+    config,
+    fetchOne,
+    resolveAdapter
+  );
+  const sites = result.data['conserved_sites-conserved_sites'] as {
+    start: number;
+    score: number;
+    tooltipContent: string;
+  }[];
+  expect(sites).toHaveLength(6);
+  for (const site of sites) {
+    expect(site.tooltipContent, `residue ${site.start}`).toContain(
+      `<h5>Conservation score</h5><p>${site.score}</p>`
+    );
+  }
+  expect(sites[0]).toMatchObject({ start: 6, score: 0.877 });
+});
+
+/**
  * `extend-default/config.yaml` declares `extends: /src/default-config.yaml`
  * — an origin-absolute path chosen specifically because
  * `<protvista-uniprot>` never passes a custom `extendsFetcher` to

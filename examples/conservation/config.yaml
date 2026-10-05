@@ -16,8 +16,9 @@
 #     invariant L.
 #   - Residues 1–3 and 50–54 lie outside the Pfam domain and have no score.
 #   - The line graph's y-axis is fitted to the data, not to 0–1.
-#   - The line has no tooltip of its own. The most conserved residues carry
-#     their scores in theirs.
+#   - The line has no tooltip of its own, so the most conserved residues
+#     show their scores in theirs (the `dataTooltip` below; a `kind:
+#     features` track's own tooltip leaves extra columns such as `score` out).
 #   - The numbers belong to P24297. Drawn on another protein they would mean
 #     nothing, even where they are in range.
 # UniProt's four iron-binding cysteines (6, 9, 39 and 42) have the four
@@ -44,6 +45,12 @@ rows:
     kind: features
     description: Residues at or above the 90th percentile of conservation, with their scores
     data: ./conserved-sites.csv
+    dataTooltip:
+      kind: fields
+      fields:
+        - { path: start, label: Residue }
+        - { path: score, label: Conservation score }
+        - { path: description, label: Why it is shown }
   - id: binding_sites
     label: UniProt binding sites
     kind: features
