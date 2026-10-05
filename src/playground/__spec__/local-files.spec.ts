@@ -400,7 +400,6 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     // no shape gets all its columns.
     expect(sniffFormat('name\tscore\nA\t1\n', 'csv')).toBe('tsv');
     // A header with some shape's columns keeps its delimiter.
-
     expect(sniffFormat('position,value,a\tb\n1,0.5,x\n', 'csv')).toBe('csv');
   });
 
