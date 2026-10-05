@@ -125,9 +125,34 @@ event with `phase: 'config'`, `severity: 'error'` and each problem in
 
 The [playground](/protvista/playground/) checks a `sequence:` config as you
 type, inline sequence included, and disables its accession box while the
-config sets `sequence:`, itself or through an `extends:` base. It can't read
-a FASTA file from your disk, so write the sequence inline there
-(`sequence: |`).
+config sets `sequence:`, itself or through an `extends:` base.
+
+## Try your FASTA in the playground
+
+Press **Load data file…** in the [playground](/protvista/playground/) (or drop
+the file onto the config editor) and pick a one-record FASTA file: `.fasta`,
+`.fa`, `.faa` or `.fas`, or any text file whose first line starts with `>`. It
+is read in your browser and never uploaded. Only its *name* goes into the
+config — `sequence: ./my-protein.fasta` — so neither the residues nor the
+header reach a link you share.
+
+If the config already names the file, as
+[`examples/sequence-only/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-only)
+does, it just loads. Otherwise you choose where it goes:
+
+- **This config** sets its `sequence:` (replacing an inline one) and removes
+  `accession:`, keeping your tracks. Tracks that need UniProt are then listed
+  as `needs-accession` errors.
+- **A new sequence-only config** replaces the editor text with one that names
+  only your file. Press Ctrl/Cmd+Z in the editor to get the old config back.
+
+A file the viewer would reject — two records, a character outside A–Z, no
+residues, over 2 MB — is not loaded, and the playground shows the
+`invalid-sequence` message a hosted viewer would. Someone who opens a shared
+link is asked to load the file themselves: until they do, the playground lists
+`local-file-missing` and shows no preview. If your header is a UniProt one
+(`>sp|P01542|…`), the protein is in UniProt: `accession: P01542` gives you its
+UniProt tracks as well.
 
 ## Your coordinates are still checked
 

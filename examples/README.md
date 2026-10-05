@@ -90,7 +90,8 @@ Point the `config-src` attribute at any example's config file:
 ```
 
 or paste the config into the [playground](https://ebi-webcomponents.github.io/protvista/playground/)
-to see it render live (run `pnpm docs:dev` and open `/protvista/playground` locally).
+and load its files with **Load data file…** to see it render live (run
+`pnpm docs:dev` and open `/protvista/playground` locally).
 
 **Path-resolution caveat.** `<protvista-uniprot>` fetches `config-src`
 itself relative to the hosting page, but everything *inside* the
