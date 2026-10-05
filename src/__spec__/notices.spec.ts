@@ -1392,17 +1392,60 @@ describe('author mode lists every warning, as the event and playground say it', 
     expect(topNote(el)!.textContent!.trim()).toBe(before);
   });
 
-  it('is announced once, as a count', async () => {
-    quiet();
-    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
-    await ready(el, events);
-    await vi.waitFor(() =>
+  describe('the announcement', () => {
+    const AUTHOR_SAYS = (n: number) =>
+      `${n} authoring notes. Use the warning buttons to read them.`;
+    const regionText = (el: El) =>
+      el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim();
+    /** Every entry on every author control: what the count must say. */
+    const authorEntries = (el: El) =>
+      [...el.querySelectorAll(`${AUTHOR}, ${ERROR_NOTE}`)].reduce(
+        (n, b) => n + popoverOf(b).querySelectorAll('li').length,
+        0
+      );
+
+    it('is made once, as the exact count, and not again on a click', async () => {
+      quiet();
+      const { el, events } = mountEl(everything(), {
+        attrs: ['show-warnings'],
+      });
+      const announce = vi.spyOn(
+        el as unknown as { _announce(m: string): void },
+        '_announce'
+      );
+      await ready(el, events);
+      await vi.waitFor(() => expect(regionText(el)).toMatch(/authoring note/));
+      const n = authorEntries(el);
+      // Track rows and the top bar both: the fixture has entries on each.
       expect(
-        el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim()
-      ).toMatch(
-        /^\d+ authoring notes\. Use the warning buttons to read them\.$/
-      )
-    );
+        el.querySelector(`.${CSS_PREFIX}-track-label ${AUTHOR}`)
+      ).not.toBeNull();
+      expect(el.querySelector(`${TOP_BAR} ${AUTHOR}`)).not.toBeNull();
+      expect(regionText(el)).toBe(AUTHOR_SAYS(n));
+      const said = () =>
+        announce.mock.calls.filter(([m]) => /authoring/.test(m));
+      expect(said()).toHaveLength(1);
+
+      // A click re-renders; it has nothing new to say.
+      el.querySelector<HTMLButtonElement>(AUTHOR)!.click();
+      await el.updateComplete;
+      await sleep(400);
+      expect(said()).toHaveLength(1);
+    });
+
+    it('counts the entries on track rows when the top bar has none', async () => {
+      quiet();
+      const { el, events } = mountEl(
+        { sequence: RESIDUES, rows: [labHits()] },
+        { attrs: ['show-warnings'] }
+      );
+      await ready(el, events);
+      await el.updateComplete;
+      expect(el.querySelector(`${TOP_BAR} ${AUTHOR}`)).toBeNull();
+      const n = authorEntries(el);
+      expect(n).toBeGreaterThan(0);
+      await vi.waitFor(() => expect(regionText(el)).toBe(AUTHOR_SAYS(n)));
+    });
   });
 });
 
