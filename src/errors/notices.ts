@@ -135,6 +135,9 @@ export const NOTE_UI = {
     `Note about ${where ?? 'this view'}: ${text}`,
   announceMany: (n: number) =>
     `${n} notes about what's shown. Use the information buttons beside the track names and the Customize button to read them.`,
+  /** The no-results view: one control, in its message, and nothing else. */
+  announceManyHere: (n: number) =>
+    `${n} notes about what's shown. Use the information button after this message to read them.`,
   announceAuthor: (n: number) =>
     `${plural(n, 'authoring note')}. Use the warning buttons to read ${n === 1 ? 'it' : 'them'}.`,
 } as const;

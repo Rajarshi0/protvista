@@ -904,7 +904,16 @@ describe('where a note goes', () => {
       "“Partner data” isn't shown: its data couldn't be loaded.",
       `Pale: ${COLOUR_TEXT}`,
     ]);
-    expect(el.querySelector(`.${CSS_PREFIX}-live-region`)).not.toBeNull();
+    // The region carries the announcement, and points only at what this
+    // view has: no track names, no Customize.
+    expect(el.querySelector(`.${CSS_PREFIX}-customize-toggle`)).toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim()
+      ).toBe(
+        "2 notes about what's shown. Use the information button after this message to read them."
+      )
+    );
   });
 });
 

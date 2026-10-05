@@ -527,6 +527,11 @@ class ProtvistaUniprot extends LitElement {
   private _renderedNoteLines: { where?: string; text: string }[] = [];
   /** How many author entries the last render drew, for the announcement. */
   private _renderedAuthorEntries = 0;
+  /**
+   * Whether the last render was the no-results view, whose one note control
+   * sits in its message: no track names and no Customize to point at.
+   */
+  private _renderedNoResults = false;
   /** The note set last announced, so a re-render never repeats it. */
   private _announcedNotes = '';
   /** The pending notes announcement (see `LIVE_REGION_SETTLE_MS`). */
@@ -4314,6 +4319,7 @@ class ProtvistaUniprot extends LitElement {
     const forWhat = label ? ` for ${label}` : '';
     // No row draws, so every note goes on the one control here — with a live
     // region to announce it, since this view has none of its own.
+    this._renderedNoResults = true;
     const notes = this._renderViewerNotes();
     return html`${
         notes
@@ -4975,6 +4981,7 @@ class ProtvistaUniprot extends LitElement {
     this._placedNotes = new Set();
     this._renderedNoteLines = [];
     this._renderedAuthorEntries = 0;
+    this._renderedNoResults = false;
     // Suspend still wins over everything (unchanged semantics).
     if (this.suspend) {
       return html``;
@@ -5753,7 +5760,9 @@ class ProtvistaUniprot extends LitElement {
       ? NOTE_UI.announceAuthor(authored)
       : lines.length === 1
         ? NOTE_UI.announceOne(lines[0].where, lines[0].text)
-        : NOTE_UI.announceMany(lines.length);
+        : this._renderedNoResults
+          ? NOTE_UI.announceManyHere(lines.length)
+          : NOTE_UI.announceMany(lines.length);
     clearTimeout(this._noteAnnounceTimer);
     this._noteAnnounceTimer = setTimeout(
       () => this._announce(text),
