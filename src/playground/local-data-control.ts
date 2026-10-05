@@ -1,7 +1,8 @@
 /**
  * DOM wiring for the playground's "Load data file…" control: the file
- * picker, drag-and-drop onto the editor pane, the attach form, the status
- * line and the list of loaded files.
+ * picker, drag-and-drop onto the editor pane, the attach form (and, for a
+ * FASTA file, the "use as sequence" form), the status line and the list of
+ * loaded files.
  *
  * It only reads files and asks questions. What a file means for the config
  * — which reference it answers to, which track it lands on, the edit — is
@@ -53,12 +54,31 @@ export interface AttachChoice {
   target: string;
 }
 
+/** Where a loaded FASTA goes: into this config, or a new sequence-only one. */
+export type SequenceTarget = 'this' | 'new';
+
+export interface SequenceRequest {
+  file: ReadFile;
+  /** One line on the sequence itself: its label and length. */
+  summary: string;
+  /** What each choice does to the editor text, one item per change. */
+  consequences: Readonly<Record<SequenceTarget, readonly string[]>>;
+  defaultTarget: SequenceTarget;
+  /** Why "This config" can't be chosen, when it can't. */
+  thisDisabled?: string;
+}
+
 export interface LocalDataControl {
   /**
    * Show the attach form for `request`. Resolves with the user's choice on
    * Add, or `null` on Cancel / Escape (focus then returns to the button).
    */
   ask(request: AttachRequest): Promise<AttachChoice | null>;
+  /**
+   * Show the "use as sequence" form for a FASTA file. Resolves with the
+   * target on Use, or `null` on Cancel / Escape.
+   */
+  askSequence(request: SequenceRequest): Promise<SequenceTarget | null>;
   /** Announce `message` on the status line. */
   setStatus(message: string): void;
   /** Show a paste-able snippet under the status (or hide it with `''`). */
@@ -88,12 +108,17 @@ export interface LocalDataControlOptions {
   onRemove(ref: string): void;
 }
 
-const formatSize = (bytes: number): string =>
+/** A byte count as the status line and the file list show it. */
+export const formatSize = (bytes: number): string =>
   bytes < 1024
     ? `${bytes} B`
     : bytes < 1024 * 1024
       ? `${Math.round(bytes / 1024)} KB`
       : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+/** `66 residues`, `1 residue`. */
+export const residueCount = (n: number): string =>
+  `${n} residue${n === 1 ? '' : 's'}`;
 
 /** True for a drag that carries files (`files` itself is empty until drop). */
 const isFileDrag = (event: DragEvent): boolean =>
@@ -126,8 +151,8 @@ export function createLocalDataControl(
       );
       if (looksBinary(head)) {
         setStatus(
-          `${file.name} looks like a binary or compressed file — export it as ` +
-            `CSV or TSV and load that.`
+          `${file.name} looks like a binary or compressed file — load plain ` +
+            `text: CSV, TSV, JSON or BED for a track, or FASTA for the sequence.`
         );
         return undefined;
       }
@@ -220,96 +245,58 @@ export function createLocalDataControl(
   document.addEventListener('dragover', refuse);
   document.addEventListener('drop', refuse);
 
-  // ── The attach form ──
-  function ask(request: AttachRequest): Promise<AttachChoice | null> {
+  // ── The forms ──
+  /**
+   * Open a form in the panel: the shared shell of both forms. `build` fills
+   * the fieldset and returns the control to focus and how to read the
+   * choice on submit (`undefined` keeps the form open). Escape and Cancel
+   * resolve `null`; whatever closes it, focus returns to the Load button.
+   */
+  function openForm<T>(
+    className: string,
+    legendText: string,
+    submitText: string,
+    build: (fieldset: HTMLFieldSetElement) => {
+      focus: HTMLElement;
+      choice: () => T | undefined;
+    }
+  ): Promise<T | null> {
     cancelOpen?.();
-    const { file, inferred } = request;
     return new Promise((resolve) => {
       const form = document.createElement('form');
-      form.className = 'data-attach';
+      form.className = className;
       const fieldset = document.createElement('fieldset');
       const legend = document.createElement('legend');
-      legend.textContent = `Add ${file.name} (${formatSize(file.size)})`;
+      legend.textContent = legendText;
       fieldset.append(legend);
-
-      const field = (id: string, text: string, control: HTMLElement) => {
-        const wrap = document.createElement('div');
-        wrap.className = 'field';
-        const label = document.createElement('label');
-        label.htmlFor = id;
-        label.textContent = text;
-        control.id = id;
-        wrap.append(label, control);
-        fieldset.append(wrap);
-      };
-
-      const format = document.createElement('select');
-      if (!inferred) {
-        const placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = 'Choose a format…';
-        format.append(placeholder);
-        format.required = true;
-      }
-      for (const name of DATA_FORMAT_NAMES) {
-        const option = document.createElement('option');
-        option.value = name;
-        option.textContent = name;
-        format.append(option);
-      }
-      format.value = inferred ?? '';
-      field('data-attach-format', 'Read as', format);
-
-      const target = document.createElement('select');
-      for (const { value, label } of [
-        { value: '', label: 'New track' },
-        ...request.options,
-      ]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        target.append(option);
-      }
-      target.value = request.selected ?? '';
-      field('data-attach-target', 'Use for', target);
-
-      const note = document.createElement('p');
-      note.className = 'data-attach-note';
-      note.textContent = [
-        inferred
-          ? request.reason
-          : `The extension doesn't say how to read ${file.name}, so choose a format.`,
-        PRIVACY_NOTE,
-      ]
-        .filter(Boolean)
-        .join(' ');
-      fieldset.append(note);
+      const { focus, choice } = build(fieldset);
 
       const actions = document.createElement('div');
       actions.className = 'actions';
-      const add = document.createElement('button');
-      add.type = 'submit';
-      add.textContent = 'Add';
+      const submit = document.createElement('button');
+      submit.type = 'submit';
+      submit.textContent = submitText;
       const cancel = document.createElement('button');
       cancel.type = 'button';
       cancel.textContent = 'Cancel';
-      actions.append(add, cancel);
+      actions.append(submit, cancel);
       fieldset.append(actions);
       form.append(fieldset);
 
-      const close = (choice: AttachChoice | null) => {
+      const close = (value: T | null) => {
         cancelOpen = undefined;
         panel.hidden = true;
         panel.replaceChildren();
         // Whatever closed it, the focused control is gone: return focus to
         // the button that opened the form, not to <body>.
         button.focus();
-        resolve(choice);
+        resolve(value);
       };
       form.addEventListener('submit', (event) => {
         event.preventDefault();
         if (!form.reportValidity()) return;
-        close({ format: format.value as DataFormat, target: target.value });
+        const value = choice();
+        if (value !== undefined) close(value);
       });
       cancel.addEventListener('click', () => close(null));
       form.addEventListener('keydown', (event) => {
@@ -323,12 +310,156 @@ export function createLocalDataControl(
       cancelOpen = () => close(null);
       panel.replaceChildren(form);
       panel.hidden = false;
-      (inferred ? target : format).focus();
+      focus.focus();
     });
+  }
+
+  /** A paragraph of plain text (never markup). */
+  const note = (text: string, className = 'data-attach-note') => {
+    const p = document.createElement('p');
+    p.className = className;
+    p.textContent = text;
+    return p;
+  };
+
+  function ask(request: AttachRequest): Promise<AttachChoice | null> {
+    const { file, inferred } = request;
+    return openForm<AttachChoice>(
+      'data-attach',
+      `Add ${file.name} (${formatSize(file.size)})`,
+      'Add',
+      (fieldset) => {
+        const field = (id: string, text: string, control: HTMLElement) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'field';
+          const label = document.createElement('label');
+          label.htmlFor = id;
+          label.textContent = text;
+          control.id = id;
+          wrap.append(label, control);
+          fieldset.append(wrap);
+        };
+
+        const format = document.createElement('select');
+        if (!inferred) {
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.textContent = 'Choose a format…';
+          format.append(placeholder);
+          format.required = true;
+        }
+        for (const name of DATA_FORMAT_NAMES) {
+          const option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          format.append(option);
+        }
+        format.value = inferred ?? '';
+        field('data-attach-format', 'Read as', format);
+
+        const target = document.createElement('select');
+        for (const { value, label } of [
+          { value: '', label: 'New track' },
+          ...request.options,
+        ]) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = label;
+          target.append(option);
+        }
+        target.value = request.selected ?? '';
+        field('data-attach-target', 'Use for', target);
+
+        fieldset.append(
+          note(
+            [
+              inferred
+                ? request.reason
+                : `The extension doesn't say how to read ${file.name}, so choose a format.`,
+              PRIVACY_NOTE,
+            ]
+              .filter(Boolean)
+              .join(' ')
+          )
+        );
+        return {
+          focus: inferred ? target : format,
+          choice: () => ({
+            format: format.value as DataFormat,
+            target: target.value,
+          }),
+        };
+      }
+    );
+  }
+
+  function askSequence(
+    request: SequenceRequest
+  ): Promise<SequenceTarget | null> {
+    const { file, consequences, thisDisabled } = request;
+    const checked: SequenceTarget = thisDisabled
+      ? 'new'
+      : request.defaultTarget;
+    return openForm<SequenceTarget>(
+      'data-attach sequence-attach',
+      `Use ${file.name} (${formatSize(file.size)}) as the sequence`,
+      'Use',
+      (fieldset) => {
+        fieldset.append(note(request.summary, 'sequence-summary'));
+
+        const group = document.createElement('fieldset');
+        group.className = 'sequence-targets';
+        const legend = document.createElement('legend');
+        legend.textContent = 'Apply to';
+        group.append(legend);
+        const radios = new Map<SequenceTarget, HTMLInputElement>();
+        const choices: Array<[SequenceTarget, string]> = [
+          ['this', 'This config'],
+          ['new', 'A new sequence-only config'],
+        ];
+        for (const [value, text] of choices) {
+          const id = `sequence-target-${value}`;
+          const wrap = document.createElement('div');
+          wrap.className = 'sequence-target';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'sequence-target';
+          radio.id = id;
+          radio.value = value;
+          radio.checked = value === checked;
+          const label = document.createElement('label');
+          label.htmlFor = id;
+          label.textContent = text;
+          const list = document.createElement('ul');
+          list.id = `${id}-what`;
+          list.className = 'sequence-consequences';
+          const items =
+            value === 'this' && thisDisabled
+              ? [thisDisabled]
+              : consequences[value];
+          for (const item of items) {
+            const li = document.createElement('li');
+            li.textContent = item;
+            list.append(li);
+          }
+          if (value === 'this' && thisDisabled) radio.disabled = true;
+          radio.setAttribute('aria-describedby', list.id);
+          wrap.append(radio, label, list);
+          group.append(wrap);
+          radios.set(value, radio);
+        }
+        fieldset.append(group, note(PRIVACY_NOTE));
+        return {
+          focus: radios.get(checked)!,
+          choice: () => [...radios].find(([, radio]) => radio.checked)?.[0],
+        };
+      }
+    );
   }
 
   return {
     ask,
+    askSequence,
     setStatus,
     setSnippet(text) {
       snippet.textContent = text;
@@ -339,10 +470,15 @@ export function createLocalDataControl(
         ...files.map((file) => {
           const li = document.createElement('li');
           const what = document.createElement('span');
-          what.textContent =
+          const named =
             file.ref === `./${file.name}`
-              ? `${file.name} (${formatSize(file.size)})`
-              : `${file.name} as ${file.ref} (${formatSize(file.size)})`;
+              ? file.name
+              : `${file.name} as ${file.ref}`;
+          const role =
+            file.kind === 'sequence'
+              ? ` — sequence, ${residueCount(file.sequence.residues.length)}`
+              : '';
+          what.textContent = `${named}${role} (${formatSize(file.size)})`;
           const remove = document.createElement('button');
           remove.type = 'button';
           remove.textContent = 'Remove';

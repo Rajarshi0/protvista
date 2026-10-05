@@ -17,6 +17,13 @@
  */
 import '../protvista-uniprot.js';
 import { parseConfigText } from '../schema/parse.js';
+import { isPlainObject } from '../schema/shape.js';
+import { MAX_FETCH_TEXT_BYTES } from '../schema/fetch-text.js';
+import {
+  parseSequenceText,
+  sequenceDisplayLabel,
+  type ResolvedSequence,
+} from '../schema/sequence.js';
 import { createEditor, type PlaygroundEditor } from './editor.js';
 import { createDiagnosticsView } from './diagnostics-view.js';
 import { lintConfig, memoizedExtendsFetcher, type LintResult } from './lint.js';
@@ -24,10 +31,13 @@ import { initSplitter } from './splitter.js';
 import {
   KIND_FOR_SHAPE,
   answersFor,
+  basename,
   createLocalFileStore,
   findLocalReferences,
   guessShape,
   inferFormat,
+  isFastaFile,
+  isLocalSequenceReference,
   isPreflightDuplicate,
   localDataDiagnostics,
   mayNameLocalFile,
@@ -45,10 +55,19 @@ import {
   listTargetTracks,
   rowIdFor,
   rowLabelFor,
+  sequenceTargetSummary,
+  setSequence,
+  starterSequenceConfig,
   type DataValue,
   type EditResult,
 } from './config-edit.js';
-import { createLocalDataControl, type ReadFile } from './local-data-control.js';
+import {
+  createLocalDataControl,
+  formatSize,
+  residueCount,
+  type ReadFile,
+  type SequenceTarget,
+} from './local-data-control.js';
 import type { DataFormat } from '../schema/types.js';
 import {
   PRESETS,
@@ -381,11 +400,17 @@ async function refreshDiagnostics(): Promise<void> {
 /**
  * Explicit "Run": validate, then (re)mount the preview when the config is
  * valid. This is the ONLY path that mounts `<protvista-uniprot>`.
+ *
+ * One data problem also holds it back: the config's own `sequence:` names a
+ * local file that isn't loaded (`sequenceMissing`). Unlike a missing track
+ * file, which costs one track, that preview could only show the whole-viewer
+ * `cannot-resolve-sequence` panel — and its request would send the private
+ * file name to the docs host. The `local-file-missing` row says what to load.
  */
 async function run(): Promise<ValidateResult> {
   const result = await validateCurrent();
   if (!result) return null;
-  if (result.valid) {
+  if (result.valid && !result.local?.sequenceMissing) {
     renderPreview(
       result.text,
       result.declaresSequence ? undefined : result.accession,
@@ -511,6 +536,9 @@ async function runWithFile(
     outcome = 'Press Run to see it in the preview.';
   } else if (!result.valid) {
     outcome = 'Fix the config problems listed below, then press Run.';
+  } else if (result.local?.sequenceMissing) {
+    const missing = basename(localSequenceRef(result.parsed) ?? '');
+    outcome = `Load ${missing} to see the preview — the config's sequence: names it.`;
   } else if (result.local?.failedRefs.has(ref)) {
     outcome = "It couldn't be read — see the problem listed below.";
   } else {
@@ -534,6 +562,10 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   control.setSnippet('');
   const note =
     skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
+  if (isFastaFile(file.name, file.text)) {
+    await loadSequenceFile(file, note);
+    return;
+  }
   // A reference registered to another file is not this one's; see answersFor.
   const answers = answersFor(file, store);
   // A tab-separated export saved as `.csv` is offered as `tsv`, so the new
@@ -650,6 +682,188 @@ async function finishLoad(
     editor.setText(edit.text);
   }
   await runWithFile(file, ref, note);
+}
+
+// ── A FASTA file: the config's sequence ───────────────────────
+
+/** The config's own top-level `sequence:`, when it names a local file. */
+function localSequenceRef(parsed: unknown): string | undefined {
+  const value = isPlainObject(parsed) ? parsed.sequence : undefined;
+  return isLocalSequenceReference(value) ? value.trim() : undefined;
+}
+
+/** What each choice in the "use as sequence" form would change. */
+function sequenceConsequences(
+  parsed: unknown,
+  ref: string
+): {
+  consequences: Record<SequenceTarget, string[]>;
+  defaultTarget: SequenceTarget;
+  thisDisabled?: string;
+} {
+  const summary = sequenceTargetSummary(parsed);
+  const keep: string[] = [`Sets sequence: ${ref}`];
+  if (summary.accession !== undefined) {
+    keep.push(`Removes accession: ${summary.accession}`);
+  }
+  const { replaces } = summary;
+  if (replaces && 'reference' in replaces) {
+    keep.push(`Replaces ${replaces.reference}`);
+  } else if (replaces && 'inline' in replaces) {
+    keep.push(
+      replaces.residues === undefined
+        ? 'Replaces the inline sequence'
+        : `Replaces the inline sequence (${residueCount(replaces.residues)})`
+    );
+  }
+  keep.push('Keeps the tracks');
+  if (summary.needsUniprot > 0) {
+    const n = summary.needsUniprot;
+    keep.push(
+      `${n} track${n === 1 ? ' needs' : 's need'} UniProt data and would be ` +
+        'listed as errors'
+    );
+  }
+  if (summary.extends) {
+    keep.push(
+      'Keeps extends: — anything the base adds that needs UniProt is listed after Run'
+    );
+  }
+  return {
+    consequences: {
+      this: keep,
+      new: [
+        `Replaces the editor text with a config holding only sequence: ${ref}`,
+        'Undo with Ctrl/Cmd+Z in the editor',
+      ],
+    },
+    defaultTarget:
+      !summary.parses || summary.needsUniprot > 0 || summary.extends
+        ? 'new'
+        : 'this',
+    ...(summary.parses
+      ? {}
+      : { thisDisabled: "The config doesn't parse — fix it first." }),
+  };
+}
+
+/**
+ * A FASTA file was read. It is parsed — as the element would parse it from
+ * the reference it gets — before anything changes: a file the element would
+ * reject is not loaded, and the status quotes the element's own message.
+ *
+ * When the config's `sequence:` already names it, it answers to that
+ * reference with no edit (a pasted `examples/sequence-only` config, or a
+ * reload). Otherwise a form asks whether to set this config's `sequence:` or
+ * start a new sequence-only config. Either way the editor only ever names the
+ * file; the residues and header reach the preview at render time.
+ */
+async function loadSequenceFile(file: ReadFile, note: string): Promise<void> {
+  if (file.size > MAX_FETCH_TEXT_BYTES) {
+    control.setStatus(
+      `${note}${file.name} is ${formatSize(file.size)} — a sequence file can ` +
+        `be at most ${formatSize(MAX_FETCH_TEXT_BYTES)}, the most a hosted ` +
+        'viewer fetches.'
+    );
+    return;
+  }
+  const parsed = await parseEditor();
+  const own = localSequenceRef(parsed);
+  const named = own !== undefined && answersFor(file, store)(own);
+  const ref = named
+    ? own
+    : referenceFor(
+        file.name,
+        new Map(store.list().map((f) => [f.ref, f.name]))
+      );
+
+  const read = parseSequenceText(file.text, ref);
+  if (!read.ok) {
+    const earlier = store.get(ref)?.kind === 'sequence';
+    control.setStatus(
+      `${note}${file.name} wasn't loaded: ${read.message}` +
+        (earlier ? ' The copy loaded earlier is still in use.' : '')
+    );
+    return;
+  }
+
+  if (named) {
+    registerSequence(file, ref, read.value);
+    await runWithSequence(file, ref, read.value, note, false);
+    return;
+  }
+
+  const label = sequenceDisplayLabel(read.value);
+  const length = residueCount(read.value.residues.length);
+  const target = await control.askSequence({
+    file,
+    summary: read.value.header
+      ? `${label} — ${length}.`
+      : `No FASTA header — shown as "${label}". ${length}.`,
+    ...sequenceConsequences(parsed, ref),
+  });
+  if (!target) {
+    control.setStatus(`${note}${file.name} was not loaded.`);
+    return;
+  }
+
+  // The text may have changed while the form was open.
+  const edit: EditResult =
+    target === 'new'
+      ? { text: await starterSequenceConfig(ref) }
+      : await setSequence(editor.getText(), await parseEditor(), ref);
+  registerSequence(file, ref, read.value);
+  if ('error' in edit) {
+    control.setStatus(`${note}Loaded ${file.name} as ${ref}. ${edit.error}`);
+    control.setSnippet(edit.snippet);
+    void refreshDiagnostics();
+    return;
+  }
+  editor.setText(edit.text);
+  await runWithSequence(file, ref, read.value, note, target === 'new');
+}
+
+function registerSequence(
+  file: ReadFile,
+  ref: string,
+  sequence: ResolvedSequence
+): void {
+  store.register({
+    kind: 'sequence',
+    ref,
+    name: file.name,
+    size: file.size,
+    text: file.text,
+    sequence,
+  });
+  control.showFiles(store.list());
+}
+
+/** Render with the sequence in place, then say how it went. */
+async function runWithSequence(
+  file: ReadFile,
+  ref: string,
+  sequence: ResolvedSequence,
+  note: string,
+  replaced: boolean
+): Promise<void> {
+  const result = await run();
+  const as = ref === `./${file.name}` ? '' : ` ${ref}`;
+  const loaded =
+    `${note}Loaded ${file.name} as the sequence${as} ` +
+    `(${sequenceDisplayLabel(sequence)}, ${residueCount(sequence.residues.length)})`;
+  const outcome = !result
+    ? '. Press Run to see it in the preview.'
+    : !result.valid
+      ? '. Fix the config problems listed below, then press Run.'
+      : ' — read in your browser, never uploaded.';
+  control.setStatus(
+    loaded +
+      outcome +
+      (replaced
+        ? ' The previous config was replaced — press Ctrl/Cmd+Z in the editor to undo.'
+        : '')
+  );
 }
 
 // Theming is now a config concern — set `theme.labelColor` in the config

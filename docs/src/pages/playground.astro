@@ -77,8 +77,10 @@ const versionTooltip = isPrerelease
         <button id="load-data" type="button" aria-describedby="local-note">
           Load data file…
         </button>
-        <!-- No accept=: a file with any extension can be picked, and the
-             attach form then asks how to read it. -->
+        <!-- No accept=: a file with any extension can be picked. A FASTA
+             file (by extension, or a '>' first line) sets the config's
+             sequence:; any other file opens the attach form, which asks
+             how to read it. -->
         <input id="data-file" type="file" hidden />
         <span id="local-note" class="local-note"
           >Read in your browser — never uploaded. Only the file name goes into
@@ -337,6 +339,42 @@ const versionTooltip = isPrerelease
       .data-attach .actions {
         display: flex;
         gap: 0.5rem;
+      }
+      /* The "use as sequence" form: a column of radios, each with the list
+         of what it changes. Without these, the nested fieldset would take
+         the flex-row rules above and wrap badly on a phone. */
+      .data-attach .sequence-targets {
+        display: block;
+        flex-basis: 100%;
+        min-width: 0;
+      }
+      .data-attach .sequence-targets legend {
+        font-weight: 600;
+      }
+      .sequence-target {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: baseline;
+        column-gap: 0.4rem;
+        margin: 0.3rem 0;
+      }
+      .sequence-target label {
+        font-weight: 600;
+      }
+      .sequence-consequences {
+        grid-column: 2;
+        margin: 0.1rem 0 0;
+        padding-left: 1.1rem;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .sequence-target input:disabled + label {
+        color: var(--muted);
+      }
+      .sequence-summary {
+        flex-basis: 100%;
+        margin: 0;
+        overflow-wrap: anywhere;
       }
       .data-attach button[type='submit'] {
         font-weight: 700;

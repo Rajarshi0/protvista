@@ -450,8 +450,8 @@ rows:
     );
     await vi.waitFor(() =>
       expect(byId('data-status').textContent).toBe(
-        'x.xlsx looks like a binary or compressed file — export it as CSV ' +
-          'or TSV and load that.'
+        'x.xlsx looks like a binary or compressed file — load plain text: ' +
+          'CSV, TSV, JSON or BED for a track, or FASTA for the sequence.'
       )
     );
     expect(byId('data-attach').hidden).toBe(true);
