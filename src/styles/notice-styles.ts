@@ -92,7 +92,7 @@ export default css`
     cursor: auto;
   }
 
-  /* Focusable only when it scrolls, so a keyboard can scroll it. */
+  /* In the tab order only when it scrolls, so a keyboard can scroll it. */
   protvista-uniprot .${p}-note-popover:focus-visible {
     outline: 2px solid ${ref('--protvista-color-accent')};
     outline-offset: 1px;

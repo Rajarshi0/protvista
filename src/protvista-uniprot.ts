@@ -5502,15 +5502,14 @@ class ProtvistaUniprot extends LitElement {
         aria-expanded="${open ? 'true' : 'false'}"
         aria-controls="${popoverId}"
         @click="${(e: Event) => this._toggleNote(e, id)}"
-        @keydown="${this._onNoteKeydown}"
       >
         <span aria-hidden="true">${control.glyph ?? 'ⓘ'}</span>
       </button>
       <div
         id="${popoverId}"
         class="${CSS_PREFIX}-note-popover"
+        tabindex="-1"
         ?hidden="${!open}"
-        @keydown="${this._onNoteKeydown}"
         @click="${(e: Event) => e.stopPropagation()}"
       >
         <p class="${CSS_PREFIX}-note-popover__title">${control.heading}</p>
@@ -5535,7 +5534,11 @@ class ProtvistaUniprot extends LitElement {
     this._openNote = this._openNote === id ? null : id;
   }
 
-  /** Escape closes the open popover and hands focus back to its button. */
+  /**
+   * Escape closes the open popover and hands focus back to its button,
+   * wherever focus is inside the viewer: a keyboard user who tabbed on to
+   * Customize can still close what they opened.
+   */
   private _onNoteKeydown = (e: KeyboardEvent): void => {
     if (e.key !== 'Escape' || this._openNote === null) return;
     e.preventDefault();
@@ -5545,6 +5548,22 @@ class ProtvistaUniprot extends LitElement {
       this.querySelector<HTMLElement>(`#${this._openNote}`);
     this._openNote = null;
     button?.focus();
+  };
+
+  /**
+   * Focus moving to anything but the open control closes it, so a popover
+   * never covers the control focus lands on next. The popover itself takes
+   * focus (`tabindex="-1"`, or `0` when it scrolls), so a press on its text
+   * keeps it open and keeps Escape within reach. Focus that goes nowhere
+   * (the window losing focus) leaves it open; a press outside is
+   * `_onNoteOutside`'s.
+   */
+  private _onNoteFocusOut = (e: FocusEvent): void => {
+    const open = this._notePopover;
+    const next = e.relatedTarget as Node | null;
+    if (!open || !next) return;
+    if (open.button.contains(next) || open.popover.contains(next)) return;
+    this._openNote = null;
   };
 
   /** A press anywhere but the open control closes it (focus stays put). */
@@ -5610,11 +5629,7 @@ class ProtvistaUniprot extends LitElement {
         popover.style.left = `${x}px`;
         popover.style.top = `${y}px`;
         // A list that scrolls is a tab stop, so a keyboard can scroll it.
-        if (popover.scrollHeight > popover.clientHeight) {
-          popover.tabIndex = 0;
-        } else {
-          popover.removeAttribute('tabindex');
-        }
+        popover.tabIndex = popover.scrollHeight > popover.clientHeight ? 0 : -1;
       });
     };
     this._notePopover = {
@@ -5623,13 +5638,20 @@ class ProtvistaUniprot extends LitElement {
       cleanup: autoUpdate(button, popover, place),
     };
     document.addEventListener('pointerdown', this._onNoteOutside, true);
+    this.addEventListener('keydown', this._onNoteKeydown);
+    this.addEventListener('focusout', this._onNoteFocusOut);
   }
 
-  /** Stop following the open popover, and stop listening for outside presses. */
+  /**
+   * Stop following the open popover, and stop listening for the presses,
+   * keys and focus moves that close it.
+   */
   private _closeNotePopover(): void {
     this._notePopover?.cleanup();
     this._notePopover = undefined;
     document.removeEventListener('pointerdown', this._onNoteOutside, true);
+    this.removeEventListener('keydown', this._onNoteKeydown);
+    this.removeEventListener('focusout', this._onNoteFocusOut);
   }
 
   /**

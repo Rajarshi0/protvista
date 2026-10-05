@@ -178,6 +178,103 @@ describe('visitor notices in a browser', () => {
     expect(document.activeElement).toBe(button);
   });
 
+  /** Tab from the page's start until `target` has focus. */
+  async function tabTo(target: Element) {
+    document.body.focus();
+    let presses = 0;
+    while (document.activeElement !== target && presses < 40) {
+      await userEvent.tab();
+      presses += 1;
+    }
+    expect(document.activeElement).toBe(target);
+  }
+
+  it('closes when Tab moves focus on, so it never covers the next control', async () => {
+    await page.viewport(1440, 900);
+    const el = await mountViewer(
+      {
+        ...CONFIG,
+        rows: [
+          LAB,
+          {
+            id: 'broken',
+            label: 'Broken hits',
+            kind: 'features',
+            data: {
+              from: 'inline',
+              format: 'csv',
+              inlineData: 'type,start,end,description\nDOMAIN,abc,25,x',
+            },
+          },
+          CONFIG.rows[1],
+        ],
+      },
+      ['show-warnings']
+    );
+    const error = await vi.waitFor(() => {
+      const button = el.querySelector<HTMLElement>(
+        `#${CSS_PREFIX}-group_broken .${CSS_PREFIX}-note--error`
+      );
+      if (!button) throw new Error('no error control yet');
+      return button;
+    });
+    const lab = el.querySelector<HTMLElement>(
+      `#${CSS_PREFIX}-group_lab .${CSS_PREFIX}-note--author`
+    )!;
+    await tabTo(lab);
+    await userEvent.keyboard('{Enter}');
+    await el.updateComplete;
+    const popover = popoverOf(lab);
+    expect(popover.hidden).toBe(false);
+
+    await userEvent.tab();
+    await el.updateComplete;
+    expect(document.activeElement).toBe(error);
+    expect(popover.hidden, 'closed once focus left it').toBe(true);
+    expect(lab.getAttribute('aria-expanded')).toBe('false');
+    const box = error.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      box.left + box.width / 2,
+      box.top + box.height / 2
+    );
+    expect(error.contains(hit), 'the focused control is not covered').toBe(
+      true
+    );
+  });
+
+  it('closes when Shift+Tab moves focus back, and on Escape from inside it', async () => {
+    const el = await mountViewer(CONFIG);
+    const top = el.querySelector<HTMLElement>(TOP_NOTE)!;
+    const popover = popoverOf(top);
+    await tabTo(top);
+    await userEvent.keyboard('{Enter}');
+    await el.updateComplete;
+    expect(popover.hidden).toBe(false);
+
+    // Back to Customize, which the popover would otherwise sit open beside.
+    await userEvent.tab({ shift: true });
+    await el.updateComplete;
+    expect(document.activeElement).toBe(
+      el.querySelector(`.${CSS_PREFIX}-customize-toggle`)
+    );
+    expect(popover.hidden, 'closed once focus left it').toBe(true);
+
+    // A press on its text keeps it open, and Escape from there closes it.
+    await userEvent.tab();
+    await userEvent.keyboard('{Enter}');
+    await el.updateComplete;
+    await userEvent.click(
+      popover.querySelector(`.${CSS_PREFIX}-note-popover__title`)!
+    );
+    await el.updateComplete;
+    expect(popover.hidden).toBe(false);
+    expect(document.activeElement).toBe(popover);
+    await userEvent.keyboard('{Escape}');
+    await el.updateComplete;
+    expect(popover.hidden, 'Escape closed it').toBe(true);
+    expect(document.activeElement).toBe(top);
+  });
+
   for (const [width, height] of [
     [320, 640],
     [390, 844],
