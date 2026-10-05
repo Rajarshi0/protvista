@@ -509,11 +509,11 @@ describe('setSequence', () => {
     return result.text;
   }
 
-  it('replaces accession: in place, keeping every other line byte for byte', async () => {
+  it('replaces accession: in place, keeping its comment and every other line byte for byte', async () => {
     const text = `# My viewer\naccession: P05067 # APP\n# Tracks below\n${TRACK}`;
     const out = await edited(text);
     expect(out).toBe(
-      `# My viewer\nsequence: ./construct.fasta\n# Tracks below\n${TRACK}`
+      `# My viewer\nsequence: ./construct.fasta # APP\n# Tracks below\n${TRACK}`
     );
     const parsed = (await parse(text)) as Record<string, unknown>;
     delete parsed.accession;
@@ -548,6 +548,25 @@ describe('setSequence', () => {
     expect(await edited(text)).toBe(`sequence: ./construct.fasta\n${TRACK}`);
   });
 
+  it('replaces sequence: and drops an accession: further down', async () => {
+    // Not adjacent, so putting it where accession: was gives another text.
+    const text = `sequence: ./other.fasta\n${TRACK}accession: P05067\n`;
+    expect(await edited(text)).toBe(`sequence: ./construct.fasta\n${TRACK}`);
+  });
+
+  it('keeps the end-of-line comment of the sequence: line it replaces', async () => {
+    expect(await edited(`sequence: './other #2.fasta'  # v1\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta  # v1\n${TRACK}`
+    );
+    expect(await edited(`sequence: |  # pasted\n  >h\n  MKTAY\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta  # pasted\n${TRACK}`
+    );
+    // A '#' with no space before it is part of the value, not a comment.
+    expect(await edited(`accession: P05067#x\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta\n${TRACK}`
+    );
+  });
+
   it('inserts after the leading extends: or $schema:, else before the first key', async () => {
     const base = 'extends: https://lab.example/base.yaml\n';
     expect(await edited(`${base}${TRACK}`)).toBe(
@@ -574,6 +593,15 @@ describe('setSequence', () => {
       ['$schema', 'x'],
       ['sequence', REF],
       ['rows', []],
+    ]);
+    // Where accession was, not merely after the leading keys.
+    const last = await edited(
+      JSON.stringify({ $schema: 'x', rows: [], accession: 'P05067' }, null, 2)
+    );
+    expect(Object.keys(JSON.parse(last) as object)).toEqual([
+      '$schema',
+      'rows',
+      'sequence',
     ]);
     const bare = await edited('{ "$schema": "x", "rows": [] }\n');
     expect(Object.keys(JSON.parse(bare) as object)).toEqual([
@@ -630,6 +658,39 @@ describe('sequenceTargetSummary', () => {
       extends: false,
       parses: true,
     });
+  });
+
+  it('still counts the UniProt tracks when the config has a schema error elsewhere', async () => {
+    // A schema error stops the validator before its sequence-mode pass.
+    const clean = sequenceTargetSummary(await parse(defaultConfigYaml));
+    const typo = sequenceTargetSummary(
+      await parse(`${defaultConfigYaml}\ntheme_typo: 1\n`)
+    );
+    expect(typo.needsUniprot).toBe(clean.needsUniprot);
+  });
+
+  it('counts each row on its own when sources: or another row is malformed', async () => {
+    const text = [
+      'sources:',
+      '  remote: https://lab.example/{accession}.json',
+      'rows:',
+      '  - id: a',
+      '    kind: features',
+      '    data: remote',
+      '  - id: b',
+      '    kind: features',
+      '    data: https://lab.example/b/{accession}.json',
+      '  - id: broken',
+      '    tracks: 7',
+      '',
+    ].join('\n');
+    expect(sequenceTargetSummary(await parse(text)).needsUniprot).toBe(2);
+    // A malformed sources: is dropped: row b still counts, row a cannot.
+    const badSources = text.replace(
+      '  remote: https://lab.example/{accession}.json',
+      '  remote: 7'
+    );
+    expect(sequenceTargetSummary(await parse(badSources)).needsUniprot).toBe(1);
   });
 
   it('measures an inline sequence it would replace, and flags an extends: child', async () => {
