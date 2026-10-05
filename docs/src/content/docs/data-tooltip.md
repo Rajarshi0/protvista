@@ -131,7 +131,7 @@ dataTooltip:
     {% if $gene %}{% $gene %} · {% /if %}{% link href=$url /%}
 ```
 
-A record with both fields shows `HBA1 · https://…`, and one with only `url` shows the link alone. One with neither renders nothing, so it shows the default tooltip.
+A record with both fields shows `HBA1 · https://…`, and one with a `url` but no `gene` (missing or `null`) shows the link alone. One with neither renders nothing, so it shows the default tooltip. A blank `gene` cell is different: see below.
 
 Markdoc's `if` is false only for a missing field, `null` and `false`. A blank CSV or TSV cell is an empty string, which counts as true, so the template above still shows `·` before the link for a row whose `gene` cell is empty. To leave out blank cells too, test for them:
 
