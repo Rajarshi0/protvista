@@ -784,6 +784,36 @@ describe('sequence mode — setConfig between the modes', () => {
     expect(el.accession).toBe('P05067');
   });
 
+  it.each([
+    ['property', (el: El) => (el.accession = 'P05067')],
+    ['attribute', (el: El) => el.setAttribute('accession', 'P05067')],
+  ])(
+    'treats a host re-setting the backfilled accession (%s) as the host',
+    async (_name, setByHost) => {
+      // The host writes the very value the config backfilled, with no change
+      // in between: Lit sees no change, but the accession is the host's now,
+      // so a `sequence:` config reports it instead of silently dropping it.
+      stubEntry();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const el = mountEl({ viewerConfig: accConfig() });
+      const events = collect(el);
+      await ready(el);
+      expect(el.getAttribute('accession')).toBe('P05067');
+
+      setByHost(el);
+      await settle();
+      await el.setConfig(seqConfig());
+      await settle();
+
+      const issues = events
+        .filter((e) => e.detail.phase === 'config')
+        .flatMap((e) => e.detail.issues);
+      expect(issues.map((i) => i.code)).toEqual(['accession-and-sequence']);
+      expect(issues[0].message).toContain('supplied by the host');
+      expect(el.accession).toBe('P05067');
+    }
+  );
+
   it('drops a superseded config before re-resolving for a host accession', async () => {
     // Both FASTA files are held. The earlier call's config lands first and is
     // applied; the later call then sees the host's new accession and must
