@@ -271,29 +271,37 @@ export function inlineSequenceText(sequence: ResolvedSequence): string {
 }
 
 /**
- * A data-file extension (from the format table), a FASTA extension, a
- * `format:` anywhere, or a `sequence:` (YAML or JSON) whose value starts with
- * `./` or `../`.
+ * A token ending in a data-file extension (from the format table) that is
+ * not a URL and not site-absolute — as {@link isLocalReference} reads a
+ * value — or a `format:` anywhere. A token starts at a line start, a space, a
+ * quote or a flow bracket, so a `$schema: https://…/config.schema.json` is
+ * not one: its `.json` is part of a URL.
  */
-const LOCAL_FILE_HINT = new RegExp(
+const LOCAL_DATA_HINT = new RegExp(
   [
-    `\\.(?:${[
-      ...DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)),
-      ...FASTA_EXTENSIONS.map((ext) => ext.slice(1)),
-    ].join('|')})\\b`,
+    `(?:^|[\\s'"[{,])(?![A-Za-z][A-Za-z0-9+.-]*:|/)[^\\s'"[\\]{},]*` +
+      `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b`,
     `\\bformat:`,
-    `"?sequence"?\\s*:\\s*["']?\\.{1,2}/`,
   ].join('|'),
-  'i'
+  'im'
 );
 
 /**
- * Whether the text could name a local file: a data file, or the sequence. A
- * cheap test, so a config that names none is not pre-flighted on every
- * keystroke when nothing is loaded.
+ * Whether the config could name a local file, so the page runs
+ * {@link localDataDiagnostics} on it even with nothing loaded.
+ *
+ * The sequence is decided from the parsed config — `ownSequence` is its own
+ * top-level `sequence:` value — because the text cannot be trusted to show
+ * it: a quoted key, a comment between key and value, a JSON `\/` escape or a
+ * path with no extension all hide it, and a missed one would mount a
+ * preview that requests the private file by name. Track data keeps a cheap
+ * text test, so a config that names no data file is not pre-flighted on
+ * every keystroke; a miss there costs only the missing-file row until
+ * something is loaded, and the preview renders the track empty.
  */
-export const mayNameLocalFile = (text: string): boolean =>
-  LOCAL_FILE_HINT.test(text);
+export function mayNameLocalFile(text: string, ownSequence?: unknown): boolean {
+  return isLocalSequenceReference(ownSequence) || LOCAL_DATA_HINT.test(text);
+}
 
 // ── The store ─────────────────────────────────────────────────
 
@@ -923,7 +931,7 @@ function checkSequence(
     code: 'local-file-missing',
     path: '/sequence',
     message: file
-      ? `${ref} is loaded as track data, not as the sequence — Remove it and load it again.`
+      ? `${ref} is loaded as track data, not as the sequence — load ${basename(ref)} again to use it as the sequence.`
       : `${ref} isn't loaded in this browser — press "Load data file…" ` +
         `and pick ${basename(ref)}.`,
   });

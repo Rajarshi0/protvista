@@ -18,7 +18,8 @@ export interface DiagnosticsView {
    * Replace the list with the current config diagnostics and update the
    * summary. Returns whether the config is valid — that is, whether it is
    * free of *errors*. A warning is listed but does not make the config
-   * unloadable, so it must not hold the preview back.
+   * unloadable. (The page holds the preview back for one warning, a local
+   * `sequence:` file that isn't loaded, and its preview banner says so.)
    */
   showConfig(diagnostics: readonly Renderable[]): boolean;
   /**
@@ -45,7 +46,9 @@ export function createDiagnosticsView(
       return;
     }
     // Warnings alone leave the config loadable, and the summary is the line
-    // an author reads before deciding whether to hit Run.
+    // an author reads before deciding whether to hit Run. A missing local
+    // sequence file is a warning too: the config is valid, and the preview
+    // banner, not this line, says the file must be loaded first.
     summary.textContent =
       errors === 0
         ? `${count} warning${count === 1 ? '' : 's'} — config is valid.`

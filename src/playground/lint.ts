@@ -148,6 +148,13 @@ export interface LintResult {
    * blank or does not parse (a parsed config is never `undefined`).
    */
   parsed?: unknown;
+  /**
+   * The config's own top-level `sequence:` value, when it is a string — not
+   * one inherited through `extends:`. The page reads it to tell whether the
+   * config names a local sequence file, which it can only do from the parsed
+   * config: quoting, comments and JSON escapes all hide it from the text.
+   */
+  ownSequence?: string;
 }
 
 /** {@link lintConfig}'s options. */
@@ -259,7 +266,12 @@ export async function lintConfig(
     path: issue.path,
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
-  return { diagnostics, declaresSequence, parsed };
+  return {
+    diagnostics,
+    declaresSequence,
+    parsed,
+    ...(typeof own === 'string' ? { ownSequence: own } : {}),
+  };
 }
 
 /**

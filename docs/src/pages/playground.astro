@@ -312,6 +312,15 @@ const versionTooltip = isPrerelease
         display: flex;
         align-items: center;
         gap: 0.4rem;
+        min-width: 0;
+        max-width: 100%;
+      }
+      /* A long file name with no spaces wraps rather than scrolling the page
+         sideways on a phone. */
+      #data-status,
+      #data-files li span {
+        min-width: 0;
+        overflow-wrap: anywhere;
       }
       #data-files button,
       .data-attach button {
@@ -322,6 +331,9 @@ const versionTooltip = isPrerelease
         border: none;
         margin: 0;
         padding: 0;
+        /* A fieldset's min-width defaults to its content's, which a long
+           file name in the legend would push past a phone's width. */
+        min-width: 0;
         display: flex;
         flex-wrap: wrap;
         align-items: center;
@@ -330,6 +342,8 @@ const versionTooltip = isPrerelease
       .data-attach legend {
         font-weight: 700;
         padding: 0 0 0.3rem;
+        max-width: 100%;
+        overflow-wrap: anywhere;
       }
       .data-attach-note {
         flex-basis: 100%;
