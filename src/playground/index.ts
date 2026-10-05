@@ -321,8 +321,8 @@ const LOCAL_FILE_HINT = new RegExp(
 
 /**
  * Whether the text could name a local data file. A cheap test, so the
- * default config is not parsed a second time on every keystroke when nothing
- * is loaded.
+ * default config is not pre-flighted on every keystroke when nothing is
+ * loaded.
  */
 const mayNameLocalFile = (text: string): boolean => LOCAL_FILE_HINT.test(text);
 
@@ -344,22 +344,27 @@ async function validateCurrent(): Promise<ValidateResult> {
   syncPicker(text);
 
   const files = store.version;
-  const { diagnostics: configDiagnostics, declaresSequence } =
-    await computeSafe(text, accession);
+  const lint = await computeSafe(text, accession);
+  const { diagnostics: configDiagnostics, declaresSequence } = lint;
   if (seq !== updateSeq) return null;
   syncAccessionInput(declaresSequence);
   // Only the config's own errors hold the preview back. A data problem in a
   // loaded file renders that track empty, as a hosted viewer would.
   const valid = !configDiagnostics.some((d) => d.severity === 'error');
 
+  // The config the lint parsed, not a second parse of the same text.
   let parsed: unknown;
   let local: LocalDataResult | undefined;
-  if (valid && (store.list().length > 0 || mayNameLocalFile(text))) {
+  if (
+    valid &&
+    lint.parsed !== undefined &&
+    (store.list().length > 0 || mayNameLocalFile(text))
+  ) {
+    parsed = lint.parsed;
     try {
-      parsed = await parseConfigText(text);
       local = await localDataDiagnostics(text, parsed, store);
     } catch {
-      // Validated a moment ago; a throw here leaves the data unchecked.
+      // A throw here leaves the data unchecked.
     }
     if (seq !== updateSeq) return null;
   }
@@ -436,6 +441,16 @@ document.addEventListener(
   true
 );
 
+/**
+ * A new preset or accession starts over: the status line's word on the last
+ * file loaded (and any snippet to paste) is about what came before. The
+ * loaded files stay, listed, for the new config to name.
+ */
+function clearDataStatus(): void {
+  control.setStatus('');
+  control.setSnippet('');
+}
+
 // Selecting a preset is a deliberate "show me this" → render once.
 presetSelect.addEventListener('change', () => {
   const preset = getPreset(presetSelect.value);
@@ -443,11 +458,15 @@ presetSelect.addEventListener('change', () => {
   activePresetId = preset.id;
   accessionInput.value = preset.accession;
   editor.setText(preset.config);
+  clearDataStatus();
   void run();
 });
 
 // Accession changes fire once on blur/enter → render once.
-accessionInput.addEventListener('change', () => void run());
+accessionInput.addEventListener('change', () => {
+  clearDataStatus();
+  void run();
+});
 
 // ── Local data files ──────────────────────────────────────────
 // A picked or dropped file is read in this browser and never uploaded. The

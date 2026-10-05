@@ -366,6 +366,43 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     expect(sniffFormat(tabDepth, undefined)).toBeUndefined();
   });
 
+  it('switches whenever the declared reading misses a column, as the pre-flight hint does', () => {
+    // A tab-separated hits.csv with a comma in a column name: the comma
+    // splits the header in two, but neither half has the feature columns.
+    const hits =
+      'type\tstart\tend\tdescription\tnote, misc\nDOMAIN\t1\t5\tx\ty\n';
+    const hint = (format: DataFormat) => {
+      try {
+        runPipeline('feature', format, hits, { source: './hits.csv' });
+        return 'no error';
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    expect(hint('csv')).toMatch(/looks tab-separated/);
+    expect(sniffFormat(hits, 'csv')).toBe('tsv');
+    expect(hint('tsv')).toBe('no error');
+    expect(guessShape(hits, 'csv')).toBe('feature');
+
+    const depth = 'position\tvalue\tnote, misc\n1\t0.5\tx\n';
+    expect(sniffFormat(depth, 'csv')).toBe('tsv');
+    expect(guessShape(depth, 'csv')).toBe('point');
+    // And the other way: a comma header with a tab in a column name.
+    const commas = 'position,value,note\tmisc\n1,0.5,x\n';
+    expect(sniffFormat(commas, 'tsv')).toBe('csv');
+    expect(guessShape(commas, 'tsv')).toBe('point');
+    // A delimiter that gives a shape its columns beats one that only splits
+    // the header into more cells.
+    const both = 'position\tvalue\ta;b;c;d\n1\t0.5\tx\n';
+    expect(sniffFormat(both, 'csv')).toBe('tsv');
+    expect(guessShape(both, 'csv')).toBe('point');
+    // A one-cell header another delimiter splits is still split, though
+    // no shape gets all its columns.
+    expect(sniffFormat('name\tscore\nA\t1\n', 'csv')).toBe('tsv');
+    // A header with some shape's columns keeps its delimiter.
+    expect(sniffFormat('position,value,a\tb\n1,0.5,x\n', 'csv')).toBe('csv');
+  });
+
   it('makes a tab-separated depth.csv a line-graph track that reads cleanly', async () => {
     // As the playground adds a new track: the sniffed format is offered, and
     // written as `format:` because the extension says otherwise.

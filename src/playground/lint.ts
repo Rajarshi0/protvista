@@ -139,6 +139,12 @@ export interface LintResult {
    * the element reads it: a child config inherits its base's `sequence:`.
    */
   declaresSequence: boolean;
+  /**
+   * The config as parsed, before `accession` (or an inherited `sequence:`)
+   * is injected, so a caller needs no second parse. Absent when the text is blank or does not parse (a
+   * parsed config is never `undefined`).
+   */
+  parsed?: unknown;
 }
 
 /** {@link lintConfig}'s options. */
@@ -176,11 +182,11 @@ export function memoizedExtendsFetcher(
 
 /**
  * {@link computeDiagnostics}, plus what the page needs to know about the
- * config without parsing it a second time: whether it declares `sequence:`,
- * itself or through `extends:`. A `sequence:` config is validated without
- * the accession, exactly as the element's loader treats it. The diagnostics
- * are still the editor text's own: a base is fetched only to read its
- * `sequence:`.
+ * config without parsing it a second time: the config it parsed, and
+ * whether it declares `sequence:`, itself or through `extends:`. A
+ * `sequence:` config is validated without the accession, exactly as the
+ * element's loader treats it. The diagnostics are still the editor text's
+ * own: a base is fetched only to read its `sequence:`.
  */
 export async function lintConfig(
   text: string,
@@ -221,8 +227,9 @@ export async function lintConfig(
   const declaresSequence = own != null || inherited !== undefined;
   // Validated as the sequence config it is once merged, so `{accession}` is
   // checked as sequence mode checks it, not as a missing accession.
+  let validated = parsed;
   if (inherited !== undefined) {
-    parsed = { ...(parsed as object), sequence: inherited };
+    validated = { ...(parsed as object), sequence: inherited };
   }
 
   // Only when the config declares no accession itself — an authored
@@ -234,10 +241,10 @@ export async function lintConfig(
     !declaresSequence &&
     (parsed as { accession?: unknown }).accession == null
   ) {
-    parsed = { ...(parsed as object), accession };
+    validated = { ...(validated as object), accession };
   }
 
-  const result = validateConfig(parsed, createRegistry());
+  const result = validateConfig(validated, createRegistry());
   const diagnostics = result.issues.map((issue) => ({
     ...locate(text, issue.path),
     // An issue's own severity, not a blanket 'error': a warning names
@@ -249,7 +256,7 @@ export async function lintConfig(
     path: issue.path,
     message: issue.path ? `${issue.message} (${issue.path})` : issue.message,
   }));
-  return { diagnostics, declaresSequence };
+  return { diagnostics, declaresSequence, parsed };
 }
 
 /**

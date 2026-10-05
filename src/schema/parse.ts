@@ -51,17 +51,6 @@ function detectFormat(text: string): 'json' | 'yaml' {
 /**
  * Lazy-load `js-yaml` and parse. Uses `load` (not `loadAll`) because
  * the config schema is defined for a single root document.
- *
- * Pins `CORE_SCHEMA` explicitly — the narrowest schema `js-yaml`
- * offers (the failsafe types plus `null` / bool / int / float). It
- * carries no `!!js/function` or `!!js/regexp` tags that would
- * construct arbitrary JS objects, and no merge keys or timestamps.
- * Configs are authored input, not trusted code, so we name the schema
- * rather than relying on the library's version-dependent default.
- *
- * `SAFE_SCHEMA` is kept in the lookup below only as a zero-cost guard:
- * neither the pinned 4.x nor 5.x exports that name, so the `??` has
- * always fallen through to `CORE_SCHEMA`.
  */
 async function parseYaml(text: string): Promise<unknown> {
   // A document with no content — blank, whitespace, or comments only —
@@ -76,6 +65,27 @@ async function parseYaml(text: string): Promise<unknown> {
   if (!hasContent) {
     throw new SyntaxError('expected a document, but the input is empty');
   }
+  return (await yamlReader())(text);
+}
+
+/**
+ * The YAML reader behind {@link parseConfigText}: `js-yaml`'s `load` with
+ * the schema the parser pins, for a caller that must agree with the parser
+ * on how a scalar reads (the playground writing a value plain or quoted).
+ * It throws what `load` throws, and is lazy-loaded like the parser.
+ *
+ * Pins `CORE_SCHEMA` explicitly — the narrowest schema `js-yaml`
+ * offers (the failsafe types plus `null` / bool / int / float). It
+ * carries no `!!js/function` or `!!js/regexp` tags that would
+ * construct arbitrary JS objects, and no merge keys or timestamps.
+ * Configs are authored input, not trusted code, so we name the schema
+ * rather than relying on the library's version-dependent default.
+ *
+ * `SAFE_SCHEMA` is kept in the lookup below only as a zero-cost guard:
+ * neither the pinned 4.x nor 5.x exports that name, so the `??` has
+ * always fallen through to `CORE_SCHEMA`.
+ */
+export async function yamlReader(): Promise<(text: string) => unknown> {
   const mod = await import('js-yaml');
   // Two concrete shapes reach here, so tolerate either: native Node
   // ESM hands back the namespace directly (`mod.load`), while esbuild
@@ -95,7 +105,6 @@ async function parseYaml(text: string): Promise<unknown> {
   const schema =
     (yaml as { SAFE_SCHEMA?: unknown; CORE_SCHEMA?: unknown }).SAFE_SCHEMA ??
     (yaml as { CORE_SCHEMA?: unknown }).CORE_SCHEMA;
-  return schema !== undefined
-    ? yaml.load(text, { schema })
-    : yaml.load(text);
+  return (text) =>
+    schema !== undefined ? yaml.load(text, { schema }) : yaml.load(text);
 }

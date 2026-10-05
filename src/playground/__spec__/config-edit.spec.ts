@@ -9,6 +9,7 @@ import { parseConfigText } from '../../schema/parse.js';
 import { mergeExtends } from '../../schema/extends.js';
 import type { ProtvistaViewerConfig } from '../../schema/types.js';
 import { computeDiagnostics } from '../lint.js';
+import { referenceFor } from '../local-files.js';
 import { PRESETS, getPreset } from '../presets.js';
 import {
   appendTrack,
@@ -27,6 +28,9 @@ const ROW: NewRow = {
 };
 
 const parse = (text: string) => parseConfigText(text);
+/** A row whose height YAML reads as NaN, which is not `===` itself. */
+const NAN_CONFIG =
+  'rows:\n  - id: A\n    data: ./a.csv\n    rendering:\n      height: .nan\n';
 const comments = (text: string) =>
   text.split('\n').filter((line) => line.trimStart().startsWith('#'));
 
@@ -120,6 +124,68 @@ describe('appendTrack', () => {
   });
 
   it.each([
+    '.5',
+    '.5e3',
+    '.0',
+    '.inf',
+    '.NaN',
+    'null',
+    'True',
+    '~',
+    '0x1F',
+    '1e3',
+    'yes',
+    'OFF',
+  ])(
+    'quotes a label of %s, which would not read back as written',
+    async (word) => {
+      const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+      const row = { ...ROW, label: word };
+      const result = await appendTrack(text, await parse(text), row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`label: ${JSON.stringify(word)}\n`);
+      expect(
+        ((await parse(result.text)) as { rows: unknown[] }).rows[1]
+      ).toEqual(row);
+    }
+  );
+
+  it.each(['hits.csv', './data/hits.csv', 'my_track', 'nullable', 'yes.csv'])(
+    'writes a label of %s plain, as it reads back as written',
+    async (word) => {
+      const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+      const row = { ...ROW, label: word };
+      const result = await appendTrack(text, await parse(text), row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`label: ${word}\n`);
+    }
+  );
+
+  it('adds a file named .5, quoting the label YAML would read as a number', async () => {
+    const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+    const parsed = await parse(text);
+    const row: NewRow = {
+      id: rowIdFor('.5', parsed),
+      label: rowLabelFor('.5'),
+      kind: 'features',
+      data: referenceFor('.5'),
+    };
+    const result = await appendTrack(text, parsed, row);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(
+      `${text}  - id: "-5"\n    label: ".5"\n    kind: features\n    data: ./.5\n`
+    );
+  });
+
+  it('quotes a url a flow mapping would read as syntax, though it reads back alone', async () => {
+    const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+    const row = { ...ROW, data: { url: './a,b.txt', format: 'csv' as const } };
+    const result = await appendTrack(text, await parse(text), row);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toContain('data: { url: "./a,b.txt", format: csv }\n');
+  });
+
+  it.each([
     [
       'a top-level key starting with -',
       'rows:\n  - id: a\n    data: ./a.csv\n-x: 1\n',
@@ -181,6 +247,15 @@ describe('appendTrack', () => {
     expect(await appendTrack('rows: 3', { rows: 3 }, ROW)).toMatchObject({
       snippet: expect.stringContaining('- id: hits') as unknown,
     });
+  });
+
+  it('adds the row to a config holding a .nan elsewhere', async () => {
+    const text = NAN_CONFIG;
+    const result = await appendTrack(text, await parse(text), ROW);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(
+      `${text}  - id: hits\n    label: hits.csv\n    kind: features\n    data: ./hits.csv\n`
+    );
   });
 
   it('suffixes a duplicate id', async () => {
@@ -320,6 +395,18 @@ describe('attachToTrack', () => {
       error: expect.stringContaining('by hand') as unknown,
       snippet: 'data: ./hits.csv',
     });
+  });
+
+  it('edits a config holding a .nan elsewhere', async () => {
+    const text = NAN_CONFIG;
+    const result = await attachToTrack(
+      text,
+      await parse(text),
+      { path: 'A', rowIndex: 0 },
+      './b.csv'
+    );
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(text.replace('./a.csv', './b.csv'));
   });
 
   it('reports a track that is not in the config', async () => {

@@ -13,9 +13,14 @@ import { userEvent } from 'vitest/browser';
 import { EditorView } from 'codemirror';
 
 import { CSS_PREFIX } from '../styles/css-prefix.js';
+import { parseConfigText } from '../schema/parse.js';
 import { decodeState, encodeState } from '../playground/url-state.js';
 import { MAX_FILE_BYTES, PRIVACY_NOTE } from '../playground/local-files.js';
+import { getPreset } from '../playground/presets.js';
 import { expectNoA11yViolations } from './axe.js';
+
+// The real parser, wrapped in a spy so a validation's parses can be counted.
+vi.mock('../schema/parse.js', { spy: true });
 
 const BADGE = `.${CSS_PREFIX}-error-badge`;
 
@@ -259,6 +264,26 @@ describe('playground: load a local data file', () => {
     const shared = decodeState(location.hash)?.config ?? '';
     expect(shared).toContain('./hits.csv');
     expect(shared).not.toContain('Kinase');
+  });
+
+  it('parses the config once per validation, pre-flight included', async () => {
+    const before = editorText();
+    const parses = vi.mocked(parseConfigText);
+    parses.mockClear();
+    const edited = `${before}# an edit\n`;
+    setEditorText(edited);
+    // The share link is written once the validation, pre-flight and all, is done.
+    await vi.waitFor(
+      () => expect(decodeState(location.hash)?.config).toBe(edited),
+      { timeout: 3000 }
+    );
+    expect(parses).toHaveBeenCalledTimes(1);
+
+    setEditorText(before);
+    await vi.waitFor(
+      () => expect(decodeState(location.hash)?.config).toBe(before),
+      { timeout: 3000 }
+    );
   });
 
   it('reloads the same file with no form, and names it in the out-of-range warning', async () => {
@@ -702,6 +727,42 @@ rows:
       await failed;
       expect(rowTwo()).toHaveLength(0);
     });
+  });
+
+  it('clears the status line on a new preset or accession, keeping the files loaded', async () => {
+    /** A file the flow-style `rows:` can't take: the status and a snippet say so. */
+    async function failEdit(name: string): Promise<void> {
+      setEditorText('accession: P05067\nrows: []\n');
+      await pick(name, GOOD);
+      await addAsNewTrack();
+      await vi.waitFor(() =>
+        expect(byId('data-status').textContent).toMatch(
+          /Couldn't add the track automatically/
+        )
+      );
+      expect(byId('data-snippet').hidden).toBe(false);
+    }
+    const cleared = () => {
+      expect(byId('data-status').textContent).toBe('');
+      expect(byId('data-snippet').hidden).toBe(true);
+      expect(byId('data-snippet').textContent).toBe('');
+      expect(byId('data-files').textContent).toContain('hits.csv');
+    };
+
+    await failEdit('flow.csv');
+    await userEvent.selectOptions(byId('preset'), 'csv');
+    expect(editorText()).toBe(getPreset('csv')!.config);
+    cleared();
+    expect(byId('data-files').textContent).toContain('flow.csv');
+
+    await failEdit('flow2.csv');
+    const accession = byId<HTMLInputElement>('accession');
+    await userEvent.clear(accession);
+    await userEvent.type(accession, 'P12345');
+    await userEvent.keyboard('{Tab}');
+    expect(accession.value).toBe('P12345');
+    cleared();
+    expect(byId('data-files').textContent).toContain('flow2.csv');
   });
 });
 
