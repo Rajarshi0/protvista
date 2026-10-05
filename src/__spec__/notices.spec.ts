@@ -1526,6 +1526,52 @@ describe('author mode expands errors', () => {
   });
 });
 
+describe('a track with an error and a visitor notice', () => {
+  /** A track whose colour warned, then whose element rejected its data. */
+  async function mountBoth(attrs: string[]) {
+    quiet();
+    const { el, events } = mountEl(
+      {
+        sequence: RESIDUES,
+        rows: [csvTrack('colours', 'Colours', ['DOMAIN,2,8,a,bleu'])],
+      },
+      { attrs }
+    );
+    await ready(el, events, 'unpaintable-color');
+    el._assignComponentData(rejecting(), [], 'colours-colours');
+    await el.updateComplete;
+    expect(events.some((d) => d.severity === 'error')).toBe(true);
+    return el;
+  }
+
+  it('shows visitors both the badge and the notice', async () => {
+    const el = await mountBoth([]);
+    const label = rowLabel(el, 'colours')!;
+    expect(label.querySelector(BADGE)).not.toBeNull();
+    const note = label.querySelector(`.${CSS_PREFIX}-note--notice`);
+    expect(note).not.toBeNull();
+    expect(linesOf(note!)).toEqual([COLOUR_TEXT]);
+  });
+
+  it('lists the error, then the warning, on one author control', async () => {
+    const el = await mountBoth(['show-warnings']);
+    const label = rowLabel(el, 'colours')!;
+    expect(label.querySelectorAll(NOTE)).toHaveLength(1);
+    const button = label.querySelector(ERROR_NOTE)!;
+    expect(button.getAttribute('aria-label')).toBe(
+      'Track failed to load — 2 authoring notes'
+    );
+    const texts = [
+      ...popoverOf(button).querySelectorAll(
+        `.${CSS_PREFIX}-note-popover__text`
+      ),
+    ].map((p) => p.textContent!);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain('could not render the data it was given');
+    expect(texts[1]).toMatch(/colou?r/i);
+  });
+});
+
 describe('every author note appears exactly once', () => {
   const lab = () =>
     csvTrack('lab', 'Lab hits', [
