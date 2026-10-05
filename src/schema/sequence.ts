@@ -206,9 +206,9 @@ export function sequenceDisplayLabel(sequence: ResolvedSequence): string {
   const { header } = sequence;
   if (!header) return DEFAULT_SEQUENCE_LABEL;
   const chars = Array.from(header);
-  return chars.length > MAX_LABEL_LENGTH
-    ? `${chars.slice(0, MAX_LABEL_LENGTH - 1).join('').trimEnd()}…`
-    : header;
+  if (chars.length <= MAX_LABEL_LENGTH) return header;
+  const cut = chars.slice(0, MAX_LABEL_LENGTH - 1).join('');
+  return `${cut.trimEnd()}…`;
 }
 
 /**
