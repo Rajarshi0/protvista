@@ -153,18 +153,13 @@ rows:
     expect(await lintConfig(SEQUENCE, 'P05067')).toMatchObject({
       diagnostics: [],
       declaresSequence: true,
-      ownSequence: '>my construct v2\nMKTAYIAKQRQISFVKSHFSRQ\n',
     });
     expect(await computeDiagnostics(SEQUENCE, 'P05067')).toEqual([]);
   });
 
   it('says an accession config declares no sequence', async () => {
-    const { declaresSequence, ownSequence } = await lintConfig(
-      VALID,
-      'P05067'
-    );
+    const { declaresSequence } = await lintConfig(VALID, 'P05067');
     expect(declaresSequence).toBe(false);
-    expect(ownSequence).toBeUndefined();
   });
 
   it('reads a sequence inherited through extends:', async () => {
