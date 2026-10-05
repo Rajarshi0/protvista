@@ -9,7 +9,7 @@
  * so there is one validation path shared with the live preview.
  */
 import { EditorView, basicSetup } from 'codemirror';
-import { Compartment } from '@codemirror/state';
+import { Compartment, Transaction } from '@codemirror/state';
 import { yaml } from '@codemirror/lang-yaml';
 import { json } from '@codemirror/lang-json';
 import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -24,7 +24,11 @@ const languageFor = (text: string) =>
 export interface PlaygroundEditor {
   readonly view: EditorView;
   getText(): string;
-  /** Replace the whole document (used when loading a preset or link). */
+  /**
+   * Replace the whole document (used when loading a preset or link, and for
+   * a config edit). Always its own undo step: Ctrl/Cmd+Z restores exactly
+   * the text it replaced.
+   */
   setText(text: string): void;
   /** Render diagnostics in the gutter; empty array clears them. */
   setDiagnostics(diagnostics: readonly Diagnostic[]): void;
@@ -59,6 +63,11 @@ export function createEditor(options: {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: text },
         effects: languageConf.reconfigure(languageFor(text)),
+        // A user event the history never joins with the edit before it.
+        // Without one, a programmatic change made within the history's
+        // grouping delay of the last edit is merged into that edit's undo
+        // step, and Ctrl/Cmd+Z would undo both.
+        annotations: Transaction.userEvent.of('set'),
       });
     },
     setDiagnostics(diagnostics) {
