@@ -446,7 +446,7 @@ const control = createLocalDataControl({
     store.remove(ref);
     control.showFiles(store.list());
     control.setStatus(`Removed ${name}.`);
-    void run();
+    void refreshDiagnostics();
   },
 });
 
