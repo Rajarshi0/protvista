@@ -1,64 +1,41 @@
 /**
  * "Load data file…" in the playground, through the real page controller.
  *
- * The playground's `index.ts` wires itself to the page's elements when it is
- * first imported, so this spec builds the same skeleton `playground.astro`
- * serves (the ids are the contract), seeds the URL hash with a small config,
- * stubs `fetch` for everything but `blob:` URLs, and imports the controller
- * once. The tests then run in order against that one live page — loading a
- * file is meant to change what comes next.
+ * `openPlayground` (see `playground-page.ts`) builds the page, seeds the URL
+ * hash with a small config, stubs `fetch` and imports the controller once.
+ * The tests then run in order against that one live page — loading a file is
+ * meant to change what comes next.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { userEvent } from 'vitest/browser';
-import { EditorView } from 'codemirror';
 
 import { CSS_PREFIX } from '../styles/css-prefix.js';
 import { parseConfigText } from '../schema/parse.js';
-import { decodeState, encodeState } from '../playground/url-state.js';
+import { decodeState } from '../playground/url-state.js';
 import { MAX_FILE_BYTES, PRIVACY_NOTE } from '../playground/local-files.js';
 import { getPreset } from '../playground/presets.js';
 import { expectNoA11yViolations } from './axe.js';
+import {
+  blobFetchCount,
+  byId,
+  closeGate,
+  closePlayground,
+  dropOnPane,
+  editorText,
+  fileDrag,
+  listItems,
+  nextError,
+  openGate,
+  openPlayground,
+  pick,
+  preview,
+  setEditorText,
+} from './playground-page.js';
 
 // The real parser, wrapped in a spy so a validation's parses can be counted.
 vi.mock('../schema/parse.js', { spy: true });
 
 const BADGE = `.${CSS_PREFIX}-error-badge`;
-
-/** Every id `index.ts` and the local-data control look up. */
-const SKELETON = `
-  <header>
-    <select id="preset" aria-label="Configuration preset"></select>
-    <input id="accession" aria-label="Accession" value="P05067" />
-    <div class="local-data">
-      <button id="load-data" type="button" aria-describedby="local-note">Load data file…</button>
-      <input id="data-file" type="file" hidden />
-      <span id="local-note">Read in your browser — never uploaded. Only the file name goes into the config.</span>
-    </div>
-    <button id="run" type="button">Run</button>
-  </header>
-  <p id="preset-desc"></p>
-  <main id="panels">
-    <section id="config-pane" aria-label="Config editor">
-      <div class="local-files">
-        <div id="data-attach" hidden></div>
-        <p id="data-status" role="status" aria-live="polite"></p>
-        <pre id="data-snippet" hidden></pre>
-        <ul id="data-files" aria-label="Loaded data files" hidden></ul>
-      </div>
-      <div id="editor"></div>
-      <div id="drop-overlay" hidden><p>Drop to load — never uploaded.</p></div>
-      <div role="region" aria-label="Validation results">
-        <p id="error-summary"></p>
-        <ul id="errors"></ul>
-      </div>
-    </section>
-    <div id="splitter" role="separator" aria-label="Resize panels" aria-valuenow="50" tabindex="0"></div>
-    <section aria-label="Live preview">
-      <p id="preview-stale" hidden></p>
-      <div id="preview"></div>
-    </section>
-  </main>
-`;
 
 const CONFIG = `accession: P05067
 rows:
@@ -84,42 +61,6 @@ const OUT_OF_RANGE =
   'type,start,end,description\nDOMAIN,10,25,Kinase\nSITE,700,812,Tail';
 const BAD = 'type,start,end,description\nDOMAIN,abc,25,Kinase';
 
-type Preview = HTMLElement & { data: Record<string, unknown> };
-type ErrorDetail = {
-  phase: string;
-  context?: { errorKind?: string; trackId?: string };
-};
-
-const byId = <T extends HTMLElement>(id: string) =>
-  document.getElementById(id) as T;
-const editorView = () =>
-  EditorView.findFromDOM(document.querySelector<HTMLElement>('.cm-editor')!)!;
-const editorText = () => editorView().state.doc.toString();
-const listItems = () => [...byId('errors').querySelectorAll('li')];
-const preview = () =>
-  document.querySelector<Preview>('#preview protvista-uniprot');
-
-/** Resolves with the next `protvista-error` the preview raises that `match`es. */
-function nextError(match: (d: ErrorDetail) => boolean): Promise<ErrorDetail> {
-  return new Promise((resolve) => {
-    const host = byId('preview');
-    const listener = (event: Event) => {
-      const detail = (event as CustomEvent<ErrorDetail>).detail;
-      if (!match(detail)) return;
-      host.removeEventListener('protvista-error', listener);
-      resolve(detail);
-    };
-    host.addEventListener('protvista-error', listener);
-  });
-}
-
-async function pick(name: string, text: string): Promise<void> {
-  await userEvent.upload(
-    byId('data-file'),
-    new File([text], name, { type: 'text/plain' })
-  );
-}
-
 /** Choose "New track" in the open attach form and press Add, by keyboard. */
 async function addAsNewTrack(): Promise<void> {
   const target = await vi.waitFor(() => {
@@ -138,99 +79,20 @@ async function addAsNewTrack(): Promise<void> {
   expect(document.activeElement).toBe(byId('load-data'));
 }
 
-/** Replace the whole editor text, as typing or pasting would. */
-function setEditorText(text: string): void {
-  const view = editorView();
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-  });
-}
-
-/** A drag carrying `files`, as the browser builds it. */
-function filesDrag(type: 'dragover' | 'drop', files: File[]): DragEvent {
-  const transfer = new DataTransfer();
-  for (const file of files) transfer.items.add(file);
-  return new DragEvent(type, {
-    dataTransfer: transfer,
-    bubbles: true,
-    cancelable: true,
-  });
-}
-
-/** A drag carrying one file, as the browser builds it. */
-function fileDrag(
-  type: 'dragover' | 'drop',
-  name: string,
-  text: string
-): DragEvent {
-  return filesDrag(type, [new File([text], name)]);
-}
-
-/** Drop `files` on the editor pane. */
-function dropOnPane(files: File[]): void {
-  byId('config-pane').dispatchEvent(filesDrag('drop', files));
-}
-
-const realFetch = globalThis.fetch.bind(globalThis);
-/**
- * Every `blob:` fetch waits on this gate, so a test can hold the preview's
- * read of a loaded file back while it edits the config. Open by default.
- */
-let gate: Promise<void> = Promise.resolve();
-let openGate: () => void = () => undefined;
-function closeGate(): void {
-  gate = new Promise((resolve) => (openGate = resolve));
-}
-let blobFetches = 0;
-/** The skeleton's top-level nodes, removed again after the run. */
-const fixture: Element[] = [];
-
 beforeAll(async () => {
-  const parsed = new DOMParser().parseFromString(SKELETON, 'text/html');
-  fixture.push(...parsed.body.children);
-  document.body.append(...fixture);
-  history.replaceState(
-    null,
-    '',
-    `#${encodeState({ config: CONFIG, accession: 'P05067' })}`
-  );
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input instanceof Request ? input.url : input);
-      // A loaded file is a real `blob:` fetch: no network involved.
-      if (url.startsWith('blob:')) {
-        blobFetches += 1;
-        await gate;
-        return realFetch(input, init);
-      }
-      if (url === SEQUENCE_BASE_URL) {
-        return new Response(SEQUENCE_BASE, { status: 200 });
-      }
-      const body = url.includes('/proteins/api/proteins/')
-        ? { sequence: { sequence: 'M'.repeat(770), length: 770 } }
-        : {};
-      return {
-        ok: true,
-        status: 200,
-        json: async () => body,
-        text: async () => '',
-      } as unknown as Response;
-    })
-  );
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  vi.spyOn(console, 'info').mockImplementation(() => undefined);
-  await import('../playground/index.js');
+  await openPlayground({
+    state: { config: CONFIG, accession: 'P05067' },
+    respond: (url) =>
+      url === SEQUENCE_BASE_URL
+        ? new Response(SEQUENCE_BASE, { status: 200 })
+        : undefined,
+  });
   await vi.waitFor(() => {
     if (!preview()) throw new Error('preview not mounted');
   });
 });
 
-afterAll(() => {
-  for (const node of fixture) node.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
+afterAll(closePlayground);
 
 describe('playground: load a local data file', () => {
   it('attaches a picked CSV as a new track and renders it, keeping the data out of the URL', async () => {
@@ -588,8 +450,8 @@ rows:
     );
     await vi.waitFor(() =>
       expect(byId('data-status').textContent).toBe(
-        'x.xlsx looks like a binary or compressed file — export it as CSV ' +
-          'or TSV and load that.'
+        'x.xlsx looks like a binary or compressed file — load plain text: ' +
+          'CSV, TSV, JSON or BED for a track, or FASTA for the sequence.'
       )
     );
     expect(byId('data-attach').hidden).toBe(true);
@@ -681,13 +543,13 @@ rows:
     it("lists a decode failure once when the track is renamed before the preview's report arrives", async () => {
       setEditorText(LATE);
       closeGate();
-      const fetched = blobFetches;
+      const fetched = blobFetchCount();
       const failed = lateFailure();
       await pick('late.csv', BAD);
       await vi.waitFor(() =>
         expect(byId('data-status').textContent).toMatch(/couldn't be read/)
       );
-      await vi.waitFor(() => expect(blobFetches).toBeGreaterThan(fetched));
+      await vi.waitFor(() => expect(blobFetchCount()).toBeGreaterThan(fetched));
       expect(rowTwo()).toHaveLength(1);
 
       // Live validation of the edit pre-flights `renamed`, not `late`.
@@ -706,12 +568,15 @@ rows:
     it("skips the mounted preview's report of a failure the pre-flight listed, even after the config breaks", async () => {
       setEditorText(LATE);
       closeGate();
-      const fetched = blobFetches;
+      const fetched = blobFetchCount();
       const failed = lateFailure();
       byId('run').click();
-      await vi.waitFor(() => expect(blobFetches).toBeGreaterThan(fetched), {
-        timeout: 5000,
-      });
+      await vi.waitFor(
+        () => expect(blobFetchCount()).toBeGreaterThan(fetched),
+        {
+          timeout: 5000,
+        }
+      );
       await vi.waitFor(() => expect(rowTwo()).toHaveLength(1));
 
       setEditorText(`${LATE}rows: [\n`);
@@ -732,7 +597,7 @@ rows:
   it('clears the status line on a new preset or accession, keeping the files loaded', async () => {
     /** A file the flow-style `rows:` can't take: the status and a snippet say so. */
     async function failEdit(name: string): Promise<void> {
-      setEditorText('accession: P05067\nrows: []\n');
+      setEditorText('accession: P05067\nrows: [{ id: a, data: ./a.csv }]\n');
       await pick(name, GOOD);
       await addAsNewTrack();
       await vi.waitFor(() =>

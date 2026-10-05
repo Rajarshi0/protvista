@@ -143,11 +143,14 @@ it('discovers every shipped config', () => {
       'examples/extend-default',
       'examples/csv-styled',
       'examples/sequence-only',
+      'examples/sequence-inline',
+      'examples/small-peptide',
+      'examples/conservation',
       'starter-kit/config.yaml',
       'src/default-config.yaml',
     ])
   );
-  expect(CASES.length).toBeGreaterThanOrEqual(14);
+  expect(CASES.length).toBeGreaterThanOrEqual(17);
 });
 
 function fetchersFor(root: string) {

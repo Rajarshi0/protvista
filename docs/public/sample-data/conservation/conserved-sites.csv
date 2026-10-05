@@ -1,0 +1,7 @@
+type,start,end,description,score
+SITE,6,6,At or above the 90th percentile of the scored residues in Pfam PF00301,0.877
+SITE,9,9,At or above the 90th percentile of the scored residues in Pfam PF00301,0.821
+SITE,13,13,At or above the 90th percentile of the scored residues in Pfam PF00301,0.781
+SITE,37,37,At or above the 90th percentile of the scored residues in Pfam PF00301,0.759
+SITE,39,39,At or above the 90th percentile of the scored residues in Pfam PF00301,0.862
+SITE,42,42,At or above the 90th percentile of the scored residues in Pfam PF00301,0.844

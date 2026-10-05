@@ -126,6 +126,557 @@ exports[`golden: examples/bed > resolution (expected to change with the refactor
 }
 `;
 
+exports[`golden: examples/conservation > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "binding_sites": [],
+    "binding_sites-binding_sites": [],
+    "conservation": [
+      {
+        "color": "#3d4451",
+        "name": "value",
+        "range": [
+          0.11,
+          0.877,
+        ],
+        "tooltipContent": "<h5>Name</h5><p>value</p>",
+        "values": [
+          {
+            "position": 4,
+            "value": 0.606,
+          },
+          {
+            "position": 5,
+            "value": 0.288,
+          },
+          {
+            "position": 6,
+            "value": 0.877,
+          },
+          {
+            "position": 7,
+            "value": 0.11,
+          },
+          {
+            "position": 8,
+            "value": 0.121,
+          },
+          {
+            "position": 9,
+            "value": 0.821,
+          },
+          {
+            "position": 10,
+            "value": 0.348,
+          },
+          {
+            "position": 11,
+            "value": 0.518,
+          },
+          {
+            "position": 12,
+            "value": 0.338,
+          },
+          {
+            "position": 13,
+            "value": 0.781,
+          },
+          {
+            "position": 14,
+            "value": 0.522,
+          },
+          {
+            "position": 15,
+            "value": 0.512,
+          },
+          {
+            "position": 16,
+            "value": 0.264,
+          },
+          {
+            "position": 17,
+            "value": 0.138,
+          },
+          {
+            "position": 18,
+            "value": 0.614,
+          },
+          {
+            "position": 19,
+            "value": 0.376,
+          },
+          {
+            "position": 20,
+            "value": 0.323,
+          },
+          {
+            "position": 21,
+            "value": 0.161,
+          },
+          {
+            "position": 22,
+            "value": 0.166,
+          },
+          {
+            "position": 23,
+            "value": 0.336,
+          },
+          {
+            "position": 24,
+            "value": 0.451,
+          },
+          {
+            "position": 25,
+            "value": 0.295,
+          },
+          {
+            "position": 26,
+            "value": 0.465,
+          },
+          {
+            "position": 27,
+            "value": 0.549,
+          },
+          {
+            "position": 28,
+            "value": 0.522,
+          },
+          {
+            "position": 29,
+            "value": 0.262,
+          },
+          {
+            "position": 30,
+            "value": 0.706,
+          },
+          {
+            "position": 31,
+            "value": 0.324,
+          },
+          {
+            "position": 32,
+            "value": 0.363,
+          },
+          {
+            "position": 33,
+            "value": 0.532,
+          },
+          {
+            "position": 34,
+            "value": 0.643,
+          },
+          {
+            "position": 35,
+            "value": 0.322,
+          },
+          {
+            "position": 36,
+            "value": 0.401,
+          },
+          {
+            "position": 37,
+            "value": 0.759,
+          },
+          {
+            "position": 38,
+            "value": 0.179,
+          },
+          {
+            "position": 39,
+            "value": 0.862,
+          },
+          {
+            "position": 40,
+            "value": 0.702,
+          },
+          {
+            "position": 41,
+            "value": 0.183,
+          },
+          {
+            "position": 42,
+            "value": 0.844,
+          },
+          {
+            "position": 43,
+            "value": 0.352,
+          },
+          {
+            "position": 44,
+            "value": 0.3,
+          },
+          {
+            "position": 45,
+            "value": 0.222,
+          },
+          {
+            "position": 46,
+            "value": 0.59,
+          },
+          {
+            "position": 47,
+            "value": 0.211,
+          },
+          {
+            "position": 48,
+            "value": 0.153,
+          },
+          {
+            "position": 49,
+            "value": 0.748,
+          },
+        ],
+      },
+    ],
+    "conservation-conservation": [
+      {
+        "color": "#3d4451",
+        "name": "value",
+        "range": [
+          0.11,
+          0.877,
+        ],
+        "tooltipContent": "<h5>Name</h5><p>value</p>",
+        "values": [
+          {
+            "position": 4,
+            "value": 0.606,
+          },
+          {
+            "position": 5,
+            "value": 0.288,
+          },
+          {
+            "position": 6,
+            "value": 0.877,
+          },
+          {
+            "position": 7,
+            "value": 0.11,
+          },
+          {
+            "position": 8,
+            "value": 0.121,
+          },
+          {
+            "position": 9,
+            "value": 0.821,
+          },
+          {
+            "position": 10,
+            "value": 0.348,
+          },
+          {
+            "position": 11,
+            "value": 0.518,
+          },
+          {
+            "position": 12,
+            "value": 0.338,
+          },
+          {
+            "position": 13,
+            "value": 0.781,
+          },
+          {
+            "position": 14,
+            "value": 0.522,
+          },
+          {
+            "position": 15,
+            "value": 0.512,
+          },
+          {
+            "position": 16,
+            "value": 0.264,
+          },
+          {
+            "position": 17,
+            "value": 0.138,
+          },
+          {
+            "position": 18,
+            "value": 0.614,
+          },
+          {
+            "position": 19,
+            "value": 0.376,
+          },
+          {
+            "position": 20,
+            "value": 0.323,
+          },
+          {
+            "position": 21,
+            "value": 0.161,
+          },
+          {
+            "position": 22,
+            "value": 0.166,
+          },
+          {
+            "position": 23,
+            "value": 0.336,
+          },
+          {
+            "position": 24,
+            "value": 0.451,
+          },
+          {
+            "position": 25,
+            "value": 0.295,
+          },
+          {
+            "position": 26,
+            "value": 0.465,
+          },
+          {
+            "position": 27,
+            "value": 0.549,
+          },
+          {
+            "position": 28,
+            "value": 0.522,
+          },
+          {
+            "position": 29,
+            "value": 0.262,
+          },
+          {
+            "position": 30,
+            "value": 0.706,
+          },
+          {
+            "position": 31,
+            "value": 0.324,
+          },
+          {
+            "position": 32,
+            "value": 0.363,
+          },
+          {
+            "position": 33,
+            "value": 0.532,
+          },
+          {
+            "position": 34,
+            "value": 0.643,
+          },
+          {
+            "position": 35,
+            "value": 0.322,
+          },
+          {
+            "position": 36,
+            "value": 0.401,
+          },
+          {
+            "position": 37,
+            "value": 0.759,
+          },
+          {
+            "position": 38,
+            "value": 0.179,
+          },
+          {
+            "position": 39,
+            "value": 0.862,
+          },
+          {
+            "position": 40,
+            "value": 0.702,
+          },
+          {
+            "position": 41,
+            "value": 0.183,
+          },
+          {
+            "position": 42,
+            "value": 0.844,
+          },
+          {
+            "position": 43,
+            "value": 0.352,
+          },
+          {
+            "position": 44,
+            "value": 0.3,
+          },
+          {
+            "position": 45,
+            "value": 0.222,
+          },
+          {
+            "position": 46,
+            "value": 0.59,
+          },
+          {
+            "position": 47,
+            "value": 0.211,
+          },
+          {
+            "position": 48,
+            "value": 0.153,
+          },
+          {
+            "position": 49,
+            "value": 0.748,
+          },
+        ],
+      },
+    ],
+    "conserved_sites": [
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 6,
+        "score": 0.877,
+        "start": 6,
+        "tooltipContent": "<h5>Residue</h5><p>6</p><h5>Conservation score</h5><p>0.877</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 9,
+        "score": 0.821,
+        "start": 9,
+        "tooltipContent": "<h5>Residue</h5><p>9</p><h5>Conservation score</h5><p>0.821</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 13,
+        "score": 0.781,
+        "start": 13,
+        "tooltipContent": "<h5>Residue</h5><p>13</p><h5>Conservation score</h5><p>0.781</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 37,
+        "score": 0.759,
+        "start": 37,
+        "tooltipContent": "<h5>Residue</h5><p>37</p><h5>Conservation score</h5><p>0.759</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 39,
+        "score": 0.862,
+        "start": 39,
+        "tooltipContent": "<h5>Residue</h5><p>39</p><h5>Conservation score</h5><p>0.862</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 42,
+        "score": 0.844,
+        "start": 42,
+        "tooltipContent": "<h5>Residue</h5><p>42</p><h5>Conservation score</h5><p>0.844</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+    ],
+    "conserved_sites-conserved_sites": [
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 6,
+        "score": 0.877,
+        "start": 6,
+        "tooltipContent": "<h5>Residue</h5><p>6</p><h5>Conservation score</h5><p>0.877</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 9,
+        "score": 0.821,
+        "start": 9,
+        "tooltipContent": "<h5>Residue</h5><p>9</p><h5>Conservation score</h5><p>0.821</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 13,
+        "score": 0.781,
+        "start": 13,
+        "tooltipContent": "<h5>Residue</h5><p>13</p><h5>Conservation score</h5><p>0.781</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 37,
+        "score": 0.759,
+        "start": 37,
+        "tooltipContent": "<h5>Residue</h5><p>37</p><h5>Conservation score</h5><p>0.759</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 39,
+        "score": 0.862,
+        "start": 39,
+        "tooltipContent": "<h5>Residue</h5><p>39</p><h5>Conservation score</h5><p>0.862</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+      {
+        "description": "At or above the 90th percentile of the scored residues in Pfam PF00301",
+        "end": 42,
+        "score": 0.844,
+        "start": 42,
+        "tooltipContent": "<h5>Residue</h5><p>42</p><h5>Conservation score</h5><p>0.844</p><h5>Why it is shown</h5><p>At or above the 90th percentile of the scored residues in Pfam PF00301</p>",
+        "type": "SITE",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/conservation > resolution (expected to change with the refactor) 1`] = `
+{
+  "binding_sites-binding_sites": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": "uniprot-features-json",
+        "format": null,
+        "from": "url",
+        "inline": false,
+        "shape": "feature",
+        "url": "https://www.ebi.ac.uk/proteins/api/features/{accession}",
+      },
+    ],
+  },
+  "conservation-conservation": {
+    "component": "nightingale-linegraph-track",
+    "kind": "linegraph",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "point",
+        "url": "./conservation.csv",
+      },
+    ],
+  },
+  "conserved_sites-conserved_sites": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "feature",
+        "url": "./conserved-sites.csv",
+      },
+    ],
+  },
+}
+`;
+
 exports[`golden: examples/csv > payloads (must survive the refactor byte-identically) 1`] = `
 {
   "data": {
@@ -2050,6 +2601,101 @@ exports[`golden: examples/linegraph-csv > resolution (expected to change with th
 }
 `;
 
+exports[`golden: examples/sequence-inline > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "hotspots": [
+      {
+        "description": "Binding domain (designed)",
+        "end": 140,
+        "score": 0.95,
+        "start": 18,
+        "tooltipContent": "<h5>Type</h5><p>DOMAIN</p><h5>Description</h5><p>Binding domain (designed)</p><h5>Start</h5><p>18</p><h5>End</h5><p>140</p>",
+        "type": "DOMAIN",
+      },
+      {
+        "description": "Predicted heparin-binding site",
+        "end": 70,
+        "score": 0.87,
+        "start": 62,
+        "tooltipContent": "<h5>Type</h5><p>BINDING</p><h5>Description</h5><p>Predicted heparin-binding site</p><h5>Start</h5><p>62</p><h5>End</h5><p>70</p>",
+        "type": "BINDING",
+      },
+      {
+        "description": "Flexible linker",
+        "end": 190,
+        "score": 0.6,
+        "start": 150,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Flexible linker</p><h5>Start</h5><p>150</p><h5>End</h5><p>190</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Lab-observed loss-of-function point mutation",
+        "end": 214,
+        "score": 0.75,
+        "start": 214,
+        "tooltipContent": "<h5>Type</h5><p>MUTAGEN</p><h5>Description</h5><p>Lab-observed loss-of-function point mutation</p><h5>Start</h5><p>214</p><h5>End</h5><p>214</p>",
+        "type": "MUTAGEN",
+      },
+    ],
+    "hotspots-hotspots": [
+      {
+        "description": "Binding domain (designed)",
+        "end": 140,
+        "score": 0.95,
+        "start": 18,
+        "tooltipContent": "<h5>Type</h5><p>DOMAIN</p><h5>Description</h5><p>Binding domain (designed)</p><h5>Start</h5><p>18</p><h5>End</h5><p>140</p>",
+        "type": "DOMAIN",
+      },
+      {
+        "description": "Predicted heparin-binding site",
+        "end": 70,
+        "score": 0.87,
+        "start": 62,
+        "tooltipContent": "<h5>Type</h5><p>BINDING</p><h5>Description</h5><p>Predicted heparin-binding site</p><h5>Start</h5><p>62</p><h5>End</h5><p>70</p>",
+        "type": "BINDING",
+      },
+      {
+        "description": "Flexible linker",
+        "end": 190,
+        "score": 0.6,
+        "start": 150,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Flexible linker</p><h5>Start</h5><p>150</p><h5>End</h5><p>190</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Lab-observed loss-of-function point mutation",
+        "end": 214,
+        "score": 0.75,
+        "start": 214,
+        "tooltipContent": "<h5>Type</h5><p>MUTAGEN</p><h5>Description</h5><p>Lab-observed loss-of-function point mutation</p><h5>Start</h5><p>214</p><h5>End</h5><p>214</p>",
+        "type": "MUTAGEN",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/sequence-inline > resolution (expected to change with the refactor) 1`] = `
+{
+  "hotspots-hotspots": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": "uniprot-features-json",
+        "format": null,
+        "from": "inline",
+        "inline": true,
+        "shape": "feature",
+        "url": null,
+      },
+    ],
+  },
+}
+`;
+
 exports[`golden: examples/sequence-only > payloads (must survive the refactor byte-identically) 1`] = `
 {
   "data": {
@@ -2139,6 +2785,93 @@ exports[`golden: examples/sequence-only > resolution (expected to change with th
         "inline": false,
         "shape": "feature",
         "url": "./hotspots.csv",
+      },
+    ],
+  },
+}
+`;
+
+exports[`golden: examples/small-peptide > payloads (must survive the refactor byte-identically) 1`] = `
+{
+  "data": {
+    "structure": [
+      {
+        "description": "α-helix",
+        "end": 8,
+        "start": 2,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>α-helix</p><h5>Start</h5><p>2</p><h5>End</h5><p>8</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "3₁₀-helix",
+        "end": 14,
+        "start": 11,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>3₁₀-helix</p><h5>Start</h5><p>11</p><h5>End</h5><p>14</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "Polyproline II segment",
+        "end": 19,
+        "start": 17,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Polyproline II segment</p><h5>Start</h5><p>17</p><h5>End</h5><p>19</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Trp6, buried in the cage",
+        "end": 6,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Trp6, buried in the cage</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+    ],
+    "structure-structure": [
+      {
+        "description": "α-helix",
+        "end": 8,
+        "start": 2,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>α-helix</p><h5>Start</h5><p>2</p><h5>End</h5><p>8</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "3₁₀-helix",
+        "end": 14,
+        "start": 11,
+        "tooltipContent": "<h5>Type</h5><p>HELIX</p><h5>Description</h5><p>3₁₀-helix</p><h5>Start</h5><p>11</p><h5>End</h5><p>14</p>",
+        "type": "HELIX",
+      },
+      {
+        "description": "Polyproline II segment",
+        "end": 19,
+        "start": 17,
+        "tooltipContent": "<h5>Type</h5><p>REGION</p><h5>Description</h5><p>Polyproline II segment</p><h5>Start</h5><p>17</p><h5>End</h5><p>19</p>",
+        "type": "REGION",
+      },
+      {
+        "description": "Trp6, buried in the cage",
+        "end": 6,
+        "start": 6,
+        "tooltipContent": "<h5>Type</h5><p>SITE</p><h5>Description</h5><p>Trp6, buried in the cage</p><h5>Start</h5><p>6</p><h5>End</h5><p>6</p>",
+        "type": "SITE",
+      },
+    ],
+  },
+  "hasData": true,
+}
+`;
+
+exports[`golden: examples/small-peptide > resolution (expected to change with the refactor) 1`] = `
+{
+  "structure-structure": {
+    "component": "nightingale-track-canvas",
+    "kind": "features",
+    "sources": [
+      {
+        "adapter": null,
+        "format": "csv",
+        "from": "file",
+        "inline": false,
+        "shape": "feature",
+        "url": "./structure.csv",
       },
     ],
   },

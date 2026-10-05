@@ -1,0 +1,24 @@
+# A very short protein from its own sequence: Trp-cage TC5b, a designed
+# 20-residue miniprotein that folds on its own. It isn't in UniProt, so the
+# config gives `sequence:` (inline FASTA) instead of an accession, and its
+# secondary structure comes from your own CSV file.
+#
+# Sources for structure.csv:
+#   - Residue ranges: PDBe's computed secondary structure for PDB 1L2Y
+#     (https://www.ebi.ac.uk/pdbe/api/pdb/entry/secondary_structure/1l2y),
+#     which lists three helical stretches, 2–8, 11–14 and 17–19, untyped.
+#     The deposited mmCIF (_struct_conf) differs: helices 1–9 and 10–15.
+#   - Their types: Neidigh JW, Fesinmeyer RM, Andersen NH. Designing a
+#     20-residue protein. Nat Struct Biol 2002;9(6):425–430,
+#     doi:10.1038/nsb798. An α-helix at 2–8, a 3₁₀-helix at 11–14 and a
+#     polyproline II stretch at 17–19 (a REGION here, since it is not a
+#     helix), packed around Trp6.
+# PDB data are available under CC0 1.0; the structure is by Neidigh et al.
+#
+# NOTE: `./structure.csv` resolves against the *hosting page*, not this
+# config file — see the path gotcha in examples/README.md.
+sequence: |
+  >Trp-cage TC5b
+  NLYIQWLKDGGPSSGRPPPS
+rows:
+  - { id: structure, label: 'Structure of {accession}', kind: features, data: ./structure.csv }

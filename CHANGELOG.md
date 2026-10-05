@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added: playground examples for your own sequence, small proteins and conservation
+
+The playground's picker has four new presets. Three load a new CI-validated
+example under `examples/`, and `small-protein` loads the shipped default
+config. **Your own sequence** (`own-sequence`, from
+[`examples/sequence-inline/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-inline))
+shows a 240-residue construct from inline FASTA with a features track and makes
+no request at all; paste your own FASTA over it, or load a `.fasta` file.
+**Small protein** (`small-protein`) is the default UniProt viewer on crambin
+(P01542, 46 residues). **Small peptide** (`small-peptide`, from
+[`examples/small-peptide/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/small-peptide))
+is Trp-cage TC5b (20 residues, PDB 1L2Y) from its own sequence, with its
+secondary structure from a CSV. **Conservation** (`conservation`, from
+[`examples/conservation/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/conservation))
+draws real per-residue conservation for rubredoxin (P24297) as a line graph,
+beside its most conserved residues and UniProt's iron-binding sites, which
+score highest. The scores come from the Pfam PF00301 full alignment (Pfam
+38.2), computed as Jensen–Shannon divergence with Henikoff weights and a gap
+penalty by a committed generator, `scripts/conservation/`, and ship with their
+provenance. The served sample data are copies under
+`docs/public/sample-data/`, checked byte for byte against `examples/`. See
+[Per-residue conservation](https://ebi-webcomponents.github.io/protvista/your-data#per-residue-conservation).
+
+### Fixed: a playground `#preset=` link without an accession opens the preset's own protein
+
+A link such as `/protvista/playground/#preset=dev-multimer` used to show the
+preset's config against P05067, the default accession, instead of the
+preset's own protein. A link that names an accession (as every shared link
+does) still uses it.
+
 ### Added: per-feature colour, shape and custom tooltip fields from your own files
 
 Feature records from your own CSV, TSV or JSON file now keep every column
@@ -102,6 +132,24 @@ the delimiter hint) and coordinate warnings are listed in the playground's
 diagnostics, naming your file. Dropping a file on the editor no longer pastes
 its text into the config, and dropping one elsewhere on the page no longer
 navigates away.
+
+The same button (and drop) also takes a FASTA file — `.fasta`, `.fa`, `.faa`,
+`.fas`, or any other file whose first non-blank line starts with `>` (a `.csv`,
+`.tsv`, `.json` or `.bed` is read as data, unless the config's `sequence:` names
+it) — as the config's
+`sequence:`. It is parsed as a hosted viewer would parse it before anything
+changes, so a file with two records or a stray character is refused with the
+viewer's own `invalid-sequence` message, and one over 2 MB (the most a hosted
+viewer fetches) is refused too. The config again names only the file
+(`sequence: ./my-protein.fasta`), never its residues or header. If the config's
+`sequence:` already names it, it just loads — whatever its name, so a
+headerless `seq.txt` works too — and `examples/sequence-only/` renders from its
+own two files; otherwise you choose between setting this config's `sequence:`
+(which removes `accession:`) and a new sequence-only config, undoable with
+Ctrl/Cmd+Z. A shared link whose `sequence:` names a file you haven't loaded
+lists `local-file-missing` and shows no preview, rather than requesting the
+file from the docs site; the preview pane says which file to load. A binary
+file's refusal now names every format the button reads.
 
 ### Added: view a protein that isn't in UniProt (`sequence:`)
 

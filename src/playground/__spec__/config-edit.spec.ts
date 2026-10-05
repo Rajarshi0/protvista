@@ -5,11 +5,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import defaultConfigYaml from '../../default-config.yaml?raw';
+import sequenceOnlyConfig from '../../../examples/sequence-only/config.yaml?raw';
 import { parseConfigText } from '../../schema/parse.js';
+import { loadConfig } from '../../schema/load.js';
+import { validateConfig } from '../../schema/validate.js';
+import { createRegistry } from '../../schema/registry.js';
+import { referenceFor } from '../local-files.js';
 import { mergeExtends } from '../../schema/extends.js';
 import type { ProtvistaViewerConfig } from '../../schema/types.js';
 import { computeDiagnostics } from '../lint.js';
-import { referenceFor } from '../local-files.js';
 import { PRESETS, getPreset } from '../presets.js';
 import {
   appendTrack,
@@ -17,6 +21,9 @@ import {
   listTargetTracks,
   rowIdFor,
   rowLabelFor,
+  sequenceTargetSummary,
+  setSequence,
+  starterSequenceConfig,
   type NewRow,
 } from '../config-edit.js';
 
@@ -92,7 +99,7 @@ describe('appendTrack', () => {
   });
 
   it('quotes a label YAML would not read back as written', async () => {
-    const text = 'rows: []\n';
+    const text = 'rows: [{ id: a, data: ./a.csv }]\n';
     const json = '{ "rows": [] }';
     const row = { ...ROW, label: 'My Hits (v2): true' };
     const result = await appendTrack(text, await parse(text), row);
@@ -459,5 +466,283 @@ describe('listTargetTracks', () => {
       { path: 'G/depth', label: 'G/depth', rowIndex: 1, trackIndex: 2 },
     ]);
     expect(listTargetTracks('x')).toEqual([]);
+  });
+});
+
+describe('appendTrack on an empty flow list', () => {
+  it.each(['rows: []', 'rows: [] # none yet'])(
+    'turns %s into a block list holding the row',
+    async (rows) => {
+      const text = `sequence: ./p.fasta\n${rows}\n`;
+      const result = await appendTrack(text, await parse(text), ROW);
+      expect(result).toEqual({
+        text:
+          'sequence: ./p.fasta\nrows:\n  - id: hits\n    label: hits.csv\n' +
+          '    kind: features\n    data: ./hits.csv\n',
+      });
+    }
+  );
+});
+
+describe('setSequence', () => {
+  const REF = './construct.fasta';
+  const TRACK = [
+    'rows:',
+    '  - id: base',
+    '    kind: features',
+    '    data:',
+    '      from: inline',
+    '      inlineData:',
+    '        - { type: DOMAIN, start: 1, end: 10 }',
+    '',
+  ].join('\n');
+
+  /** Every edit: it parses, and the validator raises no accession-and-sequence. */
+  async function edited(text: string, ref = REF): Promise<string> {
+    const result = await setSequence(text, await parse(text), ref);
+    if (!('text' in result)) throw new Error(result.error);
+    const issues = validateConfig(
+      await parse(result.text),
+      createRegistry()
+    ).issues;
+    expect(issues.map((i) => i.code)).not.toContain('accession-and-sequence');
+    return result.text;
+  }
+
+  it('replaces accession: in place, keeping its comment and every other line byte for byte', async () => {
+    const text = `# My viewer\naccession: P05067 # APP\n# Tracks below\n${TRACK}`;
+    const out = await edited(text);
+    expect(out).toBe(
+      `# My viewer\nsequence: ./construct.fasta # APP\n# Tracks below\n${TRACK}`
+    );
+    const parsed = (await parse(text)) as Record<string, unknown>;
+    delete parsed.accession;
+    expect(await parse(out)).toEqual({ ...parsed, sequence: REF });
+  });
+
+  it('replaces a whole sequence: | block, where it stands', async () => {
+    const text = [
+      '# Our construct',
+      'rows: []',
+      'sequence: |',
+      '  >my construct v2',
+      '  MKTAYIAKQRQISFVKSHFSRQLEERLG',
+      '',
+      'theme: { labelColor: "#333" }',
+      '',
+    ].join('\n');
+    expect(await edited(text)).toBe(
+      [
+        '# Our construct',
+        'rows: []',
+        'sequence: ./construct.fasta',
+        '',
+        'theme: { labelColor: "#333" }',
+        '',
+      ].join('\n')
+    );
+  });
+
+  it('replaces sequence: and drops an accession: beside it', async () => {
+    const text = `accession: P05067\nsequence: ./other.fasta\n${TRACK}`;
+    expect(await edited(text)).toBe(`sequence: ./construct.fasta\n${TRACK}`);
+  });
+
+  it('replaces sequence: and drops an accession: further down', async () => {
+    // Not adjacent, so putting it where accession: was gives another text.
+    const text = `sequence: ./other.fasta\n${TRACK}accession: P05067\n`;
+    expect(await edited(text)).toBe(`sequence: ./construct.fasta\n${TRACK}`);
+  });
+
+  it('keeps the end-of-line comment of the sequence: line it replaces', async () => {
+    expect(await edited(`sequence: './other #2.fasta'  # v1\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta  # v1\n${TRACK}`
+    );
+    expect(await edited(`sequence: |  # pasted\n  >h\n  MKTAY\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta  # pasted\n${TRACK}`
+    );
+    // A '#' with no space before it is part of the value, not a comment.
+    expect(await edited(`accession: P05067#x\n${TRACK}`)).toBe(
+      `sequence: ./construct.fasta\n${TRACK}`
+    );
+  });
+
+  it('inserts after the leading extends: or $schema:, else before the first key', async () => {
+    const base = 'extends: https://lab.example/base.yaml\n';
+    expect(await edited(`${base}${TRACK}`)).toBe(
+      `${base}sequence: ./construct.fasta\n${TRACK}`
+    );
+    // Right after the key, before the blank line that sets it apart.
+    const schema = '$schema: https://example.org/s.json\n';
+    expect(await edited(`${schema}\n${TRACK}`)).toBe(
+      `${schema}sequence: ./construct.fasta\n\n${TRACK}`
+    );
+    expect(await edited(`# Mine\n${TRACK}`)).toBe(
+      `# Mine\nsequence: ./construct.fasta\n${TRACK}`
+    );
+  });
+
+  it('re-serialises JSON with sequence where accession was', async () => {
+    const text = JSON.stringify(
+      { $schema: 'x', accession: 'P05067', rows: [] },
+      null,
+      2
+    );
+    const out = await edited(text);
+    expect(Object.entries(JSON.parse(out) as object)).toEqual([
+      ['$schema', 'x'],
+      ['sequence', REF],
+      ['rows', []],
+    ]);
+    // Where accession was, not merely after the leading keys.
+    const last = await edited(
+      JSON.stringify({ $schema: 'x', rows: [], accession: 'P05067' }, null, 2)
+    );
+    expect(Object.keys(JSON.parse(last) as object)).toEqual([
+      '$schema',
+      'rows',
+      'sequence',
+    ]);
+    const bare = await edited('{ "$schema": "x", "rows": [] }\n');
+    expect(Object.keys(JSON.parse(bare) as object)).toEqual([
+      '$schema',
+      'sequence',
+      'rows',
+    ]);
+  });
+
+  it('gives the line to set by hand for a layout it cannot splice, or a config that does not parse', async () => {
+    const flow = '# Flow style\n{ accession: P05067, rows: [] }\n';
+    const snippet = {
+      error:
+        "Couldn't set the sequence automatically — set it by hand, and remove accession: if there is one:",
+      snippet: 'sequence: ./construct.fasta',
+    };
+    expect(await setSequence(flow, await parse(flow), REF)).toEqual(snippet);
+    expect(await setSequence('rows: [', undefined, REF)).toEqual(snippet);
+  });
+});
+
+describe('sequenceTargetSummary', () => {
+  it('counts the default viewer’s UniProt tracks', async () => {
+    const summary = sequenceTargetSummary(await parse(defaultConfigYaml));
+    expect(summary.needsUniprot).toBeGreaterThan(10);
+    expect(summary.accession).toBeUndefined();
+    expect(summary.extends).toBe(false);
+  });
+
+  it('finds nothing needing UniProt in examples/sequence-only, and names the file it replaces', async () => {
+    expect(sequenceTargetSummary(await parse(sequenceOnlyConfig))).toEqual({
+      replaces: { reference: './protein.fasta' },
+      needsUniprot: 0,
+      extends: false,
+      parses: true,
+    });
+  });
+
+  it('counts only needs-accession, not the config’s other errors', async () => {
+    const text = [
+      'accession: P05067',
+      'rows:',
+      '  - id: a',
+      '    kind: no-such-kind',
+      '    data: { from: inline, inlineData: [] }',
+      '  - id: b',
+      '    kind: features',
+      '    data: https://lab.example/{accession}.json',
+      '',
+    ].join('\n');
+    expect(sequenceTargetSummary(await parse(text))).toEqual({
+      accession: 'P05067',
+      needsUniprot: 1,
+      extends: false,
+      parses: true,
+    });
+  });
+
+  it('still counts the UniProt tracks when the config has a schema error elsewhere', async () => {
+    // A schema error stops the validator before its sequence-mode pass.
+    const clean = sequenceTargetSummary(await parse(defaultConfigYaml));
+    const typo = sequenceTargetSummary(
+      await parse(`${defaultConfigYaml}\ntheme_typo: 1\n`)
+    );
+    expect(typo.needsUniprot).toBe(clean.needsUniprot);
+  });
+
+  it('counts each row on its own when sources: or another row is malformed', async () => {
+    const text = [
+      'sources:',
+      '  remote: https://lab.example/{accession}.json',
+      'rows:',
+      '  - id: a',
+      '    kind: features',
+      '    data: remote',
+      '  - id: b',
+      '    kind: features',
+      '    data: https://lab.example/b/{accession}.json',
+      '  - id: broken',
+      '    tracks: 7',
+      '',
+    ].join('\n');
+    expect(sequenceTargetSummary(await parse(text)).needsUniprot).toBe(2);
+    // A malformed sources: is dropped: row b still counts, row a cannot.
+    const badSources = text.replace(
+      '  remote: https://lab.example/{accession}.json',
+      '  remote: 7'
+    );
+    expect(sequenceTargetSummary(await parse(badSources)).needsUniprot).toBe(1);
+  });
+
+  it('measures an inline sequence it would replace, and flags an extends: child', async () => {
+    const text = 'extends: ./base.yaml\nsequence: |\n  >h\n  MKTAY\nrows: []\n';
+    expect(sequenceTargetSummary(await parse(text))).toEqual({
+      replaces: { inline: true, residues: 5 },
+      needsUniprot: 0,
+      extends: true,
+      parses: true,
+    });
+  });
+
+  it('says a config that is not a mapping cannot be edited', () => {
+    expect(sequenceTargetSummary(undefined)).toEqual({
+      needsUniprot: 0,
+      extends: false,
+      parses: false,
+    });
+  });
+});
+
+describe('starterSequenceConfig', () => {
+  it('loads as a sequence-only config with no tracks', async () => {
+    const text = await starterSequenceConfig('./protein.fasta');
+    expect(text).toBe(
+      '# protein.fasta, shown from its own sequence — no UniProt entry.\n' +
+        '# Add tracks with "Load data file…" (CSV, TSV, JSON or BED).\n' +
+        'sequence: ./protein.fasta\nrows: []\n'
+    );
+    const config = await loadConfig(text, {
+      requireProtein: true,
+      sequenceFetcher: async () => '>h\nMK',
+    });
+    expect(config.sequence).toEqual({ residues: 'MK', header: 'h' });
+  });
+
+  it('keeps a file name with a newline out of the comments', async () => {
+    const name = 'evil\nrows: [x].fasta';
+    const text = await starterSequenceConfig(`./${name}`);
+    expect(
+      text
+        .split('\n')
+        .slice(0, 2)
+        .every((l) => l.startsWith('#'))
+    ).toBe(true);
+    expect(text.split('\n')[0]).toBe(
+      '# evil-rows-x-.fasta, shown from its own sequence — no UniProt entry.'
+    );
+    expect(await parse(text)).toEqual({ sequence: `./${name}`, rows: [] });
+    // As the page builds it, the reference is sanitised too.
+    expect(await starterSequenceConfig(referenceFor(name))).toContain(
+      'sequence: ./evil-rows-x-.fasta'
+    );
   });
 });

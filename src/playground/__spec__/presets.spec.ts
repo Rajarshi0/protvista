@@ -5,15 +5,21 @@
  */
 import { describe, it, expect } from 'vitest';
 import { loadConfig } from '../../schema/load.js';
+import { parseConfigText } from '../../schema/parse.js';
 import { createRegistry } from '../../schema/registry.js';
 import {
   ALL_PRESETS,
   DEFAULT_PRESET_ID,
+  DEV_PRESETS,
+  PRESETS,
   getPreset,
   isDevPreset,
+  withServedData,
 } from '../presets.js';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { sequenceTargetSummary, setSequence } from '../config-edit.js';
+import { createLocalFileStore, localDataDiagnostics } from '../local-files.js';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import defaultConfigYaml from '../../default-config.yaml?raw';
 
 /** Every doc page, by path. Vitest runs from the repo root, so these resolve
@@ -47,6 +53,55 @@ const extendsFetcher = async (ref: string): Promise<string> => {
   throw new Error(`unexpected extends target: ${ref}`);
 };
 
+/**
+ * A preset's `sequence:` must be inline: a file it names would be fetched
+ * from the docs host (or, since the playground holds a FASTA in the browser,
+ * be reported as not loaded). Failing here keeps the test offline and says
+ * which reference it was.
+ */
+const sequenceFetcher = async (ref: string): Promise<string> => {
+  throw new Error(`a preset fetched a sequence: ${ref}`);
+};
+
+/** Whether a preset's config shows its own sequence rather than an accession. */
+const declaresSequence = async (config: string): Promise<boolean> =>
+  ((await parseConfigText(config)) as { sequence?: unknown }).sequence !==
+  undefined;
+
+/** Where the docs site serves sample data from, and the URL path it has. */
+const SAMPLE_DATA_DIR = 'docs/public/sample-data';
+const SAMPLE_DATA_URL = '/protvista/sample-data/';
+
+/**
+ * The sources of the files served at the top of `sample-data/`, which the
+ * tutorial and older links name. A file in a subdirectory, `<dir>/<name>`,
+ * is a copy of `examples/<dir>/<name>`.
+ */
+const ROOT_SAMPLE_SOURCES: Record<string, string> = {
+  'hotspots.csv': 'examples/csv/hotspots.csv',
+  'hotspots.json': 'examples/json/hotspots.json',
+};
+
+/** Every file under `docs/public/sample-data/`, as a path relative to it. */
+const servedSampleFiles = (): string[] =>
+  readdirSync(SAMPLE_DATA_DIR, {
+    recursive: true,
+    withFileTypes: true,
+  })
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      relative(SAMPLE_DATA_DIR, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join('/')
+    )
+    .sort();
+
+/** The served sample-data paths a config names, relative to `sample-data/`. */
+const servedPathsIn = (config: string): string[] =>
+  [...config.matchAll(/\/protvista\/sample-data\/([\w./-]+)/g)].map(
+    ([, path]) => path
+  );
+
 describe('presets', () => {
   it('exposes the default preset', () => {
     expect(getPreset(DEFAULT_PRESET_ID)).toBeDefined();
@@ -61,13 +116,57 @@ describe('presets', () => {
   it.each(ALL_PRESETS.map((p) => [p.id, p] as const))(
     'preset "%s" loads without error',
     async (_id, preset) => {
+      // The playground passes the accession box's value only to a config
+      // without `sequence:`; beside one, an accession is an error
+      // (`accession-and-sequence`).
+      const sequenceMode = await declaresSequence(preset.config);
       await expect(
         loadConfig(preset.config, {
-          accession: preset.accession,
+          ...(sequenceMode ? {} : { accession: preset.accession }),
           registry: createRegistry(),
           extendsFetcher,
+          sequenceFetcher,
+          requireProtein: true,
         })
       ).resolves.toBeDefined();
+    }
+  );
+
+  it.each([
+    ['own-sequence', 240, 'my construct v2'],
+    ['small-peptide', 20, 'Trp-cage TC5b'],
+  ] as const)(
+    'preset "%s" shows its own %i-residue protein, written inline',
+    async (id, residues, header) => {
+      const config = await loadConfig(getPreset(id)!.config, {
+        registry: createRegistry(),
+        sequenceFetcher,
+        requireProtein: true,
+      });
+      expect(config.accession).toBeUndefined();
+      expect(config.sequence?.residues).toHaveLength(residues);
+      expect(config.sequence?.header).toBe(header);
+    }
+  );
+
+  it.each(ALL_PRESETS.map((p) => [p.id, p] as const))(
+    'preset "%s" names no file the playground would report as not loaded',
+    async (_id, preset) => {
+      // #277's own pre-flight, with nothing loaded: exactly the
+      // `local-file-missing` rows a visitor would see listed.
+      const parsed = await parseConfigText(preset.config);
+      const result = await localDataDiagnostics(
+        preset.config,
+        parsed,
+        createLocalFileStore()
+      );
+      expect(result.diagnostics).toEqual([]);
+      expect(result.sequenceMissing).toBe(false);
+      // And no page-relative reference of any kind, block or flow style,
+      // quoted or not: on the docs site it would be fetched from the page.
+      expect(preset.config).not.toMatch(
+        /\b(data|url|sequence|extends|source)\s*:\s*["']?\.{1,2}\//
+      );
     }
   );
 
@@ -83,6 +182,167 @@ describe('presets', () => {
       // pattern match that a changed quoting style could slip past.
       expect(preset!.config).not.toMatch(/data:\s*["']?\.\//);
     }
+  });
+
+  describe('withServedData', () => {
+    it('rewrites every page-relative data file, in block, flow and quoted form', () => {
+      const config = [
+        'rows:',
+        '  - id: a',
+        '    data: ./a.csv',
+        '  - { id: b, kind: features, data: ./b.tsv }',
+        '  - id: c',
+        '    data: "./c.json"',
+        "  - { id: d, data: './d.bed' }",
+        '',
+      ].join('\n');
+      expect(withServedData(config, 'my-example')).toBe(
+        [
+          'rows:',
+          '  - id: a',
+          '    data: /protvista/sample-data/my-example/a.csv',
+          '  - { id: b, kind: features, data: /protvista/sample-data/my-example/b.tsv }',
+          '  - id: c',
+          '    data: /protvista/sample-data/my-example/c.json',
+          '  - { id: d, data: /protvista/sample-data/my-example/d.bed }',
+          '',
+        ].join('\n')
+      );
+    });
+
+    it('serves from the top of sample-data/ when given no directory', () => {
+      expect(withServedData('data: ./hotspots.csv\n')).toBe(
+        'data: /protvista/sample-data/hotspots.csv\n'
+      );
+    });
+
+    it('leaves a comment that quotes a data path, other extensions and other paths alone', () => {
+      const config = [
+        '# The track reads data: ./x.csv beside the page.',
+        '  - id: a  # was data: ./old.csv',
+        '    data: ./notes.txt',
+        '    data: ./data/hits.csv',
+        '    data: https://lab.example/x.csv',
+        '',
+      ].join('\n');
+      expect(withServedData(config, 'my-example')).toBe(config);
+    });
+  });
+
+  it('the main picker offers the examples of your own sequence and small proteins', () => {
+    const main = PRESETS.map((p) => p.id);
+    const dev = DEV_PRESETS.map((p) => p.id);
+    for (const id of [
+      'small-protein',
+      'conservation',
+      'own-sequence',
+      'small-peptide',
+    ]) {
+      expect(main).toContain(id);
+      expect(dev).not.toContain(id);
+    }
+  });
+
+  it('the main picker lists its presets in order', () => {
+    expect(PRESETS.map((p) => p.id)).toEqual([
+      'uniprot-default',
+      'small-protein',
+      'basic',
+      'inline-data',
+      'linegraph',
+      'conservation',
+      'csv',
+      'json',
+      'extend-uniprot',
+      'own-sequence',
+      'small-peptide',
+    ]);
+  });
+
+  it('small-protein is the shipped default viewer on crambin', () => {
+    const preset = getPreset('small-protein')!;
+    expect(preset.config).toBe(defaultConfigYaml);
+    expect(preset.accession).toBe('P01542');
+  });
+
+  it('conservation opens on the protein its data belongs to', async () => {
+    const preset = getPreset('conservation')!;
+    expect(preset.accession).toBe('P24297');
+    const parsed = (await parseConfigText(preset.config)) as {
+      accession?: string;
+    };
+    expect(parsed.accession).toBe(preset.accession);
+  });
+
+  it('loading a FASTA over own-sequence replaces its inline block and keeps its track', async () => {
+    // What the "Use as sequence" form defaults to: "This config", because
+    // nothing in it needs UniProt data.
+    const text = getPreset('own-sequence')!.config;
+    const parsed = await parseConfigText(text);
+    expect(sequenceTargetSummary(parsed)).toEqual({
+      needsUniprot: 0,
+      extends: false,
+      parses: true,
+      replaces: { inline: true, residues: 240 },
+    });
+    // What "Use" then does to the editor text.
+    const result = await setSequence(text, parsed, './construct.fasta');
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).not.toContain('>my construct v2');
+    const after = (await parseConfigText(result.text)) as {
+      sequence?: unknown;
+      rows?: unknown;
+    };
+    expect(after.sequence).toBe('./construct.fasta');
+    expect(after.rows).toEqual((parsed as { rows: unknown }).rows);
+  });
+
+  it('every served sample-data path a preset names exists on the docs site', () => {
+    const missing: string[] = [];
+    for (const preset of ALL_PRESETS) {
+      for (const path of servedPathsIn(preset.config)) {
+        if (!existsSync(join(SAMPLE_DATA_DIR, path))) {
+          missing.push(`${preset.id}: ${SAMPLE_DATA_URL}${path}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+    // A preset set that named no example's own file would pass by checking
+    // nothing.
+    expect(ALL_PRESETS.flatMap((p) => servedPathsIn(p.config))).toEqual(
+      expect.arrayContaining([
+        'small-peptide/structure.csv',
+        'conservation/conservation.csv',
+        'conservation/conserved-sites.csv',
+      ])
+    );
+  });
+
+  it('every file the docs site serves as sample data is byte-identical to its source under examples/', () => {
+    // The served files are copies, so a sample edited under `examples/`
+    // (where its own tests run) must be copied again, or the playground
+    // shows the old one.
+    const files = servedSampleFiles();
+    const problems: string[] = [];
+    for (const file of files) {
+      const source = file.includes('/')
+        ? join('examples', file)
+        : ROOT_SAMPLE_SOURCES[file];
+      if (!source) {
+        problems.push(`${file}: add its source to ROOT_SAMPLE_SOURCES`);
+      } else if (!existsSync(source)) {
+        problems.push(`${file}: no ${source}`);
+      } else if (
+        !readFileSync(join(SAMPLE_DATA_DIR, file)).equals(readFileSync(source))
+      ) {
+        problems.push(`${file}: differs from ${source}`);
+      }
+    }
+    expect(problems).toEqual([]);
+    // A walk that found nothing would pass by checking nothing.
+    expect(files).toEqual(
+      expect.arrayContaining(['hotspots.csv', 'hotspots.json'])
+    );
   });
 
   it('the extend-uniprot preset extends the config this commit ships', () => {

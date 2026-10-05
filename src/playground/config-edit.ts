@@ -15,8 +15,11 @@ import type { DataFormat } from '../schema/types.js';
 import { parseConfigText, yamlReader } from '../schema/parse.js';
 import { createRegistry } from '../schema/registry.js';
 import { isPlainObject } from '../schema/shape.js';
+import { validateConfig } from '../schema/validate.js';
+import { isSequenceReference, parseSequenceText } from '../schema/sequence.js';
 import { detectFormat } from './format.js';
 import {
+  basename,
   findLocalReferences,
   firstFree,
   sanitizeName,
@@ -331,6 +334,16 @@ function appendSplice(
     const body = text === '' || text.endsWith('\n') ? text : `${text}\n`;
     return `${body}rows:\n${entry('  ').join('\n')}\n`;
   }
+  // An empty flow list — a sequence-only starter's `rows: []` — becomes a
+  // block list holding the row.
+  if (/^rows:\s*\[\s*\]\s*(?:#.*)?$/.test(lines[rowsAt])) {
+    return [
+      ...lines.slice(0, rowsAt),
+      'rows:',
+      ...entry('  '),
+      ...lines.slice(rowsAt + 1),
+    ].join('\n');
+  }
   // `rows: [...]` or any other inline value: leave it to the snippet.
   if (!/^rows:\s*(?:#.*)?$/.test(lines[rowsAt])) return undefined;
 
@@ -419,4 +432,245 @@ export async function appendTrack(
           "Couldn't add the track automatically — add this under rows: by hand:",
         snippet,
       };
+}
+
+// ── Use a loaded FASTA as the sequence ────────────────────────
+
+/** What applying a sequence to the current config would change, for the form. */
+export interface SequenceTargetSummary {
+  /** The config's own `accession:`, which would be removed. */
+  accession?: string;
+  /** The config's own `sequence:`, which would be replaced. */
+  replaces?: { inline: true; residues?: number } | { reference: string };
+  /**
+   * Tracks that need UniProt data (`needs-accession`) and would be listed as
+   * errors once the config shows a sequence instead.
+   */
+  needsUniprot: number;
+  /** The config `extends:` a base, which may bring UniProt tracks of its own. */
+  extends: boolean;
+  /** The config parsed to a mapping, so it can be edited at all. */
+  parses: boolean;
+}
+
+/**
+ * What setting `sequence:` on `parsed` would do: the accession it removes,
+ * the sequence it replaces, and how many of its own tracks would then fail
+ * for want of UniProt data — counted by the validator, on a copy with a
+ * placeholder sequence.
+ */
+export function sequenceTargetSummary(parsed: unknown): SequenceTargetSummary {
+  if (!isPlainObject(parsed)) {
+    return { needsUniprot: 0, extends: false, parses: false };
+  }
+  const summary: SequenceTargetSummary = {
+    needsUniprot: 0,
+    extends: parsed.extends !== undefined,
+    parses: true,
+  };
+  if (typeof parsed.accession === 'string' && parsed.accession !== '') {
+    summary.accession = parsed.accession;
+  }
+  const { sequence } = parsed;
+  if (typeof sequence === 'string') {
+    if (isSequenceReference(sequence)) {
+      summary.replaces = { reference: sequence.trim() };
+    } else {
+      const inline = parseSequenceText(sequence, undefined);
+      summary.replaces = inline.ok
+        ? { inline: true, residues: inline.value.residues.length }
+        : { inline: true };
+    }
+  }
+  summary.needsUniprot = countNeedsUniprot(parsed);
+  return summary;
+}
+
+/** The issue codes of the validator's structural pass, which ends it early. */
+const STRUCTURAL_CODES = new Set(['schema', 'invalid-entry-shape']);
+
+/**
+ * How many tracks of `parsed` would fail `needs-accession` once it shows a
+ * sequence. The copy keeps any `accession:`: sequence mode then also raises
+ * `accession-and-sequence`, which is not counted.
+ *
+ * A schema error anywhere (a stray top-level key, say) stops the validator
+ * before its sequence-mode pass, so the whole config would count none. Then
+ * each row is counted on its own, with only what that pass reads besides it:
+ * `sources:` (dropped too if it is what fails). A row that is itself
+ * malformed counts none.
+ */
+function countNeedsUniprot(parsed: Obj): number {
+  const registry = createRegistry();
+  const count = (config: Obj): number | undefined => {
+    const { issues } = validateConfig(config, registry);
+    if (issues.some((issue) => STRUCTURAL_CODES.has(issue.code))) {
+      return undefined;
+    }
+    return issues.filter((issue) => issue.code === 'needs-accession').length;
+  };
+  const whole = count({ ...structuredClone(parsed), sequence: 'M' });
+  if (whole !== undefined) return whole;
+  const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+  return rows.reduce<number>((total, row) => {
+    const alone: Obj = { sequence: 'M', rows: [structuredClone(row)] };
+    const withSources =
+      parsed.sources === undefined
+        ? undefined
+        : count({ ...alone, sources: structuredClone(parsed.sources) });
+    return total + (withSources ?? count(alone) ?? 0);
+  }, 0);
+}
+
+/** A top-level YAML key line: `key:` at column 0, the key optionally quoted. */
+const topLevelKey = (line: string): string | undefined =>
+  /^(["']?)([A-Za-z_$][\w$-]*)\1[ \t]*:(?=\s|$)/.exec(line)?.[2];
+
+/**
+ * The line range `[start, end]` of each top-level `key:` in `lines`: the key
+ * line plus any deeper-indented lines below it (a `|` block), not counting
+ * trailing blank lines.
+ */
+function topLevelBlocks(
+  lines: readonly string[],
+  key: string
+): Array<[number, number]> {
+  const blocks: Array<[number, number]> = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (topLevelKey(lines[i]) !== key) continue;
+    let end = i;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (lines[j].trim() === '') continue;
+      if (indentOf(lines[j]) === 0) break;
+      end = j;
+    }
+    blocks.push([i, end]);
+  }
+  return blocks;
+}
+
+/** `lines` with each `[start, end]` range replaced by `insert` (or removed). */
+function replaceBlocks(
+  lines: readonly string[],
+  blocks: ReadonlyArray<[number, number]>,
+  insertAt?: number,
+  insert: readonly string[] = []
+): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (i === insertAt) out.push(...insert);
+    const block = blocks.find(([start, end]) => i >= start && i <= end);
+    if (!block) out.push(lines[i]);
+  }
+  if (insertAt === lines.length) out.push(...insert);
+  return out;
+}
+
+/**
+ * The end-of-line comment on a top-level `key: value` line, with the space
+ * before it (`  # the entry`), or `''`. The value may be plain or quoted; a
+ * `#` inside quotes is not a comment. Any other layout gives `''`, and the
+ * splice is verified either way.
+ */
+function trailingComment(line: string): string {
+  return (
+    /^[^:]*:[ \t]*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"][^#]*?)?([ \t]+#.*)$/.exec(
+      line
+    )?.[1] ?? ''
+  );
+}
+
+/** Every YAML splice that sets `sequence:` to `line` and drops `accession:`. */
+function* sequenceSplices(text: string, line: string): Generator<string> {
+  const lines = text.split('\n');
+  const sequence = topLevelBlocks(lines, 'sequence');
+  const accession = topLevelBlocks(lines, 'accession');
+  const both = [...sequence, ...accession];
+  // The line that takes the place of `lines[at]`, keeping its end-of-line
+  // comment; then, should that not verify, the bare line.
+  const replacing = function* (at: number): Generator<string> {
+    const comment = trailingComment(lines[at]);
+    if (comment !== '') {
+      yield replaceBlocks(lines, both, at, [line + comment]).join('\n');
+    }
+    yield replaceBlocks(lines, both, at, [line]).join('\n');
+  };
+  // 1. Replace the `sequence:` block (an inline `|` FASTA, say).
+  if (sequence.length > 0) yield* replacing(sequence[0][0]);
+  // 2. Put it where `accession:` was.
+  if (accession.length > 0) yield* replacing(accession[0][0]);
+  // 3. After the leading `$schema:` / `version:` / `extends:` keys, else
+  //    before the first top-level key, else at the end.
+  const keys = lines
+    .map((l, i) => [topLevelKey(l), i] as const)
+    .filter(([key]) => key !== undefined);
+  let at = keys.length > 0 ? keys[0][1] : lines.length;
+  for (const [key, i] of keys) {
+    if (key !== '$schema' && key !== 'version' && key !== 'extends') break;
+    at = topLevelBlocks(lines, key).find(([start]) => start === i)![1] + 1;
+  }
+  if (at === lines.length && lines[lines.length - 1] === '') {
+    at = lines.length - 1;
+  }
+  yield replaceBlocks(lines, both, at, [line]).join('\n');
+}
+
+/**
+ * Point the config's `sequence:` at `ref` and remove its `accession:` (a
+ * config sets one or the other), keeping its tracks. JSON is re-serialised
+ * with `sequence` where `accession` (or `sequence`) was; YAML is spliced and
+ * verified. Returns the new text, or — when no edit verifies — an error and
+ * the line to set by hand.
+ */
+export async function setSequence(
+  text: string,
+  parsed: unknown,
+  ref: string
+): Promise<EditResult> {
+  const line = `sequence: ${yamlScalar(ref, await plainTest())}`;
+  const fallback = {
+    error:
+      "Couldn't set the sequence automatically — set it by hand, and remove " +
+      'accession: if there is one:',
+    snippet: line,
+  };
+  if (!isPlainObject(parsed)) return fallback;
+
+  if (detectFormat(text) === 'json') {
+    const keys = Object.keys(parsed);
+    const at = keys.findIndex((k) => k === 'accession' || k === 'sequence');
+    const lead = keys.findIndex(
+      (k) => k !== '$schema' && k !== 'version' && k !== 'extends'
+    );
+    const position = at !== -1 ? at : lead === -1 ? keys.length : lead;
+    const out: Obj = {};
+    keys.forEach((key, i) => {
+      if (i === position) out.sequence = ref;
+      if (key !== 'accession' && key !== 'sequence') out[key] = parsed[key];
+    });
+    if (position === keys.length) out.sequence = ref;
+    return { text: asJson(text, out) };
+  }
+
+  const expected: Obj = { ...structuredClone(parsed), sequence: ref };
+  delete expected.accession;
+  const spliced = await firstVerified(sequenceSplices(text, line), expected);
+  return spliced !== undefined ? { text: spliced } : fallback;
+}
+
+/**
+ * A new sequence-only config showing `ref`, with no tracks yet. Always YAML.
+ * The comment names the file by its sanitised name: a raw file name may hold
+ * a newline, which would end the comment and corrupt the YAML.
+ */
+export async function starterSequenceConfig(ref: string): Promise<string> {
+  const name = sanitizeName(basename(ref));
+  const plain = await plainTest();
+  return [
+    `# ${name}, shown from its own sequence — no UniProt entry.`,
+    '# Add tracks with "Load data file…" (CSV, TSV, JSON or BED).',
+    `sequence: ${yamlScalar(ref, plain)}`,
+    'rows: []',
+    '',
+  ].join('\n');
 }

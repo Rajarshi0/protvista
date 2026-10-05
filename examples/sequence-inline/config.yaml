@@ -1,0 +1,29 @@
+# Your own protein, with nothing fetched at all: the same designed construct
+# and hotspots as examples/sequence-only, written inline. The FASTA is a
+# `sequence: |` block (one record), and the track's records are written out
+# in the config, so the viewer makes no request of any kind.
+#
+# To show your own protein, replace the block with your own FASTA. In the
+# playground you can instead press "Load data file…" and pick a .fasta file:
+# the block is replaced by the file's name, and the file stays in your
+# browser. The FASTA header is shown wherever an accession would be, and
+# every coordinate below is checked against the sequence's length (240
+# residues).
+sequence: |
+  >my construct v2
+  MQNCSGGMDLWFHSEGPMAGTKSYGQGVWNLECKWRQTQPHEPVKFRFASWGIFVVQCQR
+  IPTLDVRATYEPSAMMEGFMIPCSDQAIPTVDEVGVTQTNWPTRISDACCRNGNGTSPFC
+  HPNTNSQAPEQLSSHESVFDLCFNEPAHLWAQGHKCPFWAQTIKTMLGSVTIMKDWEGES
+  HGIRAGFYNIWFGFNDNKTYYWETSDQQCVKNYEFRRGEWHQCDAEDLAYRHVVCQRILG
+rows:
+  - id: hotspots
+    label: Hotspots on {accession}
+    kind: features
+    description: Hotspot regions identified by our lab's pipeline
+    data:
+      from: inline
+      inlineData:
+        - { type: DOMAIN, start: 18, end: 140, description: Binding domain (designed), score: 0.95 }
+        - { type: BINDING, start: 62, end: 70, description: Predicted heparin-binding site, score: 0.87 }
+        - { type: REGION, start: 150, end: 190, description: Flexible linker, score: 0.6 }
+        - { type: MUTAGEN, start: 214, end: 214, description: Lab-observed loss-of-function point mutation, score: 0.75 }

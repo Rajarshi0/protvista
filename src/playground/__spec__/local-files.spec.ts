@@ -8,21 +8,32 @@ import { readFileSync } from 'node:fs';
 import { parseConfigText } from '../../schema/parse.js';
 import { createRegistry } from '../../schema/registry.js';
 import { runPipeline } from '../../schema/adapters/pipeline.js';
+import {
+  isSequenceReference,
+  parseSequenceText,
+} from '../../schema/sequence.js';
+import defaultConfigYaml from '../../default-config.yaml?raw';
 import { PRESETS, DEV_PRESETS } from '../presets.js';
+import { lintConfig } from '../lint.js';
 import { appendTrack } from '../config-edit.js';
 import {
   KIND_FOR_SHAPE,
   PRIVACY_NOTE,
+  answersFor,
   basename,
   countRecords,
   createLocalFileStore,
   findLocalReferences,
   guessShape,
   inferFormat,
+  inlineSequenceText,
+  isFastaFile,
   isLocalReference,
+  isLocalSequenceReference,
   isPreflightDuplicate,
   localDataDiagnostics,
   looksBinary,
+  mayNameLocalFile,
   referenceFor,
   relabelRuntime,
   sniffFormat,
@@ -929,5 +940,357 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
       false
     );
     expect(isPreflightDuplicate(undefined, failed)).toBe(false);
+  });
+});
+
+describe('answersFor', () => {
+  it('answers a path with the file name, or its sanitised name, as its last segment', () => {
+    const { store } = makeStore();
+    const answers = answersFor({ name: 'a b.csv' }, store);
+    expect(answers('./a b.csv')).toBe(true);
+    expect(answers('./data/a-b.csv')).toBe(true);
+    expect(answers('./other.csv')).toBe(false);
+    expect(answers(undefined)).toBe(false);
+    // Another file on a case-sensitive host.
+    expect(answersFor({ name: 'SCORES.csv' }, store)('./scores.csv')).toBe(
+      false
+    );
+  });
+
+  it("leaves a reference registered to another file to that file, and takes back this file's own", () => {
+    const { store } = makeStore();
+    store.register({
+      ref: './a-b.csv',
+      name: 'a(b.csv',
+      size: 1,
+      format: 'csv',
+      text: 'x',
+    });
+    store.register({
+      ref: './a-b-2.csv',
+      name: 'a b.csv',
+      size: 1,
+      format: 'csv',
+      text: 'x',
+    });
+    const answers = answersFor({ name: 'a b.csv' }, store);
+    expect(answers('./a-b.csv')).toBe(false);
+    expect(answers('./a-b-2.csv')).toBe(true);
+    expect(answersFor({ name: 'a(b.csv' }, store)('./a-b.csv')).toBe(true);
+  });
+});
+
+describe('mayNameLocalFile', () => {
+  /** The page's gate, given the config `lintConfig` parsed, as the page does. */
+  async function gate(text: string): Promise<boolean> {
+    const lint = await lintConfig(text, 'P05067');
+    expect(lint.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    return mayNameLocalFile(text, lint.parsed);
+  }
+
+  it.each([
+    [
+      'a data path',
+      'rows:\n  - id: a\n    kind: features\n    data: ./x.csv\n',
+    ],
+    [
+      'a format: key',
+      'rows:\n  - id: a\n    kind: features\n    data: { url: ./x.txt, format: csv }\n',
+    ],
+    [
+      'a quoted data path',
+      "rows:\n  - id: a\n    kind: features\n    data: 'my hits.tsv'\n",
+    ],
+    [
+      'a JSON data path',
+      '{ "rows": [{ "id": "a", "kind": "features", "data": ".\\/x.csv" }] }',
+    ],
+  ])('is true for %s', async (_, text) => expect(await gate(text)).toBe(true));
+
+  // Each names a local sequence file that isn't loaded: the gate must open,
+  // so the check it guards lists it and the preview is held back.
+  it.each([
+    ['a ./ sequence', 'sequence: ./p.txt\nrows: []\n'],
+    ['a ../ sequence', "sequence: '../p.txt'\nrows: []\n"],
+    ['a bare FASTA name', 'sequence: protein.fasta\nrows: []\n'],
+    ['a JSON sequence path', '{ "sequence": "./p.txt", "rows": [] }'],
+    ['a single-quoted key', "'sequence': ./private-construct.txt\nrows: []\n"],
+    ['a JSON escaped slash', '{ "sequence": ".\\/q.txt", "rows": [] }'],
+    [
+      'a comment between key and value',
+      'sequence: # a comment\n  ./construct\nrows: []\n',
+    ],
+    ['an extensionless path', 'sequence: ./construct\nrows: []\n'],
+    ['a folded scalar', 'sequence: >-\n  ./construct\nrows: []\n'],
+  ])('is true for %s, which the missing-file check lists', async (_, text) => {
+    expect(await gate(text)).toBe(true);
+    const local = await localDataDiagnostics(
+      text,
+      await parseConfigText(text),
+      makeStore().store
+    );
+    expect(local.sequenceMissing).toBe(true);
+    expect(local.diagnostics.map((d) => d.code)).toEqual([
+      'local-file-missing',
+    ]);
+  });
+
+  it.each([
+    [
+      'an inline-data config',
+      'accession: P05067\nrows:\n  - id: a\n    kind: features\n    data:\n      from: inline\n      inlineData: []\n',
+    ],
+    ['inline residues', 'sequence: MKTAYIAKQR\nrows: []\n'],
+    [
+      'an inline FASTA block',
+      'sequence: |\n  >my construct v2\n  MKTAYIAKQR\nrows: []\n',
+    ],
+    [
+      'a hosted sequence and data',
+      'sequence: https://lab.example/p.fasta\nrows:\n  - id: a\n    kind: features\n    data: /protvista/sample-data/x.csv\n',
+    ],
+    // Its `$schema:` URL ends in `.json`, which names no local file.
+    ['the shipped default-config.yaml', defaultConfigYaml],
+  ])('is false for %s', async (_, text) =>
+    expect(await gate(text)).toBe(false)
+  );
+});
+
+// ── Sequence files ────────────────────────────────────────────
+
+/** Parse `text` as the element would from `ref`, and register it as the sequence. */
+function loadSequence(store: LocalFileStore, ref: string, text: string) {
+  const parsed = parseSequenceText(text, ref);
+  if (!parsed.ok) throw new Error(parsed.message);
+  return store.register({
+    kind: 'sequence',
+    ref,
+    name: basename(ref),
+    size: text.length,
+    text,
+    sequence: parsed.value,
+  });
+}
+
+describe('isFastaFile', () => {
+  it.each([
+    ['p.fasta', '>h\nMK'],
+    // Raw residues, so only the extension can say so.
+    ['P.FA', 'MKTAYIAKQR'],
+    ['x.faa', '>h\nMK'],
+    ['x.fas', '>h\nMK'],
+    // The extension wins over the content: a headerless FASTA is still one.
+    ['raw.fa', 'MKTAYIAKQR'],
+    ['seq.txt', '\uFEFF>my construct\nMK'],
+    ['blank-first.txt', '\n  \r\n>my construct\nMK'],
+    ['protein', '>h\nMK'],
+  ])('reads %s as FASTA', (name, text) =>
+    expect(isFastaFile(name, text)).toBe(true)
+  );
+
+  it.each([
+    // A data extension wins over a leading '>'.
+    ['hits.csv', '>h\nMK'],
+    ['notes.txt', 'type,start,end\nDOMAIN,1,2'],
+    ['raw.txt', 'MKTAYIAKQR'],
+    ['empty.txt', ''],
+  ])('reads %s as data', (name, text) =>
+    expect(isFastaFile(name, text)).toBe(false)
+  );
+});
+
+describe('isLocalSequenceReference', () => {
+  it.each(['./p.fasta', '../p.txt', 'protein.fasta', ' ./p.fa '])(
+    'accepts %s',
+    (value) => expect(isLocalSequenceReference(value)).toBe(true)
+  );
+  it.each([
+    '/protvista/p.fasta',
+    'https://example.org/p.fasta',
+    'blob:https://example.org/uuid.fasta',
+    './{name}.fasta',
+    'MKTAYIAKQR',
+    '>h\nMK',
+    'protein.txt',
+    42,
+  ])('rejects %s', (value) =>
+    expect(isLocalSequenceReference(value)).toBe(false)
+  );
+});
+
+describe('the store holds sequence files', () => {
+  it('refuses, by type, a sequence entry without its parsed sequence', () => {
+    const { store } = makeStore();
+    const unparsed = {
+      kind: 'sequence' as const,
+      ref: './p.fasta',
+      name: 'p.fasta',
+      size: 2,
+      text: '>h',
+    };
+    // @ts-expect-error -- a sequence entry needs `sequence` (`pnpm test:types`).
+    store.register(unparsed);
+    expect(loadSequence(store, './p.fasta', '>h\nMK').kind).toBe('sequence');
+  });
+});
+
+describe('withLocalFiles and a sequence file', () => {
+  it('swaps a loaded sequence: in as canonical inline FASTA', () => {
+    const { store } = makeStore();
+    loadSequence(store, './p.fasta', '\uFEFF>my hdr \r\nmktay\r\niakqr*\r\n');
+    const config = { sequence: ' ./p.fasta ', rows: [] };
+    const before = structuredClone(config);
+
+    const out = withLocalFiles(config, store) as { sequence: string };
+    expect(out.sequence).toBe('>my hdr\nMKTAYIAKQR');
+    expect(config).toEqual(before);
+  });
+
+  it('swaps a headerless file in as residues the element parses identically', () => {
+    const { store } = makeStore();
+    const file = loadSequence(store, './p.fa', 'mktay\niakqr\n');
+    const out = (
+      withLocalFiles({ sequence: './p.fa', rows: [] }, store) as {
+        sequence: string;
+      }
+    ).sequence;
+    expect(out).toBe('MKTAYIAKQR');
+    expect(isSequenceReference(out)).toBe(false);
+    expect(parseSequenceText(out, undefined)).toEqual({
+      ok: true,
+      value: file.kind === 'sequence' && file.sequence,
+    });
+    expect(inlineSequenceText({ residues: 'MK', header: 'h' })).toBe('>h\nMK');
+  });
+
+  it.each([
+    '/abs.fasta',
+    'https://example.org/p.fasta',
+    'MKTAYIAKQR',
+    './{name}.fasta',
+  ])('leaves a sequence: of %s as written', (value) => {
+    const { store } = makeStore();
+    // Even with a sequence registered under that very value.
+    loadSequence(store, value, '>h\nMK');
+    const out = withLocalFiles({ sequence: value, rows: [] }, store) as {
+      sequence: string;
+    };
+    expect(out.sequence).toBe(value);
+  });
+
+  it('swaps in neither a data file under the sequence reference nor a sequence file under a track reference', () => {
+    const { store } = makeStore();
+    load(store, './p.txt', '>h\nMK', 'csv');
+    loadSequence(store, './x.fasta', '>h\nMK');
+    const out = withLocalFiles(
+      {
+        sequence: './p.txt',
+        rows: [{ id: 'a', data: { url: './x.fasta', format: 'csv' } }],
+      },
+      store
+    ) as { sequence: string; rows: { data: { url: string } }[] };
+    expect(out.sequence).toBe('./p.txt');
+    expect(out.rows[0].data.url).toBe('./x.fasta');
+  });
+});
+
+describe('localDataDiagnostics and a sequence: reference', () => {
+  const TEXT = '# ./p.fasta is our construct\nsequence: ./p.fasta\nrows: []\n';
+
+  it('warns once, at /sequence on its value, when the file is not loaded — in a config with no track references', async () => {
+    const { store } = makeStore();
+    const result = await localDataDiagnostics(
+      TEXT,
+      await parseConfigText(TEXT),
+      store
+    );
+    const from = TEXT.indexOf('./p.fasta', TEXT.indexOf('sequence:'));
+    expect(result.diagnostics).toEqual([
+      {
+        from,
+        to: from + './p.fasta'.length,
+        severity: 'warning',
+        code: 'local-file-missing',
+        path: '/sequence',
+        message:
+          './p.fasta isn\'t loaded in this browser — press "Load data file…" and pick p.fasta.',
+      },
+    ]);
+    expect(result.sequenceMissing).toBe(true);
+  });
+
+  it('warns for a JSON config too, anchored on the value', async () => {
+    const { store } = makeStore();
+    const text = '{\n  "sequence": "./p.txt",\n  "rows": []\n}';
+    const result = await localDataDiagnostics(
+      text,
+      await parseConfigText(text),
+      store
+    );
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'local-file-missing',
+        path: '/sequence',
+        from: text.indexOf('./p.txt'),
+      }),
+    ]);
+    expect(result.sequenceMissing).toBe(true);
+  });
+
+  it('says nothing once the file is loaded', async () => {
+    const { store } = makeStore();
+    loadSequence(store, './p.fasta', '>h\nMK');
+    const result = await localDataDiagnostics(
+      TEXT,
+      await parseConfigText(TEXT),
+      store
+    );
+    expect(result.diagnostics).toEqual([]);
+    expect(result.sequenceMissing).toBe(false);
+  });
+
+  it.each(['MKTAYIAKQR', 'https://example.org/p.fasta', '/protvista/p.fasta'])(
+    'says nothing for a sequence: of %s',
+    async (value) => {
+      const { store } = makeStore();
+      const result = await localDataDiagnostics(
+        '',
+        { sequence: value, rows: [] },
+        store
+      );
+      expect(result.diagnostics).toEqual([]);
+      expect(result.sequenceMissing).toBe(false);
+    }
+  );
+
+  it('says which file is loaded as the wrong thing', async () => {
+    const { store } = makeStore();
+    load(store, './p.txt', 'type,start,end\nDOMAIN,1,2', 'csv');
+    loadSequence(store, './x.txt', '>h\nMK');
+    const result = await localDataDiagnostics(
+      '',
+      {
+        sequence: './p.txt',
+        rows: [{ id: 'a', data: { url: './x.txt', format: 'csv' } }],
+      },
+      store
+    );
+    expect(
+      result.diagnostics.map((d) => [d.severity, d.code, d.path, d.message])
+    ).toEqual([
+      [
+        'warning',
+        'local-file-missing',
+        '/sequence',
+        './p.txt is loaded as track data, not as the sequence — load p.txt again to use it as the sequence.',
+      ],
+      [
+        'error',
+        'data-parse',
+        'a',
+        './x.txt is loaded as the protein sequence, not as track data.',
+      ],
+    ]);
+    expect(result.sequenceMissing).toBe(true);
   });
 });

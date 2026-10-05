@@ -50,6 +50,12 @@ import { parseConfigText } from '../schema/parse.js';
 import type { NormalizedConfig } from '../schema/normalize.js';
 import { loadProtvistaData, hasRenderableRows } from '../load-data.js';
 import { createRegistry } from '../schema/registry.js';
+import { findOutOfRange } from '../schema/adapters/coordinates.js';
+import {
+  parseDelimited,
+  rowsToFeatureRecords,
+} from '../schema/adapters/dsv.js';
+import { parseSequenceText } from '../schema/sequence.js';
 import { CSS_PREFIX } from '../styles/css-prefix.js';
 // Side-effect import: registers the `protvista-uniprot` custom
 // element. The data pipeline resolves adapters through a real registry
@@ -63,6 +69,17 @@ const resolveAdapter = (name: string) => registry.getAdapter(name);
 
 const REFERENCE_ACCESSION = 'P05067';
 const SEQ_LEN = 770;
+
+/**
+ * The length of every protein an example names with `accession:`, so its own
+ * data can be checked against that protein rather than against the
+ * 770-residue stand-in the render test mounts.
+ */
+const PROTEIN_LENGTHS: Record<string, number> = {
+  [REFERENCE_ACCESSION]: SEQ_LEN,
+  // Rubredoxin, conservation/ (UniProt release 2026_03).
+  P24297: 54,
+};
 
 const EXAMPLES_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -108,6 +125,9 @@ it('discovers the expected example directories', () => {
       'extend-default',
       'csv-styled',
       'sequence-only',
+      'sequence-inline',
+      'small-peptide',
+      'conservation',
     ])
   );
 });
@@ -260,6 +280,29 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
     }
   });
 
+  it('keeps every coordinate of its own data on its protein', () => {
+    // The element checks coordinates against the protein only at runtime,
+    // and the render test below mounts every accession example on a
+    // 770-residue stand-in, so data past the end of a shorter protein would
+    // pass everything else here.
+    const accession = config.accession ?? REFERENCE_ACCESSION;
+    const length = config.sequence
+      ? config.sequence.residues.length
+      : PROTEIN_LENGTHS[accession];
+    expect(
+      length,
+      `add the length of ${accession} to PROTEIN_LENGTHS`
+    ).toBeDefined();
+    for (const [key, coords] of Object.entries(result.trackCoordinates)) {
+      expect(findOutOfRange(coords.rows, length), key).toBeNull();
+    }
+    // Every locally-authored track was checked, not skipped for want of
+    // coordinates.
+    for (const { key } of findLocalTracks(config)) {
+      expect(result.trackCoordinates[key], key).toBeDefined();
+    }
+  });
+
   it('smoke-renders the example, including each locally-authored track', () => {
     const el = buildInstance({
       config,
@@ -297,6 +340,69 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
       expect(node, `${CSS_PREFIX}-track_${trackId} (${key}) should render`).not.toBeNull();
     }
   });
+});
+
+/**
+ * `sequence-inline/` is `sequence-only/` written inline, for the playground's
+ * "your own sequence" preset, which can fetch nothing. Pinned to it so the
+ * two cannot drift apart.
+ */
+it('sequence-inline holds the same protein and records as sequence-only', async () => {
+  const read = (rel: string) => readFile(join(EXAMPLES_ROOT, rel), 'utf8');
+  const inline = (await parseConfigText(
+    await read('sequence-inline/config.yaml')
+  )) as {
+    sequence: string;
+    rows: { data: { inlineData: unknown[] } }[];
+  };
+  const own = parseSequenceText(inline.sequence, undefined);
+  const file = parseSequenceText(
+    await read('sequence-only/protein.fasta'),
+    './protein.fasta'
+  );
+  expect(own.value).toEqual(file.value);
+  expect(own.value?.header).toBe('my construct v2');
+  expect(own.value?.residues).toHaveLength(240);
+
+  const records = rowsToFeatureRecords(
+    parseDelimited(await read('sequence-only/hotspots.csv'), ','),
+    { formatLabel: './hotspots.csv' }
+  );
+  expect(records).toHaveLength(4);
+  expect(inline.rows[0].data.inlineData).toEqual(records);
+});
+
+/**
+ * The conservation line has no tooltip, so the example's most conserved
+ * residues carry the scores: each site's tooltip, as loaded, must show its
+ * own score. A `kind: features` track's default tooltip leaves `score` out.
+ */
+it('conservation shows each most conserved residue’s score in its tooltip', async () => {
+  const dir = join(EXAMPLES_ROOT, 'conservation');
+  const { extendsFetcher, sequenceFetcher, fetchOne } =
+    makeExampleFetchers(dir);
+  const config = await loadConfig(
+    await readFile(join(dir, 'config.yaml'), 'utf8'),
+    { extendsFetcher, sequenceFetcher }
+  );
+  const result = await loadProtvistaData(
+    'P24297',
+    config,
+    fetchOne,
+    resolveAdapter
+  );
+  const sites = result.data['conserved_sites-conserved_sites'] as {
+    start: number;
+    score: number;
+    tooltipContent: string;
+  }[];
+  expect(sites).toHaveLength(6);
+  for (const site of sites) {
+    expect(site.tooltipContent, `residue ${site.start}`).toContain(
+      `<h5>Conservation score</h5><p>${site.score}</p>`
+    );
+  }
+  expect(sites[0]).toMatchObject({ start: 6, score: 0.877 });
 });
 
 /**

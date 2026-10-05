@@ -1,0 +1,5 @@
+type,start,end,description
+HELIX,2,8,α-helix
+HELIX,11,14,3₁₀-helix
+REGION,17,19,Polyproline II segment
+SITE,6,6,"Trp6, buried in the cage"

@@ -10,6 +10,15 @@
  * fetch path: the same decoder, the same routed errors and warnings, as a
  * hosted copy would get.
  *
+ * A FASTA file stands in for the config's `sequence:` the same way: the
+ * config says `sequence: ./protein.fasta`, and the store holds the file as a
+ * `kind: 'sequence'` entry, parsed before it was registered. The element
+ * takes no `blob:` URL there, so {@link withLocalFiles} hands the preview the
+ * parsed sequence inline instead, and {@link localDataDiagnostics} lists a
+ * `sequence:` naming a file that isn't loaded as `local-file-missing` at
+ * `/sequence` — the page holds the preview back for it
+ * (`sequenceMissing`), as it could only fail as a whole.
+ *
  * Two things the preview cannot do for the author are done here instead:
  *
  *   - {@link localDataDiagnostics} pre-flights each loaded file through the
@@ -47,6 +56,11 @@ import { runPipeline, sourceLabel } from '../schema/adapters/pipeline.js';
 import { normalizeConfig } from '../schema/normalize.js';
 import { createRegistry } from '../schema/registry.js';
 import { isPlainObject } from '../schema/shape.js';
+import {
+  FASTA_EXTENSIONS,
+  isSequenceReference,
+  type ResolvedSequence,
+} from '../schema/sequence.js';
 import type { ErrorContext } from '../errors/report.js';
 import type { PlaygroundDiagnostic } from './lint.js';
 
@@ -64,8 +78,10 @@ export const PRIVACY_NOTE =
 /** How much of a file {@link looksBinary} inspects before the full read. */
 export const SNIFF_BYTES = 8192;
 
-/** One file the user loaded, and the config reference it answers to. */
-export interface LocalFile {
+/** One data file the user loaded, and the config reference it answers to. */
+export interface LocalDataFile {
+  /** Optional, so a data entry can be registered as it always was. */
+  kind?: 'data';
   /** The config reference it is registered under (`./hits.csv`). */
   ref: string;
   /** The file's own name, for display. */
@@ -79,6 +95,38 @@ export interface LocalFile {
   /** The `blob:` URL the preview fetches. */
   url: string;
 }
+
+/**
+ * A FASTA file the user loaded as the config's `sequence:`. It is parsed
+ * before it is registered, so an entry always holds a sequence the element
+ * accepts. The preview is handed that sequence inline (see
+ * {@link withLocalFiles}); the entry's `blob:` URL is never fetched.
+ */
+export interface LocalSequenceFile {
+  kind: 'sequence';
+  /** The `sequence:` value it is registered under (`./protein.fasta`). */
+  ref: string;
+  name: string;
+  size: number;
+  text: string;
+  /** The parsed file, as the element would parse it from that reference. */
+  sequence: ResolvedSequence;
+  url: string;
+}
+
+export type LocalFile = LocalDataFile | LocalSequenceFile;
+
+/**
+ * `Omit` over each member of a union. TypeScript's own `Omit` is not
+ * distributive: over `LocalFile` it keeps only the keys both members share,
+ * and would accept an entry with neither `format` nor `sequence`.
+ */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
+
+/** What {@link LocalFileStore.register} takes: an entry before its URL. */
+export type NewLocalFile = DistributiveOmit<LocalFile, 'url'>;
 
 // ── File names and formats ────────────────────────────────────
 
@@ -173,7 +221,8 @@ export function looksBinary(bytes: Uint8Array): boolean {
  * extension, or because the descriptor names a `format:`. A sources key
  * (`features`) is neither, so it is not one.
  *
- * Not the test for a `sequence:` value: `.fasta` is no data format.
+ * Not the test for a `sequence:` value: `.fasta` is no data format. See
+ * {@link isLocalSequenceReference}.
  */
 export function isLocalReference(value: unknown, format?: unknown): boolean {
   if (typeof value !== 'string' || value.trim() === '') return false;
@@ -182,6 +231,93 @@ export function isLocalReference(value: unknown, format?: unknown): boolean {
   return (
     formatForPath(value) !== undefined ||
     (typeof format === 'string' && isDataFormat(format))
+  );
+}
+
+/**
+ * Whether a `sequence:` value names a file the playground could stand a
+ * loaded FASTA in for: a reference by the element's own rule
+ * (`isSequenceReference`), and — as for data — not a URL, not site-absolute
+ * and no `{variable}`. A bare `protein.fasta` counts: the element fetches it
+ * relative to the page.
+ */
+export function isLocalSequenceReference(value: unknown): value is string {
+  if (typeof value !== 'string' || !isSequenceReference(value)) return false;
+  const v = value.trim();
+  return (
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(v) &&
+    !v.startsWith('/') &&
+    !v.includes('{')
+  );
+}
+
+/**
+ * Whether a file the user loaded is a FASTA file, to become the config's
+ * `sequence:`: a FASTA extension (`.fasta`, `.fa`, `.faa`, `.fas`, in any
+ * case) says so; a data extension says it is not; otherwise it is FASTA when
+ * its first non-blank line, after any BOM, starts with `>`. Raw residues in a
+ * `.txt` are not sniffed: bare letters are too ambiguous.
+ */
+export function isFastaFile(name: string, text: string): boolean {
+  const lower = name.toLowerCase();
+  if (FASTA_EXTENSIONS.some((ext) => lower.endsWith(ext))) return true;
+  if (inferFormat(name) !== undefined) return false;
+  const first = text.split(/\r\n|\r|\n/).find((line) => line.trim() !== '');
+  // `trimStart` drops a leading BOM too: U+FEFF is whitespace to it.
+  return first !== undefined && first.trimStart().startsWith('>');
+}
+
+/**
+ * A parsed sequence as inline `sequence:` text that the element parses back
+ * to the same residues and header: `>${header}\n${residues}`, or the residues
+ * alone when there is no header. Never a reference, so the element makes no
+ * request for it.
+ */
+export function inlineSequenceText(sequence: ResolvedSequence): string {
+  return sequence.header === undefined
+    ? sequence.residues
+    : `>${sequence.header}\n${sequence.residues}`;
+}
+
+/**
+ * A token ending in a data-file extension (from the format table) that is
+ * not a URL and not site-absolute — as {@link isLocalReference} reads a
+ * value — or a `format:` anywhere. A token starts at a line start, a space, a
+ * quote or a flow bracket, so a `$schema: https://…/config.schema.json` is
+ * not one: its `.json` is part of a URL.
+ */
+const LOCAL_DATA_HINT = new RegExp(
+  [
+    `(?:^|[\\s'"[{,])(?![A-Za-z][A-Za-z0-9+.-]*:|/)[^\\s'"[\\]{},]*` +
+      `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b`,
+    `\\bformat:`,
+  ].join('|'),
+  'im'
+);
+
+/**
+ * The config's own top-level `sequence:` value, not one inherited through
+ * `extends:` (that is the base's, resolved against the page).
+ */
+const ownSequence = (parsed: unknown): unknown =>
+  isPlainObject(parsed) ? parsed.sequence : undefined;
+
+/**
+ * Whether the config could name a local file, so the page runs
+ * {@link localDataDiagnostics} on it even with nothing loaded. `parsed` is
+ * `text` as parsed (the page passes the one `lintConfig` already made).
+ *
+ * The sequence is decided from the parsed config, because the text cannot be
+ * trusted to show it: a quoted key, a comment between key and value, a JSON
+ * `\/` escape or a path with no extension all hide it, and a missed one
+ * would mount a preview that requests the private file by name. Track data
+ * keeps a cheap text test, so a config that names no data file is not
+ * pre-flighted on every keystroke; a miss there costs only the missing-file
+ * row until something is loaded, and the preview renders the track empty.
+ */
+export function mayNameLocalFile(text: string, parsed: unknown): boolean {
+  return (
+    isLocalSequenceReference(ownSequence(parsed)) || LOCAL_DATA_HINT.test(text)
   );
 }
 
@@ -194,7 +330,7 @@ export interface LocalFileStore {
    * Register a file under `ref`, replacing (and revoking) any file already
    * there. The text is snapshotted into a new `Blob`.
    */
-  register(file: Omit<LocalFile, 'url'>): LocalFile;
+  register(file: NewLocalFile): LocalFile;
   /** Forget the file under `ref` and revoke its URL. */
   remove(ref: string): boolean;
   get(ref: string): LocalFile | undefined;
@@ -252,6 +388,30 @@ export function createLocalFileStore(
       for (const ref of [...files.keys()]) drop(ref);
       version += 1;
     },
+  };
+}
+
+/**
+ * Which config references a newly read file answers to: one with its name,
+ * or its sanitised name, as the last path segment (`./data/hits.csv`, as in a
+ * pasted Starter Kit config).
+ *
+ * A reference already registered to a *different* file (`a(b.csv` under
+ * `./a-b.csv`, now loading `a b.csv`) is that file's: the new one gets a
+ * reference of its own. One registered to this file is its own, whatever its
+ * name says (`a b.csv` under `./a-b-2.csv`), so a reload replaces it in place.
+ */
+export function answersFor(
+  file: { name: string },
+  store: Pick<LocalFileStore, 'get'>
+): (value: string | undefined) => value is string {
+  const names = new Set([file.name, sanitizeName(file.name)]);
+  return (value: string | undefined): value is string => {
+    if (value === undefined) return false;
+    const owner = store.get(value)?.name;
+    return owner === undefined
+      ? names.has(basename(value))
+      : owner === file.name;
   };
 }
 
@@ -407,6 +567,10 @@ export function findLocalReferences(config: unknown): LocalReference[] {
  * A copy of `config` with every reference to a loaded file pointed at that
  * file's `blob:` URL — what the preview is handed in place of the editor
  * text. Unrelated tracks are untouched, and `config` itself is not mutated.
+ *
+ * A top-level `sequence:` that names a loaded sequence file is replaced by
+ * that sequence, inline ({@link inlineSequenceText}): the element accepts no
+ * `blob:` URL there, and an inline value needs no request at all.
  */
 export function withLocalFiles(
   config: unknown,
@@ -418,8 +582,14 @@ export function withLocalFiles(
     const file = store.get(ref.value);
     // The format the normaliser and the pre-flight read it with: a stated
     // `format:`, else the reference's extension, else the one it was loaded as.
-    if (file) {
+    if (file && file.kind !== 'sequence') {
       ref.apply(file.url, ref.format ?? inferFormat(ref.value) ?? file.format);
+    }
+  }
+  if (isLocalSequenceReference(copy.sequence)) {
+    const file = store.get(copy.sequence.trim());
+    if (file?.kind === 'sequence') {
+      copy.sequence = inlineSequenceText(file.sequence);
     }
   }
   return copy;
@@ -617,15 +787,35 @@ export interface LocalDataResult {
   counts: Map<string, number>;
   /** References whose loaded file failed to decode. */
   failedRefs: Set<string>;
+  /**
+   * The config's own `sequence:` names a local file that no loaded sequence
+   * file answers. The preview could only fail as a whole, so it is not
+   * mounted.
+   */
+  sequenceMissing: boolean;
 }
 
-/** Where a reference first appears in the editor text, for the gutter marker. */
+/**
+ * Where a reference first appears in the editor text, for the gutter marker:
+ * from `after` on, when given.
+ */
 function locateReference(
+  text: string,
+  value: string,
+  after = 0
+): { from: number; to: number } {
+  const at = text.indexOf(value, after);
+  return at === -1 ? { from: 0, to: 0 } : { from: at, to: at + value.length };
+}
+
+/** The top-level `sequence:` key's value in the editor text (YAML or JSON). */
+function locateSequence(
   text: string,
   value: string
 ): { from: number; to: number } {
-  const at = text.indexOf(value);
-  return at === -1 ? { from: 0, to: 0 } : { from: at, to: at + value.length };
+  const key = /^[ \t]*["']?sequence["']?[ \t]*:/m.exec(text);
+  const at = key ? locateReference(text, value, key.index) : undefined;
+  return at && at.to > 0 ? at : locateReference(text, value);
 }
 
 /**
@@ -633,13 +823,15 @@ function locateReference(
  *
  *   - `local-file-missing` (warning) for a reference no loaded file answers —
  *     the playground cannot read the disk by path, and a shared link carries
- *     only the name;
+ *     only the name. That includes a top-level `sequence:` naming a local
+ *     file, which also sets `sequenceMissing`;
  *   - `data-parse` (error) for a loaded file whose decode throws, with the
  *     decoder's own `./hits.csv (parsed as CSV): …` text;
  *   - `data-empty` (warning) for a non-empty file that decoded to no records.
  *
  * Data diagnostics never block Run: the preview renders the track empty, as
- * a hosted viewer would. The pre-flight passes no `coordinates` sink (the
+ * a hosted viewer would. A missing sequence is the exception, and the page
+ * controller holds the preview back for it (`sequenceMissing`). The pre-flight passes no `coordinates` sink (the
  * bounds check needs the sequence, which the element has) and no `warnings`
  * sink (the element routes those; the playground lists the event).
  *
@@ -657,9 +849,10 @@ export async function localDataDiagnostics(
     preflightFailed: new Set(),
     counts: new Map(),
     failedRefs: new Set(),
+    sequenceMissing: false,
   };
+  checkSequence(text, parsed, store, result);
   const refs = findLocalReferences(parsed);
-  if (refs.length === 0) return result;
 
   const missing = new Set<string>();
   const seen = new Set<string>();
@@ -679,6 +872,19 @@ export async function localDataDiagnostics(
         message:
           `${ref.value} isn't loaded in this browser — press "Load data file…" ` +
           `and pick ${basename(ref.value)}.`,
+      });
+      continue;
+    }
+    if (file.kind === 'sequence') {
+      const message = `${ref.value} is loaded as the protein sequence, not as track data.`;
+      if (seen.has(message)) continue;
+      seen.add(message);
+      result.diagnostics.push({
+        ...locateReference(text, ref.value),
+        severity: 'error',
+        code: 'data-parse',
+        path: ref.trackPath,
+        message,
       });
       continue;
     }
@@ -717,6 +923,36 @@ export async function localDataDiagnostics(
     });
   }
   return result;
+}
+
+/**
+ * The config's own top-level `sequence:`, when it names a local file: a
+ * `local-file-missing` warning at `/sequence` unless a sequence file is
+ * loaded under it. An inherited `sequence:` (from an `extends:` base) is the
+ * base's, resolved against the page, and is left alone.
+ */
+function checkSequence(
+  text: string,
+  parsed: unknown,
+  store: LocalFileStore,
+  result: LocalDataResult
+): void {
+  const value = ownSequence(parsed);
+  if (!isLocalSequenceReference(value)) return;
+  const ref = value.trim();
+  const file = store.get(ref);
+  if (file?.kind === 'sequence') return;
+  result.sequenceMissing = true;
+  result.diagnostics.push({
+    ...locateSequence(text, ref),
+    severity: 'warning',
+    code: 'local-file-missing',
+    path: '/sequence',
+    message: file
+      ? `${ref} is loaded as track data, not as the sequence — load ${basename(ref)} again to use it as the sequence.`
+      : `${ref} isn't loaded in this browser — press "Load data file…" ` +
+        `and pick ${basename(ref)}.`,
+  });
 }
 
 /**

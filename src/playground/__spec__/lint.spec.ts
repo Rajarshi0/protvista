@@ -170,9 +170,10 @@ rows:
   it('validates a sequence config without the default accession', async () => {
     // The page always has an accession to offer; injecting it here would
     // turn a clean sequence config into "both".
-    const result = await lintConfig(SEQUENCE, 'P05067');
-    expect(result.diagnostics).toEqual([]);
-    expect(result.declaresSequence).toBe(true);
+    expect(await lintConfig(SEQUENCE, 'P05067')).toMatchObject({
+      diagnostics: [],
+      declaresSequence: true,
+    });
     expect(await computeDiagnostics(SEQUENCE, 'P05067')).toEqual([]);
   });
 
@@ -209,6 +210,8 @@ rows:
     const result = await lint('sequence: |\n  >base\n  MKTAYIAKQR\nrows: []\n');
     expect(result.diagnostics).toEqual([]);
     expect(result.declaresSequence).toBe(true);
+    // The parsed config is still the editor text's own, without the base's.
+    expect(result.parsed).not.toHaveProperty('sequence');
     expect(fetched).toEqual(['https://lab.example/base.yaml']);
     // A base with no sequence, or one that can't be fetched, says no.
     expect((await lint('rows: []\n')).declaresSequence).toBe(false);
