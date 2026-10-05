@@ -597,7 +597,7 @@ rows:
   it('clears the status line on a new preset or accession, keeping the files loaded', async () => {
     /** A file the flow-style `rows:` can't take: the status and a snippet say so. */
     async function failEdit(name: string): Promise<void> {
-      setEditorText('accession: P05067\nrows: []\n');
+      setEditorText('accession: P05067\nrows: [{ id: a, data: ./a.csv }]\n');
       await pick(name, GOOD);
       await addAsNewTrack();
       await vi.waitFor(() =>
