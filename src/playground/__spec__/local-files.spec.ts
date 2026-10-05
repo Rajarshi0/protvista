@@ -13,6 +13,7 @@ import { appendTrack } from '../config-edit.js';
 import {
   KIND_FOR_SHAPE,
   PRIVACY_NOTE,
+  answersFor,
   basename,
   countRecords,
   createLocalFileStore,
@@ -23,6 +24,7 @@ import {
   isPreflightDuplicate,
   localDataDiagnostics,
   looksBinary,
+  mayNameLocalFile,
   referenceFor,
   relabelRuntime,
   sniffFormat,
@@ -930,4 +932,60 @@ describe('relabelRuntime / isPreflightDuplicate', () => {
     );
     expect(isPreflightDuplicate(undefined, failed)).toBe(false);
   });
+});
+
+describe('answersFor', () => {
+  it('answers a path with the file name, or its sanitised name, as its last segment', () => {
+    const { store } = makeStore();
+    const answers = answersFor({ name: 'a b.csv' }, store);
+    expect(answers('./a b.csv')).toBe(true);
+    expect(answers('./data/a-b.csv')).toBe(true);
+    expect(answers('./other.csv')).toBe(false);
+    expect(answers(undefined)).toBe(false);
+    // Another file on a case-sensitive host.
+    expect(answersFor({ name: 'SCORES.csv' }, store)('./scores.csv')).toBe(
+      false
+    );
+  });
+
+  it("leaves a reference registered to another file to that file, and takes back this file's own", () => {
+    const { store } = makeStore();
+    store.register({
+      ref: './a-b.csv',
+      name: 'a(b.csv',
+      size: 1,
+      format: 'csv',
+      text: 'x',
+    });
+    store.register({
+      ref: './a-b-2.csv',
+      name: 'a b.csv',
+      size: 1,
+      format: 'csv',
+      text: 'x',
+    });
+    const answers = answersFor({ name: 'a b.csv' }, store);
+    expect(answers('./a-b.csv')).toBe(false);
+    expect(answers('./a-b-2.csv')).toBe(true);
+    expect(answersFor({ name: 'a(b.csv' }, store)('./a-b.csv')).toBe(true);
+  });
+});
+
+describe('mayNameLocalFile', () => {
+  it.each([
+    ['a data path', 'rows:\n  - id: a\n    data: ./x.csv\n'],
+    [
+      'a format: key',
+      'rows:\n  - id: a\n    data: { url: ./x.txt, format: csv }\n',
+    ],
+  ])('is true for %s', (_, text) => expect(mayNameLocalFile(text)).toBe(true));
+
+  it.each([
+    [
+      'an inline-data config',
+      'accession: P05067\nrows:\n  - id: a\n    data:\n      from: inline\n      inlineData: []\n',
+    ],
+  ])('is false for %s', (_, text) =>
+    expect(mayNameLocalFile(text)).toBe(false)
+  );
 });

@@ -23,16 +23,16 @@ import { lintConfig, memoizedExtendsFetcher, type LintResult } from './lint.js';
 import { initSplitter } from './splitter.js';
 import {
   KIND_FOR_SHAPE,
-  basename,
+  answersFor,
   createLocalFileStore,
   findLocalReferences,
   guessShape,
   inferFormat,
   isPreflightDuplicate,
   localDataDiagnostics,
+  mayNameLocalFile,
   referenceFor,
   relabelRuntime,
-  sanitizeName,
   sniffFormat,
   withLocalFiles,
   type LocalDataResult,
@@ -49,7 +49,6 @@ import {
   type EditResult,
 } from './config-edit.js';
 import { createLocalDataControl, type ReadFile } from './local-data-control.js';
-import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../schema/file-formats.js';
 import type { DataFormat } from '../schema/types.js';
 import {
   PRESETS,
@@ -313,19 +312,6 @@ type ValidateResult = {
   local?: LocalDataResult;
 } | null;
 
-/** A data-file extension (from the format table) or a `format:` anywhere. */
-const LOCAL_FILE_HINT = new RegExp(
-  `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b|\\bformat:`,
-  'i'
-);
-
-/**
- * Whether the text could name a local data file. A cheap test, so the
- * default config is not pre-flighted on every keystroke when nothing is
- * loaded.
- */
-const mayNameLocalFile = (text: string): boolean => LOCAL_FILE_HINT.test(text);
-
 /**
  * Shared validation step for both pipeline entry points: cancel any
  * pending debounced run, stamp a generation, validate the current text,
@@ -548,19 +534,8 @@ async function loadFile(file: ReadFile, skipped: number): Promise<void> {
   control.setSnippet('');
   const note =
     skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
-  const names = new Set([file.name, sanitizeName(file.name)]);
-  // A reference already registered to a *different* file (`a(b.csv` under
-  // `./a-b.csv`, now loading `a b.csv`) is that file's: the new one goes
-  // through the form and gets a reference of its own. One registered to this
-  // file is its own, whatever its name says (`a b.csv` under `./a-b-2.csv`),
-  // so a reload replaces it in place.
-  const answers = (value: string | undefined): value is string => {
-    if (value === undefined) return false;
-    const owner = store.get(value)?.name;
-    return owner === undefined
-      ? names.has(basename(value))
-      : owner === file.name;
-  };
+  // A reference registered to another file is not this one's; see answersFor.
+  const answers = answersFor(file, store);
   // A tab-separated export saved as `.csv` is offered as `tsv`, so the new
   // track reads it the way its header is written.
   const byName = inferFormat(file.name);
