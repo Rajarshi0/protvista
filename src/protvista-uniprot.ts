@@ -499,8 +499,25 @@ class ProtvistaUniprot extends LitElement {
    * adapters, set `viewerConfig` — then clear it to load.
    */
   suspend?: boolean;
+  private _accession: string | undefined;
+
   /** The UniProt accession to show (`accession` attribute). */
-  accession?: string;
+  get accession(): string | undefined {
+    return this._accession;
+  }
+
+  /**
+   * Every write is the host's (the property or the attribute), so it ends a
+   * backfill here, at the write, even when it equals the backfilled value:
+   * Lit reports no change for that, and `updated()` would never see it.
+   * `_applyConfig` marks its own write as a backfill again just after.
+   */
+  set accession(value: string | undefined) {
+    const old = this._accession;
+    this._accession = value;
+    this._backfilledAccession = undefined;
+    this.requestUpdate('accession', old);
+  }
   /**
    * The protein sequence the viewer draws: fetched for `accession`, or taken
    * from the config's `sequence:` in sequence-only mode. Set by the element;
@@ -657,8 +674,8 @@ class ProtvistaUniprot extends LitElement {
    * it, it is the config's, not the host's (`_hostAccession`): the next
    * config resolves with it only as a fallback, and `_applyConfig` replaces
    * it with whatever that config names — dropping it for a `sequence:`.
-   * Cleared by `updated()` once the host changes the accession itself, so a
-   * host value that happens to equal it is still the host's.
+   * Cleared by the `accession` setter on any write by the host, so a host
+   * value that happens to equal it is still the host's.
    */
   private _backfilledAccession: string | undefined;
 
@@ -1082,7 +1099,8 @@ class ProtvistaUniprot extends LitElement {
   static get properties() {
     return {
       suspend: { type: Boolean, reflect: true },
-      accession: { type: String, reflect: true },
+      // Its own accessor: see `set accession`.
+      accession: { type: String, reflect: true, noAccessor: true },
       sequence: { type: String },
       data: { type: Object },
       openGroups: { type: Array },
@@ -2338,17 +2356,10 @@ class ProtvistaUniprot extends LitElement {
     }
 
     // Consumed before any early return: left set past the `suspend` return
-    // below, the flag would swallow the next real accession change. The
-    // ownership of an accession is settled here too, suspended or not.
+    // below, the flag would swallow the next real accession change.
     const changedByConfig =
       this._configAccessionChange && changedProperties.has('accession');
     if (changedByConfig) this._configAccessionChange = false;
-    // Any other change is the host's: from here the accession is theirs,
-    // even when it equals the one a config once backfilled, so a later
-    // `sequence:` config reports it rather than silently dropping it.
-    else if (changedProperties.has('accession')) {
-      this._backfilledAccession = undefined;
-    }
 
     if (changedProperties.has('suspend')) {
       if (this.suspend) return;
@@ -2684,6 +2695,7 @@ class ProtvistaUniprot extends LitElement {
         this._configAccessionChange = true;
         this.accession = next;
       }
+      // After the write, which (like any write) cleared it.
       this._backfilledAccession = next;
     }
     this._authoredConfig = loaded.authored;
