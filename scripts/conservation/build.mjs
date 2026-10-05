@@ -87,26 +87,18 @@ async function get(url) {
 /** `2026-03-26T00:00:00Z` → `2026-03-26`. @param {string | undefined} date */
 const day = (date) => (date ? date.slice(0, 10) : undefined);
 
-/** @param {ReturnType<typeof parseArgs>} options */
-async function generate({ pfam, target }) {
-  const alignmentUrl = `https://www.ebi.ac.uk/interpro/api/entry/pfam/${pfam}/?annotation=alignment:full`;
-  const releaseUrl = 'https://www.ebi.ac.uk/interpro/api/';
-  const uniprotUrl = `https://rest.uniprot.org/uniprotkb/${target}.json?fields=sequence,ft_binding`;
-
-  const alignmentResponse = await get(alignmentUrl);
-  const releaseResponse = await get(releaseUrl);
-  const uniprotResponse = await get(uniprotUrl);
-
-  // fetch() undoes `Content-Encoding: gzip`; this guards a body that is
-  // itself gzipped.
-  const raw = alignmentResponse.body;
-  const alignmentBytes =
-    raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw) : raw;
-  const alignmentText = alignmentBytes.toString('utf8');
-  const databases = JSON.parse(releaseResponse.body.toString('utf8')).databases;
-  const entry = JSON.parse(uniprotResponse.body.toString('utf8'));
-  const sequence = entry.sequence.value;
-
+/**
+ * Score a Pfam alignment and map the scores onto the target's row, refusing
+ * (by throwing) when the target is not exactly one row of the alignment, when
+ * that row's residues differ from the target's UniProt sequence, or when the
+ * scored residues are not one unbroken run. No I/O, so the refusals can be
+ * tested offline.
+ *
+ * @param {string} alignmentText Stockholm text.
+ * @param {string} sequence The target's full UniProt sequence.
+ * @param {{ pfam: string, target: string }} ids
+ */
+export function scoreTarget(alignmentText, sequence, { pfam, target }) {
   const { rows, annotations } = parseStockholm(alignmentText);
   const targetRows = rows.filter((row) => row.accession === target);
   if (targetRows.length !== 1) {
@@ -129,6 +121,34 @@ async function generate({ pfam, target }) {
   if (points.length === 0 || !isContiguous(points)) {
     throw new Error(`${target}'s scored residues are not one unbroken run`);
   }
+  return { rows, annotations, row, columns, points };
+}
+
+/** @param {ReturnType<typeof parseArgs>} options */
+async function generate({ pfam, target }) {
+  const alignmentUrl = `https://www.ebi.ac.uk/interpro/api/entry/pfam/${pfam}/?annotation=alignment:full`;
+  const releaseUrl = 'https://www.ebi.ac.uk/interpro/api/';
+  const uniprotUrl = `https://rest.uniprot.org/uniprotkb/${target}.json?fields=sequence,ft_binding`;
+
+  const alignmentResponse = await get(alignmentUrl);
+  const releaseResponse = await get(releaseUrl);
+  const uniprotResponse = await get(uniprotUrl);
+
+  // fetch() undoes `Content-Encoding: gzip`; this guards a body that is
+  // itself gzipped.
+  const raw = alignmentResponse.body;
+  const alignmentBytes =
+    raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw) : raw;
+  const alignmentText = alignmentBytes.toString('utf8');
+  const databases = JSON.parse(releaseResponse.body.toString('utf8')).databases;
+  const entry = JSON.parse(uniprotResponse.body.toString('utf8'));
+  const sequence = entry.sequence.value;
+
+  const { rows, annotations, row, columns, points } = scoreTarget(
+    alignmentText,
+    sequence,
+    { pfam, target }
+  );
 
   // Everything downstream uses the published (3 dp) values, so the sites
   // file can be re-derived from conservation.csv exactly.
