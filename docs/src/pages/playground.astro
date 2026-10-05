@@ -228,11 +228,19 @@ const versionTooltip = isPrerelease
         color: #fff;
         opacity: 0.85;
       }
+      /* A <select> is as wide as its longest option, and a flex item will not
+         shrink below its content, so on a phone the preset picker pushed the
+         page sideways. min-width: 0 lets the field, then the select, shrink to
+         the header line; where there is room nothing changes. */
       .field {
         display: flex;
         align-items: center;
         gap: 0.4rem;
         font-size: 0.9rem;
+        min-width: 0;
+      }
+      .field select {
+        min-width: 0;
       }
       .field label {
         color: var(--muted);

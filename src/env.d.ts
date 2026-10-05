@@ -16,3 +16,13 @@ declare module '*.yaml?raw' {
   const content: string;
   export default content;
 }
+
+/**
+ * The playground page's own source, read as text by
+ * `__browser__/playground-header.browser.spec.ts` so it lays out the page's
+ * real header markup and stylesheet. Declared for that one page only.
+ */
+declare module '*/pages/playground.astro?raw' {
+  const content: string;
+  export default content;
+}
