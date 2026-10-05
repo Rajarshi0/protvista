@@ -9,6 +9,7 @@ import { parseConfigText } from '../../schema/parse.js';
 import { mergeExtends } from '../../schema/extends.js';
 import type { ProtvistaViewerConfig } from '../../schema/types.js';
 import { computeDiagnostics } from '../lint.js';
+import { referenceFor } from '../local-files.js';
 import { PRESETS, getPreset } from '../presets.js';
 import {
   appendTrack,
@@ -120,6 +121,68 @@ describe('appendTrack', () => {
         ((await parse(result.text)) as { rows: unknown[] }).rows[1]
       ).toEqual(row);
     }
+  });
+
+  it.each([
+    '.5',
+    '.5e3',
+    '.0',
+    '.inf',
+    '.NaN',
+    'null',
+    'True',
+    '~',
+    '0x1F',
+    '1e3',
+    'yes',
+    'OFF',
+  ])(
+    'quotes a label of %s, which would not read back as written',
+    async (word) => {
+      const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+      const row = { ...ROW, label: word };
+      const result = await appendTrack(text, await parse(text), row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`label: ${JSON.stringify(word)}\n`);
+      expect(
+        ((await parse(result.text)) as { rows: unknown[] }).rows[1]
+      ).toEqual(row);
+    }
+  );
+
+  it.each(['hits.csv', './data/hits.csv', 'my_track', 'nullable', 'yes.csv'])(
+    'writes a label of %s plain, as it reads back as written',
+    async (word) => {
+      const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+      const row = { ...ROW, label: word };
+      const result = await appendTrack(text, await parse(text), row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`label: ${word}\n`);
+    }
+  );
+
+  it('adds a file named .5, quoting the label YAML would read as a number', async () => {
+    const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+    const parsed = await parse(text);
+    const row: NewRow = {
+      id: rowIdFor('.5', parsed),
+      label: rowLabelFor('.5'),
+      kind: 'features',
+      data: referenceFor('.5'),
+    };
+    const result = await appendTrack(text, parsed, row);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toBe(
+      `${text}  - id: "-5"\n    label: ".5"\n    kind: features\n    data: ./.5\n`
+    );
+  });
+
+  it('quotes a url a flow mapping would read as syntax, though it reads back alone', async () => {
+    const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
+    const row = { ...ROW, data: { url: './a,b.txt', format: 'csv' as const } };
+    const result = await appendTrack(text, await parse(text), row);
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).toContain('data: { url: "./a,b.txt", format: csv }\n');
   });
 
   it.each([

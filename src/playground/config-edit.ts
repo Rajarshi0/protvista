@@ -12,7 +12,7 @@
  * DOM-free, so it unit-tests under jsdom.
  */
 import type { DataFormat } from '../schema/types.js';
-import { parseConfigText } from '../schema/parse.js';
+import { parseConfigText, yamlReader } from '../schema/parse.js';
 import { createRegistry } from '../schema/registry.js';
 import { isPlainObject } from '../schema/shape.js';
 import { detectFormat } from './format.js';
@@ -142,29 +142,55 @@ export function rowLabelFor(fileName: string): string {
 
 // ── YAML text helpers ─────────────────────────────────────────
 
-const RESERVED = /^(?:true|false|null|yes|no|on|off|~)$/i;
+/** Whether a string can be written as a plain (unquoted) YAML scalar. */
+type IsPlain = (value: string) => boolean;
+
+/**
+ * Characters a plain scalar may hold here: no indicator (`:`, `#`, `,`,
+ * `[`, …) a block or flow context would read as syntax.
+ */
+const SAFE_PLAIN = /^[A-Za-z_./][A-Za-z0-9_./-]*$/;
+
+/**
+ * Words YAML 1.1 readers (PyYAML, older tools) take as booleans. The parser
+ * reads them as strings, but quoting them keeps a copied config portable.
+ */
+const YAML11_BOOLEANS = /^(?:yes|no|on|off)$/i;
+
+/**
+ * The plain-scalar test, asking the parser the config is read with how it
+ * reads the value rather than restating its schema: plain only when it reads
+ * back as the same string (`.5`, `.inf`, `null` do not).
+ */
+async function plainTest(): Promise<IsPlain> {
+  const read = await yamlReader();
+  return (value) => {
+    if (!SAFE_PLAIN.test(value) || YAML11_BOOLEANS.test(value)) return false;
+    try {
+      return read(value) === value;
+    } catch {
+      return false;
+    }
+  };
+}
 
 /** A scalar as YAML: plain when that reads back as the same string, else quoted. */
-function yamlScalar(value: string): string {
-  return /^[A-Za-z_./][A-Za-z0-9_./-]*$/.test(value) &&
-    !RESERVED.test(value) &&
-    !/^\.(?:inf|nan)$/i.test(value)
-    ? value
-    : JSON.stringify(value);
+function yamlScalar(value: string, plain: IsPlain): string {
+  return plain(value) ? value : JSON.stringify(value);
 }
 
-function yamlValue(value: DataValue): string {
+function yamlValue(value: DataValue, plain: IsPlain): string {
   return typeof value === 'string'
-    ? yamlScalar(value)
-    : `{ url: ${yamlScalar(value.url)}, format: ${value.format} }`;
+    ? yamlScalar(value, plain)
+    : `{ url: ${yamlScalar(value.url, plain)}, format: ${value.format} }`;
 }
 
-function rowYaml(row: NewRow, indent: string): string[] {
+function rowYaml(row: NewRow, indent: string, plain: IsPlain): string[] {
   return [
-    `${indent}- id: ${yamlScalar(row.id)}`,
-    `${indent}  label: ${yamlScalar(row.label)}`,
-    `${indent}  kind: ${yamlScalar(row.kind)}`,
-    `${indent}  data: ${yamlValue(row.data)}`,
+    `${indent}- id: ${yamlScalar(row.id, plain)}`,
+    `${indent}  label: ${yamlScalar(row.label, plain)}`,
+    `${indent}  kind: ${yamlScalar(row.kind, plain)}`,
+    `${indent}  data: ${yamlValue(row.data, plain)}`,
   ];
 }
 
@@ -217,11 +243,12 @@ const asJson = (text: string, value: unknown): string =>
 // ── Attach to an existing track ───────────────────────────────
 
 /**
- * Every way of replacing one `data:` entry's value in `text` with `value`:
- * the key's own line plus any deeper-indented block below it (or a sequence
- * at the key's own indentation, which YAML allows under a mapping key).
+ * Every way of replacing one `data:` entry's value in `text` with `written`
+ * (the new value as YAML): the key's own line plus any deeper-indented block
+ * below it (or a sequence at the key's own indentation, which YAML allows
+ * under a mapping key).
  */
-function* dataSplices(text: string, value: DataValue): Generator<string> {
+function* dataSplices(text: string, written: string): Generator<string> {
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i += 1) {
     const match = /^(\s*)(-\s+)?data:(?=\s|$)/.exec(lines[i]);
@@ -243,7 +270,7 @@ function* dataSplices(text: string, value: DataValue): Generator<string> {
       if (!deeper && !sameColSequence) break;
       end = j;
     }
-    const replaced = `${match[1]}${match[2] ?? ''}data: ${yamlValue(value)}`;
+    const replaced = `${match[1]}${match[2] ?? ''}data: ${written}`;
     yield [...lines.slice(0, i), replaced, ...lines.slice(end + 1)].join('\n');
   }
 }
@@ -258,7 +285,8 @@ export async function attachToTrack(
   target: Pick<TrackTarget, 'rowIndex' | 'trackIndex' | 'path'>,
   value: DataValue
 ): Promise<EditResult> {
-  const snippet = `data: ${yamlValue(value)}`;
+  const written = yamlValue(value, await plainTest());
+  const snippet = `data: ${written}`;
   const expected = structuredClone(parsed);
   const rows =
     isPlainObject(expected) && Array.isArray(expected.rows)
@@ -277,7 +305,7 @@ export async function attachToTrack(
   track.data = value;
 
   if (detectFormat(text) === 'json') return { text: asJson(text, expected) };
-  const spliced = await firstVerified(dataSplices(text, value), expected);
+  const spliced = await firstVerified(dataSplices(text, written), expected);
   return spliced !== undefined
     ? { text: spliced }
     : {
@@ -288,14 +316,20 @@ export async function attachToTrack(
 
 // ── Append a new track ────────────────────────────────────────
 
-/** The text with `row` added as the last top-level `rows:` entry. */
-function appendSplice(text: string, row: NewRow): string | undefined {
+/**
+ * The text with a new row added as the last top-level `rows:` entry; `entry`
+ * writes the row's lines at an indent.
+ */
+function appendSplice(
+  text: string,
+  entry: (indent: string) => string[]
+): string | undefined {
   const lines = text.split('\n');
   const rowsAt = lines.findIndex((line) => /^rows:/.test(line));
   if (rowsAt === -1) {
     // No `rows:` at all: start one at the end.
     const body = text === '' || text.endsWith('\n') ? text : `${text}\n`;
-    return `${body}rows:\n${rowYaml(row, '  ').join('\n')}\n`;
+    return `${body}rows:\n${entry('  ').join('\n')}\n`;
   }
   // `rows: [...]` or any other inline value: leave it to the snippet.
   if (!/^rows:\s*(?:#.*)?$/.test(lines[rowsAt])) return undefined;
@@ -327,7 +361,7 @@ function appendSplice(text: string, row: NewRow): string | undefined {
   const indent = item ? item[1] : '  ';
   return [
     ...lines.slice(0, last + 1),
-    ...rowYaml(row, indent),
+    ...entry(indent),
     ...lines.slice(last + 1),
   ].join('\n');
 }
@@ -343,9 +377,9 @@ export async function appendTrack(
   row: NewRow
 ): Promise<EditResult> {
   const isJson = detectFormat(text) === 'json';
-  const snippet = isJson
-    ? JSON.stringify(row, null, 2)
-    : rowYaml(row, '').join('\n');
+  const plain = await plainTest();
+  const entry = (indent: string) => rowYaml(row, indent, plain);
+  const snippet = isJson ? JSON.stringify(row, null, 2) : entry('').join('\n');
   // Re-serialising JSON would keep only what parsed; with nothing parsed, it
   // would replace the whole config with the new row. (A YAML splice is
   // verified below, and a comments-only YAML document still gets `rows:`.)
@@ -373,7 +407,7 @@ export async function appendTrack(
   expected.rows = [...((expected.rows as unknown[]) ?? []), { ...row }];
 
   if (isJson) return { text: asJson(text, expected) };
-  const spliced = appendSplice(text, row);
+  const spliced = appendSplice(text, entry);
   const verified =
     spliced === undefined
       ? undefined
