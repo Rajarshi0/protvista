@@ -573,8 +573,12 @@ describe('visitor notices, one per routing-table row', () => {
       message: '',
       consoleLevel: 'warn',
     }).notice;
-    const onRow = row ? (rowLabel(el, row)?.querySelector(NOTE) ?? null) : null;
-    const onTop = topNote(el);
+    // The visitor ⓘ itself: an author ⚠ or error control is not one.
+    const VISITOR = `.${CSS_PREFIX}-note--notice`;
+    const onRow = row
+      ? (rowLabel(el, row)?.querySelector(VISITOR) ?? null)
+      : null;
+    const onTop = el.querySelector(`${TOP_BAR} ${VISITOR}`);
     expect(!!onRow, 'track notice').toBe(expected === 'track');
     expect(!!onTop, 'viewer notice').toBe(expected === 'viewer');
     if (expected === 'none') expect(el.querySelector(NOTE)).toBeNull();
