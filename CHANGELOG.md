@@ -105,7 +105,8 @@ navigates away.
 
 The same button (and drop) also takes a FASTA file — `.fasta`, `.fa`, `.faa`,
 `.fas`, or any other file whose first non-blank line starts with `>` (a `.csv`,
-`.tsv`, `.json` or `.bed` is still read as data) — as the config's
+`.tsv`, `.json` or `.bed` is read as data, unless the config's `sequence:` names
+it) — as the config's
 `sequence:`. It is parsed as a hosted viewer would parse it before anything
 changes, so a file with two records or a stray character is refused with the
 viewer's own `invalid-sequence` message, and one over 2 MB (the most a hosted

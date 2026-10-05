@@ -132,10 +132,10 @@ config sets `sequence:`, itself or through an `extends:` base.
 Press **Load data file…** in the [playground](/protvista/playground/) (or drop
 the file onto the config editor) and pick a one-record FASTA file: `.fasta`,
 `.fa`, `.faa` or `.fas`, or any other file whose first non-blank line starts
-with `>` (a `.csv`, `.tsv`, `.json` or `.bed` file is always read as data). It
-is read in your browser and never uploaded. Only its *name* goes into the
-config — `sequence: ./my-protein.fasta` — so neither the residues nor the
-header reach a link you share.
+with `>` (a `.csv`, `.tsv`, `.json` or `.bed` file is read as data, unless the
+config's `sequence:` names it). It is read in your browser and never uploaded.
+Only its *name* goes into the config — `sequence: ./my-protein.fasta` — so
+neither the residues nor the header reach a link you share.
 
 If the config already names the file, as
 [`examples/sequence-only/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/sequence-only)
