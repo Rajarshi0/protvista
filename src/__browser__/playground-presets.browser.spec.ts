@@ -140,6 +140,16 @@ describe('playground presets: conservation, your own sequence and small proteins
     await vi.waitFor(() =>
       expect(records('binding_sites-binding_sites')).toHaveLength(4)
     );
+    // The default features tooltip shows type, description, start and end;
+    // UniProt leaves the description empty and names the iron as the ligand.
+    for (const site of records('binding_sites-binding_sites') as {
+      start: number;
+      tooltipContent: string;
+    }[]) {
+      expect(site.tooltipContent, `binding site ${site.start}`).toContain(
+        '<h5>Ligand</h5><p>Fe cation</p>'
+      );
+    }
     expect(preview()?.getAttribute('accession')).toBe('P24297');
     expect(recorded).toEqual(
       expect.arrayContaining([
