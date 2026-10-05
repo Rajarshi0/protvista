@@ -18,6 +18,11 @@
  * render. Adding a failure class means picking a severity and a scope, and the
  * surfaces follow.
  *
+ * One of those surfaces is the visitor notice: a quiet ⓘ for a warning that
+ * changes what is on screen (rows not drawn, colours not painted, a track left
+ * without data). It is a column like the others, so whether a warning tells
+ * the visitor is decided here too, per row, never at the site.
+ *
  * Pure module — no lit, no DOM, no `console`. The table is data, which is what
  * lets `src/errors/__spec__/router.spec.ts` drift-test it against the
  * published documentation and walk every row of it directly.
@@ -44,11 +49,30 @@ export type FailureSeverity = 'error' | 'warning' | 'info';
  */
 export type FailureScope = 'viewer' | { trackKey: string };
 
+/**
+ * What a warning found, when its (severity, scope, phase) is not enough to
+ * route it. Three `track-data` warnings share a phase but differ in what a
+ * visitor sees, and so do three viewer-scoped `config` warnings and the two
+ * viewer-scoped `track-fetch` ones. Internal: the event does not carry it.
+ */
+export type FailureCode =
+  | 'coordinate-out-of-range'
+  | 'unpaintable-color'
+  | 'data-field-ignored'
+  | 'url-variable-unresolved'
+  | 'unrendered-component'
+  | 'theme-color-ignored';
+
+/** Where a visitor notice goes: the track's label, the top bar, or nowhere. */
+export type NoticeTarget = 'none' | 'track' | 'viewer';
+
 /** A failure, as the site that hit it describes itself. */
 export interface FailureReport {
   severity: FailureSeverity;
   /** The stable event vocabulary — see `ErrorPhase`. */
   phase: ErrorPhase;
+  /** What was found, for a phase whose rows tell findings apart. */
+  code?: FailureCode;
   scope: FailureScope;
   /** Where it came from, when that isn't implied by the phase (a URL, a path). */
   source?: string;
@@ -83,6 +107,12 @@ export interface FailureChannels {
   badge: boolean;
   /** A Retry affordance on whichever surface carries the failure. */
   retry: boolean;
+  /**
+   * The visitor notice, if any: on the track's label, or on the viewer's top
+   * bar. Whether it is drawn is a display switch (`quiet-notices`), not a
+   * routing input, so `strict` does not change it.
+   */
+  notice: 'track' | 'viewer' | null;
 }
 
 /**
@@ -114,11 +144,27 @@ export interface RoutingRule {
    * `tooltip-field-miss` warning is the same for a different reason: every
    * record renders, and only the config's tooltip template names a field the
    * data never carries — an authoring note, not a broken row.
+   *
+   * Those two rows concern the badge and the panel. A visitor notice is a
+   * separate, quieter surface, and a `code` row decides it.
    */
   phase?: ErrorPhase;
+  /**
+   * When set (always together with `phase`), the rule governs only reports
+   * carrying this code, ahead of the phase row. The phase row stays as the
+   * fallback, so a code with no row of its own routes as before.
+   */
+  code?: FailureCode;
   event: boolean;
   panel: 'always' | 'strict' | 'never';
   badge: boolean;
+  /**
+   * The visitor notice: a quiet ⓘ telling whoever is looking at the viewer
+   * that what they see is incomplete or misleading. Only warnings that change
+   * what is on screen have one. Author mode is not a column: it shows
+   * everything the event carries, so it is `event`.
+   */
+  notice: NoticeTarget;
   /** Prose for the published table. Kept beside the rule so the two can't drift. */
   rationale: string;
 }
@@ -129,7 +175,8 @@ export interface RoutingRule {
  * Every (severity, scope) combination has exactly one unqualified row, so
  * routing is total — there is no fallthrough, and no failure class can be
  * added without landing on a row. A row may additionally name a `phase`, in
- * which case it governs that phase ahead of the unqualified one. `retry` is not a column: it follows `report.recoverable`
+ * which case it governs that phase ahead of the unqualified one, and a `phase`
+ * row may be narrowed again by a `code`. `retry` is not a column: it follows `report.recoverable`
  * on whichever surface the failure reached, so a transient failure is
  * retryable from the badge and the panel alike.
  *
@@ -143,6 +190,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'always',
     badge: false,
+    notice: 'none',
     rationale:
       'Nothing to render past it, so the panel replaces the viewer whether or not strict is on.',
   },
@@ -152,6 +200,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'strict',
     badge: true,
+    notice: 'none',
     rationale:
       'One row is broken and the rest of the viewer works, so the badge carries it; strict promotes it.',
   },
@@ -162,8 +211,45 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'strict',
     badge: false,
+    notice: 'none',
     rationale:
       'A rejected API call did not do what the caller asked, so strict promotes it.',
+  },
+  {
+    severity: 'warning',
+    scope: 'viewer',
+    phase: 'config',
+    code: 'unrendered-component',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'viewer',
+    rationale:
+      'The config loads, but these rows draw nothing, so visitors are told a track could not be shown.',
+  },
+  {
+    severity: 'warning',
+    scope: 'viewer',
+    phase: 'config',
+    code: 'theme-color-ignored',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'none',
+    rationale:
+      'The default colours are used instead, and nothing is missing — an authoring note.',
+  },
+  {
+    severity: 'warning',
+    scope: 'viewer',
+    phase: 'track-fetch',
+    code: 'url-variable-unresolved',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'viewer',
+    rationale:
+      'Never fetched, so the track has no data (and no row) or only part of it; the notice goes on the viewer and names the tracks.',
   },
   {
     severity: 'warning',
@@ -171,8 +257,45 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'never',
     badge: false,
+    notice: 'none',
     rationale:
       'Names something legal that loaded as written — a panel would hide a working viewer.',
+  },
+  {
+    severity: 'warning',
+    scope: 'track',
+    phase: 'track-data',
+    code: 'coordinate-out-of-range',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'track',
+    rationale:
+      'Features outside the sequence are not drawn in full. The row works, so a quiet notice, not a badge.',
+  },
+  {
+    severity: 'warning',
+    scope: 'track',
+    phase: 'track-data',
+    code: 'unpaintable-color',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'track',
+    rationale:
+      "Drawn in the previous feature's colour, and colours in data usually carry meaning, so visitors are told.",
+  },
+  {
+    severity: 'warning',
+    scope: 'track',
+    phase: 'track-data',
+    code: 'data-field-ignored',
+    event: true,
+    panel: 'never',
+    badge: false,
+    notice: 'none',
+    rationale:
+      'An ignored column changes nothing drawn — an authoring note, not something a visitor can see.',
   },
   {
     severity: 'warning',
@@ -181,8 +304,9 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'never',
     badge: false,
+    notice: 'none',
     rationale:
-      'The row loaded and renders as written — coordinates outside the sequence, an ignored column, an unpaintable colour — so a badge or panel would mark a working row as broken.',
+      'The row loaded and renders as written, so a badge or panel would mark a working row as broken. A future code is authoring-only until it gets a row of its own.',
   },
   {
     severity: 'warning',
@@ -191,6 +315,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'never',
     badge: false,
+    notice: 'none',
     rationale:
       'Every record renders; only the tooltip template names a field this data never carries — an authoring note, not a broken row.',
   },
@@ -200,6 +325,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: true,
     panel: 'strict',
     badge: true,
+    notice: 'none',
     rationale:
       'Same surface as a track error: the row says so, and strict promotes it.',
   },
@@ -209,6 +335,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: false,
     panel: 'never',
     badge: false,
+    notice: 'none',
     rationale: 'An expected absence. The console records it; no user surface.',
   },
   {
@@ -217,6 +344,7 @@ export const ROUTING_TABLE: readonly RoutingRule[] = [
     event: false,
     panel: 'never',
     badge: false,
+    notice: 'none',
     rationale:
       'An entity with no data of this kind is not a failure — the row is simply empty.',
   },
@@ -228,8 +356,9 @@ export function scopeAxis(scope: FailureScope): 'viewer' | 'track' {
 }
 
 /**
- * The row governing a report: the phase-qualified one if there is one for this
- * (severity, scope), otherwise the unqualified one. Total over the table —
+ * The row governing a report, most specific first: the row naming its phase
+ * and code, then the row naming its phase alone, then the unqualified row for
+ * its (severity, scope). Total over the table —
  * never `undefined`, because every (severity, scope) pair has an unqualified
  * row and a drift test pins that.
  */
@@ -238,7 +367,15 @@ export function ruleFor(report: FailureReport): RoutingRule {
   const matches = (r: RoutingRule) =>
     r.severity === report.severity && r.scope === axis;
   const rule =
-    ROUTING_TABLE.find((r) => matches(r) && r.phase === report.phase) ??
+    (report.code !== undefined
+      ? ROUTING_TABLE.find(
+          (r) =>
+            matches(r) && r.phase === report.phase && r.code === report.code
+        )
+      : undefined) ??
+    ROUTING_TABLE.find(
+      (r) => matches(r) && r.phase === report.phase && r.code === undefined
+    ) ??
     ROUTING_TABLE.find((r) => matches(r) && r.phase === undefined);
   // Unreachable: the table covers all six combinations, and a drift test
   // pins that. Throwing beats silently swallowing a failure if it ever is.
@@ -269,5 +406,6 @@ export function routeFailure(
     // A Retry is offered only where the failure is actually surfaced, and
     // only when retrying could change the outcome.
     retry: !!report.recoverable && (panel || rule.badge),
+    notice: rule.notice === 'none' ? null : rule.notice,
   };
 }

@@ -26,9 +26,12 @@ import {
   routeFailure,
   ruleFor,
   scopeAxis,
+  type FailureCode,
   type FailureReport,
   type FailureSeverity,
 } from '../router.js';
+import { NOTICE_TEXT } from '../notices.js';
+import type { ErrorPhase } from '../report.js';
 
 // Vitest runs from the repo root, so resolve paths from cwd.
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), 'utf8');
@@ -43,8 +46,9 @@ const report = (
   extra: Partial<FailureReport> = {}
 ): FailureReport => ({
   severity,
-  // A phase with no qualified row of its own, so the unqualified rows are what
-  // the general cases below exercise.
+  // A phase with no phase row of its own (only a code row, which a report
+  // without that code never matches), so the unqualified rows are what the
+  // general cases below exercise.
   phase: 'track-fetch',
   scope: scope === 'viewer' ? 'viewer' : { trackKey: 'g-y' },
   message: 'something went wrong',
@@ -70,7 +74,10 @@ describe('the routing table is total', () => {
     expect(qualified.length).toBeGreaterThan(0);
     for (const rule of qualified) {
       const picked = ruleFor(
-        report(rule.severity, rule.scope, { phase: rule.phase })
+        report(rule.severity, rule.scope, {
+          phase: rule.phase,
+          code: rule.code,
+        })
       );
       expect(picked).toBe(rule);
       // …and a different phase with the same severity and scope still gets the
@@ -122,6 +129,244 @@ describe('the routing table is total', () => {
   it('reads a track scope off the key, a viewer scope off the literal', () => {
     expect(scopeAxis('viewer')).toBe('viewer');
     expect(scopeAxis({ trackKey: 'g-y' })).toBe('track');
+  });
+});
+
+describe('a code narrows a phase row', () => {
+  const codeRows = ROUTING_TABLE.filter((r) => r.code !== undefined);
+
+  it('has code rows, each naming a phase and keeping a phase row to fall back on', () => {
+    expect(codeRows.length).toBeGreaterThan(0);
+    for (const rule of codeRows) {
+      const where = `${rule.severity}/${rule.scope}/${rule.code}`;
+      expect(rule.phase, where).toBeDefined();
+      // An unknown code with this phase lands on the phase row if there is
+      // one, otherwise on the unqualified row — never on another code's row.
+      const fallback = ruleFor(
+        report(rule.severity, rule.scope, {
+          phase: rule.phase,
+          code: 'not-a-code' as FailureCode,
+        })
+      );
+      expect(fallback.code, where).toBeUndefined();
+      expect(
+        fallback.phase === rule.phase || fallback.phase === undefined,
+        where
+      ).toBe(true);
+    }
+  });
+
+  it('reads code + phase, then phase, then any', () => {
+    // Most specific: the code row.
+    const coded = ruleFor(
+      report('warning', 'track', {
+        phase: 'track-data',
+        code: 'coordinate-out-of-range',
+      })
+    );
+    expect([coded.phase, coded.code]).toEqual([
+      'track-data',
+      'coordinate-out-of-range',
+    ]);
+    // A code with no row of its own under this phase: the phase row.
+    const phased = ruleFor(report('warning', 'track', { phase: 'track-data' }));
+    expect([phased.phase, phased.code]).toEqual(['track-data', undefined]);
+    // A code row belongs to its phase: the same code reported under another
+    // phase does not match it, and falls through to the unqualified row.
+    const other = ruleFor(
+      report('warning', 'track', {
+        phase: 'track-fetch',
+        code: 'coordinate-out-of-range',
+      })
+    );
+    expect([other.phase, other.code]).toEqual([undefined, undefined]);
+    // The same split for a viewer-scoped pair with no phase row: the code
+    // row, else the unqualified row.
+    expect(
+      ruleFor(
+        report('warning', 'viewer', {
+          phase: 'track-fetch',
+          code: 'url-variable-unresolved',
+        })
+      ).code
+    ).toBe('url-variable-unresolved');
+    const uncoded = ruleFor(
+      report('warning', 'viewer', { phase: 'track-fetch' })
+    );
+    expect([uncoded.phase, uncoded.code]).toEqual([undefined, undefined]);
+  });
+});
+
+/**
+ * The issue's routing table, row for row, as literal data: what a visitor
+ * sees, and whether author mode lists it. Checked through `ruleFor`, so it
+ * pins behaviour rather than the shape of the table. Author mode shows what
+ * the event carries, so "author" is read as `rule.event`.
+ */
+describe("the issue's warning table", () => {
+  const ISSUE_TABLE: {
+    severity: FailureSeverity;
+    scope: 'viewer' | 'track';
+    phase: ErrorPhase;
+    code?: FailureCode;
+    notice: 'none' | 'track' | 'viewer';
+    author: boolean;
+  }[] = [
+    {
+      severity: 'warning',
+      scope: 'track',
+      phase: 'track-data',
+      code: 'coordinate-out-of-range',
+      notice: 'track',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'track',
+      phase: 'track-data',
+      code: 'unpaintable-color',
+      notice: 'track',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'track',
+      phase: 'track-data',
+      code: 'data-field-ignored',
+      notice: 'none',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'track',
+      phase: 'tooltip-field-miss',
+      notice: 'none',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'track-fetch',
+      code: 'url-variable-unresolved',
+      notice: 'viewer',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'config',
+      code: 'unrendered-component',
+      notice: 'viewer',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'config',
+      code: 'theme-color-ignored',
+      notice: 'none',
+      author: true,
+    },
+    // A config validation warning carries no code.
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'config',
+      notice: 'none',
+      author: true,
+    },
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'set-track-data',
+      notice: 'none',
+      author: true,
+    },
+    // `_reportRenderFailure`'s no-origin warning: same phase and scope as a
+    // skipped fetch, no code — so no visitor notice.
+    {
+      severity: 'warning',
+      scope: 'viewer',
+      phase: 'track-fetch',
+      notice: 'none',
+      author: true,
+    },
+    // Errors are unchanged: badge or panel, never a notice; author mode
+    // lists them.
+    {
+      severity: 'error',
+      scope: 'track',
+      phase: 'track-fetch',
+      notice: 'none',
+      author: true,
+    },
+    {
+      severity: 'error',
+      scope: 'viewer',
+      phase: 'config',
+      notice: 'none',
+      author: true,
+    },
+    // `info` stays off author mode, as it stays off the event.
+    {
+      severity: 'info',
+      scope: 'track',
+      phase: 'track-fetch',
+      notice: 'none',
+      author: false,
+    },
+  ];
+
+  it.each(ISSUE_TABLE)(
+    '$severity/$scope/$phase/$code → notice $notice, author $author',
+    ({ severity, scope, phase, code, notice, author }) => {
+      const rule = ruleFor(report(severity, scope, { phase, code }));
+      expect(rule.notice).toBe(notice);
+      expect(rule.event).toBe(author);
+    }
+  );
+});
+
+describe('notice invariants', () => {
+  it('puts a track notice only on a track-scoped row', () => {
+    for (const rule of ROUTING_TABLE.filter((r) => r.notice === 'track')) {
+      expect(rule.scope).toBe('track');
+    }
+  });
+
+  it('gives errors and info no notice — errors keep their own surfaces', () => {
+    for (const rule of ROUTING_TABLE.filter((r) => r.severity !== 'warning')) {
+      expect(rule.notice, `${rule.severity}/${rule.scope}`).toBe('none');
+    }
+  });
+
+  it('gives every notice row a code with a visitor sentence', () => {
+    const noticeRows = ROUTING_TABLE.filter((r) => r.notice !== 'none');
+    expect(noticeRows.length).toBeGreaterThan(0);
+    for (const rule of noticeRows) {
+      expect(
+        rule.code,
+        `${rule.severity}/${rule.scope}/${rule.phase}`
+      ).toBeDefined();
+      const text = (NOTICE_TEXT as Record<string, unknown>)[rule.code!];
+      expect(typeof text, rule.code).toBe('function');
+    }
+  });
+
+  it('routes the notice through, the same with or without strict', () => {
+    for (const rule of ROUTING_TABLE) {
+      const r = report(rule.severity, rule.scope, {
+        phase: rule.phase ?? 'track-fetch',
+        code: rule.code,
+      });
+      const expected = rule.notice === 'none' ? null : rule.notice;
+      for (const strict of [false, true]) {
+        expect(
+          routeFailure(r, { strict }).notice,
+          `${rule.code} ${strict}`
+        ).toBe(expected);
+      }
+    }
   });
 });
 
@@ -261,8 +506,14 @@ describe('the published routing table matches the implementation', () => {
 
   it('publishes one row per rule, in the same order', () => {
     expect(docRows).toHaveLength(ROUTING_TABLE.length);
-    expect(docRows.map(([sev, scope, phase]) => `${sev}/${scope}/${phase}`)).toEqual(
-      ROUTING_TABLE.map((r) => `${r.severity}/${r.scope}/${r.phase ?? 'any'}`)
+    expect(
+      docRows.map(
+        ([sev, scope, phase, code]) => `${sev}/${scope}/${phase}/${code}`
+      )
+    ).toEqual(
+      ROUTING_TABLE.map(
+        (r) => `${r.severity}/${r.scope}/${r.phase ?? 'any'}/${r.code ?? 'any'}`
+      )
     );
   });
 
@@ -275,15 +526,25 @@ describe('the published routing table matches the implementation', () => {
     const panelCell = (rule: (typeof ROUTING_TABLE)[number]) =>
       ({ always: 'always', strict: 'under strict', never: 'never' })[rule.panel];
 
+    const noticeCell = (rule: (typeof ROUTING_TABLE)[number]) =>
+      ({ none: 'no', track: 'track', viewer: 'viewer' })[rule.notice];
+
     ROUTING_TABLE.forEach((rule, i) => {
-      const [, , , consoleCell, eventCell, panel, badge] = docRows[i];
-      const where = `${rule.severity}/${rule.scope}`;
+      const row = docRows[i];
+      expect(row, `row ${i} cells`).toHaveLength(10);
+      const [, , , , consoleCell, eventCell, panel, badge, notice, author] =
+        row;
+      const where = `${rule.severity}/${rule.scope}/${rule.code ?? rule.phase ?? 'any'}`;
       // Every routed failure reaches the console; the table says so per row
       // so a reader never has to infer it.
       expect(consoleCell, `${where} console`).toBe('yes');
       expect(eventCell, `${where} event`).toBe(yesNo(rule.event));
       expect(panel, `${where} panel`).toBe(panelCell(rule));
       expect(badge, `${where} badge`).toBe(badgeCell(rule));
+      expect(notice, `${where} notice`).toBe(noticeCell(rule));
+      // Author mode shows everything the event carries. There is no rule
+      // field for it: this assertion is what makes the published column true.
+      expect(author, `${where} author mode`).toBe(yesNo(rule.event));
     });
   });
 });

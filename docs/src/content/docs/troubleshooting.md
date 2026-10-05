@@ -60,21 +60,32 @@ viewer.addEventListener('protvista-error', (event) => {
 Every failure in the viewer — a config that won't validate, a sequence that
 won't load, a file that won't parse — is described by two facts and routed by
 them: how **severe** it is, and whether it is scoped to the whole **viewer** or
-to one **track**. The table below is the whole rule. It lives as data in
+to one **track**. A row may also name a **phase**, and a phase row may be
+narrowed again by a **code** saying what was found: for `track-data`, the
+`code` of the event's issue; on the viewer, a URL template left unfetched
+(`url-variable-unresolved`), a component with no renderer
+(`unrendered-component`) or a `theme:` colour that didn't resolve
+(`theme-color-ignored`). The table below is the whole rule. It lives as data in
 `src/errors/router.ts` and is drift-tested against this page, so the two cannot
 disagree.
 
-| Severity | Scope | Phase | Console | `protvista-error` | Alert panel | Row badge |
-| --- | --- | --- | --- | --- | --- | --- |
-| `error` | viewer | any | yes | yes | always | — |
-| `error` | track | any | yes | yes | under `strict` | yes |
-| `warning` | viewer | `set-track-data` | yes | yes | under `strict` | — |
-| `warning` | viewer | any | yes | yes | never | — |
-| `warning` | track | `track-data` | yes | yes | never | no |
-| `warning` | track | `tooltip-field-miss` | yes | yes | never | no |
-| `warning` | track | any | yes | yes | under `strict` | yes |
-| `info` | viewer | any | yes | no | never | — |
-| `info` | track | any | yes | no | never | no |
+| Severity | Scope | Phase | Code | Console | `protvista-error` | Alert panel | Row badge | Visitor notice | Author mode |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `error` | viewer | any | any | yes | yes | always | — | no | yes |
+| `error` | track | any | any | yes | yes | under `strict` | yes | no | yes |
+| `warning` | viewer | `set-track-data` | any | yes | yes | under `strict` | — | no | yes |
+| `warning` | viewer | `config` | `unrendered-component` | yes | yes | never | — | viewer | yes |
+| `warning` | viewer | `config` | `theme-color-ignored` | yes | yes | never | — | no | yes |
+| `warning` | viewer | `track-fetch` | `url-variable-unresolved` | yes | yes | never | — | viewer | yes |
+| `warning` | viewer | any | any | yes | yes | never | — | no | yes |
+| `warning` | track | `track-data` | `coordinate-out-of-range` | yes | yes | never | no | track | yes |
+| `warning` | track | `track-data` | `unpaintable-color` | yes | yes | never | no | track | yes |
+| `warning` | track | `track-data` | `data-field-ignored` | yes | yes | never | no | no | yes |
+| `warning` | track | `track-data` | any | yes | yes | never | no | no | yes |
+| `warning` | track | `tooltip-field-miss` | any | yes | yes | never | no | no | yes |
+| `warning` | track | any | any | yes | yes | under `strict` | yes | no | yes |
+| `info` | viewer | any | any | yes | no | never | — | no | no |
+| `info` | track | any | any | yes | no | never | no | no | no |
 
 Reading it:
 
@@ -87,6 +98,11 @@ Reading it:
   config warning, or a `theme:` field that could not be resolved. It never
   raises the panel, even under `strict`: hiding a working viewer behind a notice
   about something that worked is not a louder failure, just a less useful one.
+  Two of them change what is on screen, so they also carry a **visitor
+  notice** on the viewer: a track whose data URL was never fetched (an
+  undefined `{variable}`), and a component with no renderer. A `theme:` colour
+  that didn't resolve leaves the default colours in place and nothing missing,
+  so it has none.
 - The one exception is a rejected **`setTrackData()`** call, which `strict` does
   promote. The rows above are read most-specific-first, so a row naming a
   `phase` wins over the `any` row for the same severity and scope. A config
@@ -96,14 +112,19 @@ Reading it:
 - A **`track-data`** warning — rows whose coordinates fall outside the
   sequence, a column of your file that was ignored, a colour the canvas cannot
   paint — goes the other way for a track. The rows loaded and render as
-  written, so it takes neither the `⚠` badge nor the panel; the event and the
-  console line carry it.
+  written, so it takes neither the `⚠` badge nor the panel: a badge would mark
+  a working row as broken. Where the visitor would otherwise be misled —
+  features not drawn in full, colours not painted — the track gets a quieter
+  **visitor notice** instead. An ignored column changes nothing drawn, so it
+  has none.
 - A **`tooltip-field-miss`** warning is the same for the same reason: every
   record renders, and only the track's tooltip template names a field the data
   never has. No badge and no panel; the event and the console line carry it.
 - **`info`** is an expected absence, not a failure: a provider endpoint
   answering 404 for an entity with no data of this kind, or a `from: custom`
   track nobody injected data into. It gets a console line and no user surface.
+- **Author mode** lists everything the `protvista-error` event carries — every
+  error and every warning, never `info` — so its column is the event's.
 
 A **Retry** control appears on whichever surface carried the failure, and only
 when retrying could plausibly change the answer: a network error or a 5xx may
