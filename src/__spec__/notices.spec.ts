@@ -1159,6 +1159,22 @@ describe('author mode lists every warning, as the event and playground say it', 
     expect(popoverOf(top).textContent).toContain('×3');
   });
 
+  it('keeps at most 200 notes on one anchor', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      { sequence: RESIDUES, rows: [okTrack()] },
+      { attrs: ['show-warnings'] }
+    );
+    await ready(el, events, '');
+    // 201 different calls: none merges into another.
+    for (let i = 0; i <= 200; i++) el.setTrackData('nope', `x${i}`, []);
+    await el.updateComplete;
+    expect(events.filter((d) => d.phase === 'set-track-data')).toHaveLength(
+      201
+    );
+    expect(linesOf(topNote(el)!)).toHaveLength(200);
+  });
+
   it('does not count a skip a targeted retry reports again', async () => {
     quiet();
     const { el, events } = mountEl(
