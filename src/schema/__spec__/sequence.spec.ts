@@ -171,6 +171,19 @@ describe('sequenceDisplayLabel', () => {
       `${'x'.repeat(78)}…`
     );
   });
+
+  it('counts and cuts by code points, never splitting an emoji', () => {
+    const label = (header: string) =>
+      sequenceDisplayLabel({ residues: 'M', header });
+    // The emoji's two UTF-16 units straddle the cut at 79: kept whole, or
+    // the label would end in a lone surrogate that renders as U+FFFD.
+    expect(label(`${'a'.repeat(78)}😀${'b'.repeat(10)}`)).toBe(
+      `${'a'.repeat(78)}😀…`
+    );
+    // 80 characters, one of them an emoji (81 UTF-16 units): not cut.
+    const eighty = `${'a'.repeat(79)}😀`;
+    expect(label(eighty)).toBe(eighty);
+  });
 });
 
 describe('escapeMarkdocInline through the real label renderer', () => {
