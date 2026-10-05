@@ -482,13 +482,44 @@ export function sequenceTargetSummary(parsed: unknown): SequenceTargetSummary {
         : { inline: true };
     }
   }
-  // The validator's sequence mode reads no `accession:`, so the copy can
-  // keep it: only `needs-accession` is counted, never `accession-and-sequence`.
-  const copy: Obj = { ...structuredClone(parsed), sequence: 'M' };
-  summary.needsUniprot = validateConfig(copy, createRegistry()).issues.filter(
-    (issue) => issue.code === 'needs-accession'
-  ).length;
+  summary.needsUniprot = countNeedsUniprot(parsed);
   return summary;
+}
+
+/** The issue codes of the validator's structural pass, which ends it early. */
+const STRUCTURAL_CODES = new Set(['schema', 'invalid-entry-shape']);
+
+/**
+ * How many tracks of `parsed` would fail `needs-accession` once it shows a
+ * sequence. The copy keeps any `accession:`: sequence mode then also raises
+ * `accession-and-sequence`, which is not counted.
+ *
+ * A schema error anywhere (a stray top-level key, say) stops the validator
+ * before its sequence-mode pass, so the whole config would count none. Then
+ * each row is counted on its own, with only what that pass reads besides it:
+ * `sources:` (dropped too if it is what fails). A row that is itself
+ * malformed counts none.
+ */
+function countNeedsUniprot(parsed: Obj): number {
+  const registry = createRegistry();
+  const count = (config: Obj): number | undefined => {
+    const { issues } = validateConfig(config, registry);
+    if (issues.some((issue) => STRUCTURAL_CODES.has(issue.code))) {
+      return undefined;
+    }
+    return issues.filter((issue) => issue.code === 'needs-accession').length;
+  };
+  const whole = count({ ...structuredClone(parsed), sequence: 'M' });
+  if (whole !== undefined) return whole;
+  const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+  return rows.reduce<number>((total, row) => {
+    const alone: Obj = { sequence: 'M', rows: [structuredClone(row)] };
+    const withSources =
+      parsed.sources === undefined
+        ? undefined
+        : count({ ...alone, sources: structuredClone(parsed.sources) });
+    return total + (withSources ?? count(alone) ?? 0);
+  }, 0);
 }
 
 /** A top-level YAML key line: `key:` at column 0, the key optionally quoted. */
@@ -535,20 +566,39 @@ function replaceBlocks(
   return out;
 }
 
+/**
+ * The end-of-line comment on a top-level `key: value` line, with the space
+ * before it (`  # the entry`), or `''`. The value may be plain or quoted; a
+ * `#` inside quotes is not a comment. Any other layout gives `''`, and the
+ * splice is verified either way.
+ */
+function trailingComment(line: string): string {
+  return (
+    /^[^:]*:[ \t]*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#'"][^#]*?)?([ \t]+#.*)$/.exec(
+      line
+    )?.[1] ?? ''
+  );
+}
+
 /** Every YAML splice that sets `sequence:` to `line` and drops `accession:`. */
 function* sequenceSplices(text: string, line: string): Generator<string> {
   const lines = text.split('\n');
   const sequence = topLevelBlocks(lines, 'sequence');
   const accession = topLevelBlocks(lines, 'accession');
   const both = [...sequence, ...accession];
+  // The line that takes the place of `lines[at]`, keeping its end-of-line
+  // comment; then, should that not verify, the bare line.
+  const replacing = function* (at: number): Generator<string> {
+    const comment = trailingComment(lines[at]);
+    if (comment !== '') {
+      yield replaceBlocks(lines, both, at, [line + comment]).join('\n');
+    }
+    yield replaceBlocks(lines, both, at, [line]).join('\n');
+  };
   // 1. Replace the `sequence:` block (an inline `|` FASTA, say).
-  if (sequence.length > 0) {
-    yield replaceBlocks(lines, both, sequence[0][0], [line]).join('\n');
-  }
+  if (sequence.length > 0) yield* replacing(sequence[0][0]);
   // 2. Put it where `accession:` was.
-  if (accession.length > 0) {
-    yield replaceBlocks(lines, both, accession[0][0], [line]).join('\n');
-  }
+  if (accession.length > 0) yield* replacing(accession[0][0]);
   // 3. After the leading `$schema:` / `version:` / `extends:` keys, else
   //    before the first top-level key, else at the end.
   const keys = lines
