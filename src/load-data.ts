@@ -197,8 +197,13 @@ type LoadResult = {
    * had no value or a refused one (see `substituteTemplate`). Returned rather
    * than logged for the same reason as `trackFailures`; the caller routes
    * each as a warning.
+   *
+   * `tracks` is the key of every (re)loading track that references the
+   * template, in config order — the first track the message names and every
+   * later one. With `trackUrls` the caller can tell a track that fetched
+   * nothing (absent there) from one that lost only some of its URLs.
    */
-  skipWarnings: string[];
+  skipWarnings: { message: string; tracks: string[] }[];
   /**
    * Each track whose authored `dataTooltip` references a field that none of
    * the records it rendered against carries — `{% $score %}` on a track with
@@ -563,27 +568,40 @@ export async function loadProtvistaData(
   const trackUrls: Record<string, string[]> = {};
   const trackCoordinates: Record<string, TrackCoordinates> = {};
   const substituted = new Map<string, string>();
-  const skipped = new Set<string>();
-  const skipWarnings: string[] = [];
-  const substitute = (template: string, trackPath: string): string | null => {
+  // Template → its skip warning, which also collects every track that
+  // referenced it. Membership is the "was skipped" test.
+  const skipped = new Map<string, { message: string; tracks: string[] }>();
+  const skipWarnings: { message: string; tracks: string[] }[] = [];
+  const substitute = (
+    template: string,
+    key: string,
+    trackPath: string
+  ): string | null => {
     const known = substituted.get(template);
     if (known !== undefined) return known;
-    if (skipped.has(template)) return null;
+    const already = skipped.get(template);
+    if (already) {
+      if (!already.tracks.includes(key)) already.tracks.push(key);
+      return null;
+    }
     const result = substituteTemplate(template, vars);
     if ('url' in result) {
       substituted.set(template, result.url);
       return result.url;
     }
-    skipped.add(template);
     const braced = (tokens: string[]) => tokens.map((t) => `{${t}}`).join(', ');
-    skipWarnings.push(
-      `[protvista-uniprot] Not fetching '${template}' for track ${trackPath}: ` +
+    const warning = {
+      message:
+        `[protvista-uniprot] Not fetching '${template}' for track ${trackPath}: ` +
         ('unresolved' in result
           ? `undefined variable(s) ${braced(result.unresolved)}. ` +
             `Define them in top-level 'variables:' or as data-* attributes.`
           : `invalid value for ${braced(result.invalid)} ` +
-            `('.', '..' and malformed Unicode are refused).`)
-    );
+            `('.', '..' and malformed Unicode are refused).`),
+      tracks: [key],
+    };
+    skipped.set(template, warning);
+    skipWarnings.push(warning);
     return null;
   };
   // Per-template body type: `text` for the delimited generic-format
@@ -605,7 +623,7 @@ export async function loadProtvistaData(
         DATA_FORMATS[source.format].body === 'text';
       const fetched: string[] = [];
       for (const t of list) {
-        const url = substitute(t, `${group.id}/${track.id}`);
+        const url = substitute(t, key, `${group.id}/${track.id}`);
         if (url === null) continue;
         fetched.push(url);
         templates.add(t);

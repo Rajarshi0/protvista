@@ -1550,7 +1550,7 @@ class ProtvistaUniprot extends LitElement {
     // A URL template left unfetched because a `{token}` had no usable value.
     // Viewer-scoped: one template can feed several tracks, and the fix (a
     // `variables:` entry or a `data-*` attribute) is not any one row's.
-    for (const message of skipWarnings) {
+    for (const { message } of skipWarnings) {
       this._report({
         severity: 'warning',
         phase: 'track-fetch',
