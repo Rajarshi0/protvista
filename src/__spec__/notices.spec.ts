@@ -970,6 +970,27 @@ describe('notes follow the loads that raised them', () => {
   });
 });
 
+describe('overlapping setConfig() calls', () => {
+  it('keep only the last config’s notes', async () => {
+    quiet();
+    const { el, events } = mountEl({ sequence: RESIDUES, rows: [okTrack()] });
+    await ready(el, events, '');
+    // Both start before either resolves, so both pass the config drop first.
+    const first = el.setConfig({
+      sequence: RESIDUES,
+      rows: [okTrack(), mine()],
+    });
+    const second = el.setConfig({ sequence: RESIDUES, rows: [okTrack()] });
+    await Promise.all([first, second]);
+    await ready(el, events, '');
+    await el.updateComplete;
+    // The first config did apply and warn: its note is what must go.
+    expect(events.some((d) => d.message.startsWith('No renderer'))).toBe(true);
+    expect(el.config!.rows.map((r) => r.id)).toEqual(['ok']);
+    expect(topNote(el)).toBeNull();
+  });
+});
+
 describe('the announcement', () => {
   const regionText = (el: El) =>
     el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim();

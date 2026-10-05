@@ -2839,6 +2839,13 @@ class ProtvistaUniprot extends LitElement {
    * guard would otherwise skip every one of these steps.
    */
   private _applyConfig(loaded: LoadedConfig): void {
+    // The notes of a config this one supersedes: its warnings and the API
+    // calls checked against it. `_dropConfig` clears them too, but two
+    // overlapping `setConfig()` calls both pass it before either resolves,
+    // so the first one's notes would outlive it. Its loads' notes go with
+    // this config's first full load.
+    this._clearNotes('config');
+    this._clearNotes('api');
     const normalized = loaded.config;
     // Accession precedence: HTML attribute wins, so only backfill from the
     // config when the host left the attribute blank. An accession a previous
@@ -2921,8 +2928,8 @@ class ProtvistaUniprot extends LitElement {
     for (const batch of this._loadBatches) batch.controller.abort();
     this._loadBatches = [];
     // Every note belonged to the config being dropped: its warnings, its
-    // loads, and the API calls checked against it. Every `_applyConfig`
-    // follows this (or a fresh element), so this is the one config clear.
+    // loads, and the API calls checked against it. `_applyConfig` clears a
+    // superseded config's own notes again, for calls that overlap.
     this._clearNotes();
     this.config = undefined;
     this.loading = true;
