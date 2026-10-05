@@ -1,5 +1,152 @@
 # Changelog
 
+## Unreleased
+
+### Added: per-feature colour, shape and custom tooltip fields from your own files
+
+Feature records from your own CSV, TSV or JSON file now keep every column
+(or key) beyond `type`, `start`, `end`, `description` and `score`, just as
+records written inline always did. A file and the same records written
+inline now render the same way.
+
+- A `color`, `shape`, `fill` or `opacity` column styles that one feature,
+  ahead of the track's `rendering:`, so `DOMAIN` rows can be blue and
+  `BINDING` rows red in one track. A blank cell falls back to the track's
+  setting. `opacity` must be a number from 0 to 1. A `shape` that names a
+  JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a
+  `data-field-ignored` warning, because the canvas would otherwise stop
+  drawing the track at that feature.
+- Any other column (`pmid`, `gene`, `url`, …) is kept as written, so a
+  `dataTooltip` can show it as `{% $pmid %}` or `path: pmid`.
+  A JSON value that is an object or array is kept on the record, but a
+  tooltip never renders it as markup, whatever its shape.
+- A new Markdoc tag, `{% link href=$url %}text{% /link %}` (or
+  `{% link href=$url /%}`), turns a URL field into a tooltip link. Only
+  `http(s):` and `mailto:` URLs and values starting with `/`, `#` or `?`
+  become links (a protocol-relative `//host/…` value links to that host);
+  anything else renders as plain text.
+- `tooltipContent`, `locations`, `residuesToHighlight` and names JavaScript
+  reserves (`toString`, `__proto__`, …) cannot come from a file (or from
+  inline text read with `format:`) and are dropped. Structured inline
+  records and `setTrackData()` arrays may still set them.
+- Two new `track-data` warnings on the `protvista-error` event, with
+  `detail.issues[0].code` `data-field-ignored` (a dropped column or
+  `shape` value) or
+  `unpaintable-color` (a `color` / `fill` the canvas cannot paint, which
+  would otherwise draw that feature in the previous feature's colour). Like
+  the coordinate warning, they reach the event, the console and the
+  playground, never the row's `⚠` badge or the panel.
+- BED files are unchanged: their columns are positional.
+
+Behaviour changes for tracks with no `kind` (which use the automatic
+tooltip): extra scalar columns from a file now appear in it, as they already
+did for inline records; and `fill` / `opacity` no longer appear as tooltip
+rows for any source, joining `color` / `shape`.
+
+See [Load your own data](https://ebi-webcomponents.github.io/protvista/your-data#style-and-annotate-each-feature-from-your-file)
+and [`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled).
+
+### Added: a warning for `dataTooltip` fields no record carries
+
+A field a tooltip names that a record lacks still renders as nothing, but
+when **no** record on a track carries it — usually a typo or a column your
+file names differently — the viewer now says so, once per track each time
+the data loads:
+
+```
+[protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
+```
+
+The same finding fires a `protvista-error` event with
+`phase: 'tooltip-field-miss'` (no longer reserved), `severity: 'warning'`,
+one issue with `code: 'tooltip-field-miss'`, and the names in
+`context.fields`; the playground lists it as a warning. It never puts a `⚠`
+badge on the row or raises the alert panel, even under `strict`: the track
+renders as written. Only a `dataTooltip` you author is checked — per-kind
+defaults, the automatic tooltip and graph tracks never warn — and a field
+that is present but empty is not missing. Correctly authored configs see no
+change, and tooltip HTML is unchanged. See
+[When a field is missing](https://ebi-webcomponents.github.io/protvista/data-tooltip#when-a-field-is-missing).
+
+### Added: delimiter hints for CSV/TSV header errors
+
+A CSV or TSV file whose header uses a different separator from the one its
+format implies — a semicolon "CSV" from Excel in many European locales, a
+tab file named `.csv`, a comma file named `.tsv` — used to fail with only
+`missing required header column "type"`, which sent authors hunting for a
+typo. The message now names the separator the header seems to use and the
+fix:
+
+```
+./hits.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks tab-separated — read it as TSV: set `format: tsv` (or rename the file to .tsv).
+```
+
+A semicolon header is pointed at Excel's "Text (Tab delimited)" export read
+as TSV, since no `format:` reads semicolons. The hint is part of the
+decoder's message, so it appears wherever that message already does: the
+track's `⚠` badge, the `protvista-error` event's `message` and the console.
+Parsing is unchanged — the format alone still picks the delimiter — and a
+column that is genuinely missing keeps its message exactly as before.
+
+### Added: open a local data file in the playground
+
+The playground has a **Load data file…** button, and takes a file dropped on
+the config editor. Pick a CSV, TSV, JSON or BED file and attach it to a new or
+existing track, and it renders against the current accession. The file is
+read in your browser and never uploaded: the config names it
+(`data: ./hits.csv`), so a shared link carries only the name. A file with any
+other extension asks how to read it and writes `format:` into the config (a
+tab-separated `.csv` is offered as `tsv`), and a config that already names the
+file (`data: ./data/hits.csv`) just needs the file loaded. Parse errors (with
+the delimiter hint) and coordinate warnings are listed in the playground's
+diagnostics, naming your file. Dropping a file on the editor no longer pastes
+its text into the config, and dropping one elsewhere on the page no longer
+navigates away.
+
+### Added: view a protein that isn't in UniProt (`sequence:`)
+
+A config can set `sequence:` instead of `accession:` to show a predicted
+protein, a construct or any other protein with no UniProt entry. It takes raw
+residues, inline FASTA (a YAML `sequence: |` block) or a path or URL to a
+one-record FASTA file, fetched relative to the page when the config loads:
+
+```yaml
+sequence: ./my-protein.fasta
+rows:
+  - id: hotspots
+    kind: features
+    data: ./hotspots.csv
+```
+
+The viewer then draws the navigation, the sequence and every track that reads
+your own data (file, inline or `from: custom`), and makes no request of its
+own — no UniProt entry, no structure panel — so it also works offline. The
+FASTA header, or "your sequence", appears wherever the accession did, and the
+authored-coordinate check names it. A track that needs UniProt — an
+`{accession}` data URL, an AlphaFold or AlphaMissense kind, an `{accession}`
+label link — fails validation by name (`needs-accession`), as do both or
+neither of `accession:` / `sequence:` (`accession-and-sequence`,
+`missing-protein`), a multi-record or malformed sequence (`invalid-sequence`)
+and a FASTA file that can't be fetched (`cannot-resolve-sequence`). Each is a
+`phase: 'config'` error in the panel and on the `protvista-error` event. The
+playground disables its accession box for such a config, including one whose
+`extends:` base sets `sequence:`. `setConfig()` switches between the modes: a
+`sequence:` config replaces an accession the previous config set, while a
+config that names no protein keeps showing it, as before. Accession-mode
+configs are unchanged. See
+[Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
+
+### Fixed: a config with no accession now reports `missing-protein` instead of mounting blank
+
+An element with neither an accession (attribute or config) nor a `sequence:`
+used to render nothing at all, with no message, unless its config happened to
+use `{accession}` (then it reported `missing-accession`). It now shows the
+config panel with one issue, `missing-protein`, and fires a `phase: 'config'`
+error; `missing-protein` replaces `missing-accession` in that case. An
+embedder that sets the `accession` attribute only after the element has
+mounted should hold the load with `suspend` until then, which was already the
+supported path.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour

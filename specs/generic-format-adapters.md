@@ -80,8 +80,10 @@ What stays out of scope:
   are not a generic CSV-parsing library.
 - **Format auto-detection.** No content-sniffing; the file extension
   is the discriminator. A `.tsv`-named CSV file is treated as TSV;
-  authors with a misnamed file must rename it or pin `adapter:`
-  explicitly.
+  authors with a misnamed file must set `format:` explicitly
+  or rename it. When such a file's header fails the required-columns
+  check, the error names the delimiter the header seems to use and
+  the fix — a diagnosis only; the reading is never switched.
 - **Streaming or chunked parsing.** All four read the whole response
   body in one pass. A 100 MB BED file is a known antipattern — adopters
   shipping that should write a streaming adapter.
@@ -260,10 +262,14 @@ originally sketched here:
   file wrapped as `{ "features": [...] }` then rendered as a track that
   loaded and was empty, with no badge; it now reaches the track's `⚠` badge
   like any other malformed file (#282).
-- Each element is validated and pared down to the canonical
-  `FeatureRecord` shape. The start coordinate is read from `start` **or**
-  `begin` (UniProt convention) and normalised to `start`; `start` wins
-  when both are present. `description` / `score` are optional.
+- Each element's canonical fields are validated; every other key is
+  preserved (#283), except the blocked names (`tooltipContent`,
+  `locations`, `residuesToHighlight`, `Object.prototype` names), which are
+  dropped with a `track-data` warning. `color` / `shape` / `fill` /
+  `opacity` are type-checked render fields. The start coordinate is read
+  from `start` **or** `begin` (UniProt convention) and normalised to
+  `start`; `start` wins when both are present, and `begin` is not copied.
+  `description` / `score` are optional.
 - Any malformed record **throws** an `Error` naming the 0-based array
   index and the field, e.g.
   `features-json: record 2, field "start": expected a number, got "abc"`.

@@ -232,6 +232,8 @@ describe('loadProtvistaData — template variables', () => {
       );
       const [item] = result.data['G-a'] as Array<{ tooltipContent: string }>;
       expect(item.tooltipContent).toContain('acc Q11111');
+      // `$ctx.accession` reads the context, which always has it.
+      expect(result.tooltipFieldMisses).toEqual([]);
     });
   });
 

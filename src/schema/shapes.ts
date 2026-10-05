@@ -39,9 +39,10 @@ export interface ShapeDefinition {
    * `point` records are wrapped into `[{ name, color, range, values }]` and
    * `variation` records into `{ variants }`, but a `feature` array *is* what
    * the track canvas renders. This decides whether an inline or
-   * `setTrackData()` payload needs adapting at all — and running an adapter
-   * where it isn't needed is not free: it would strip any field outside the
-   * shape, including ones a `dataTooltip` path references.
+   * `setTrackData()` payload needs adapting at all. Structured feature
+   * records are not run through the decoder: they are already the renderer's
+   * representation, and inline config is trusted to set the viewer fields
+   * (`tooltipContent`, `locations`) the decoder keeps out of decoded data.
    */
   wraps: boolean;
   /**
@@ -57,7 +58,14 @@ export const SHAPES: Readonly<Record<ShapeName, ShapeDefinition>> = {
     name: 'feature',
     label: 'feature records (type, start, end)',
     requiredFields: ['type', 'start', 'end'],
-    optionalFields: ['description', 'score'],
+    optionalFields: [
+      'description',
+      'score',
+      'color',
+      'shape',
+      'fill',
+      'opacity',
+    ],
     wraps: false,
   },
   point: {

@@ -62,6 +62,11 @@ import { descriptorFrom } from './normalize.js';
 import { shapeLabel } from './shapes.js';
 import { dataAttributeFor, templateTokens } from './variables.js';
 import {
+  isSequenceReference,
+  parseSequenceText,
+  uniprotKeyedProvider,
+} from './sequence.js';
+import {
   isError,
   type ValidationIssue,
   type ValidationResult,
@@ -159,8 +164,16 @@ function getStructuralValidator(): ValidateFunction {
  *     config's `sources` map;
  *   - every track has a rendering path (kind, explicit component, or
  *     inherited group component);
- *   - if `{accession}` is referenced anywhere, `accession` is set;
+ *   - if `{accession}` is referenced anywhere, `accession` is set —
+ *     unless the config sets `sequence:`, in which case:
+ *   - `accession` and `sequence` are not both set, an inline `sequence`
+ *     parses to one protein sequence, and no track needs UniProt data (see
+ *     `checkSequenceMode`);
  *   - `version` is in the supported set.
+ *
+ * A config with neither `accession` nor `sequence` is valid here: the default
+ * config is such a template. The loader rejects it only when the caller asks
+ * for a protein (`LoadConfigOptions.requireProtein`, which the element sets).
  *
  * A data URL `{token}` defined nowhere is a `missing-variable` *warning*
  * (it doesn't affect `valid`). Pass `opts.runtimeVariables` — the names
@@ -202,7 +215,13 @@ export function validateConfig(
   // ── Semantic pass ─────────────────────────────────────────
   const c = config as ProtvistaViewerConfig;
   checkVersion(c, issues);
-  checkAccessionPlaceholders(c, issues);
+  // A `sequence:` config has no accession by design, so the placeholder rule
+  // gives way to the sequence-mode rules, which say what to do instead.
+  if (c.sequence !== undefined) {
+    checkSequenceMode(c, registry, issues);
+  } else {
+    checkAccessionPlaceholders(c, issues);
+  }
   checkVariableReferences(c, opts.runtimeVariables, issues);
   checkRows(c, registry, issues);
 
@@ -372,6 +391,8 @@ function checkVersion(
  * Walk every string-typed field in the config looking for
  * `{accession}` placeholders. If any appear and no `accession` is
  * set, fail with a stable message naming the missing accession.
+ * Not run for a `sequence:` config, where `checkSequenceMode` says
+ * which tracks need UniProt instead.
  *
  * Fields that support the placeholder: `sources` values, group/track
  * `label` (interpolated before the label's Markdoc render), and any
@@ -450,6 +471,179 @@ function descriptorIncludes(
   if (typeof d.url === 'string' && d.url.includes(needle)) return true;
   if (Array.isArray(d.url) && d.url.some((u) => u.includes(needle))) return true;
   return false;
+}
+
+/**
+ * The guidance shared by both `accession-and-sequence` messages: the config
+ * form here, and the host form (an `accession` attribute) in the loader.
+ */
+export const ACCESSION_OR_SEQUENCE_GUIDANCE =
+  "Use 'accession:' to show a UniProt entry, or 'sequence:' to show your own protein — not both.";
+
+/** The message for a config that sets both `accession:` and `sequence:`. */
+const ACCESSION_AND_SEQUENCE_MESSAGE =
+  "This config sets both 'accession:' and 'sequence:'. " +
+  ACCESSION_OR_SEQUENCE_GUIDANCE;
+
+/**
+ * The rules for a config that sets `sequence:` — a protein that isn't in
+ * UniProt, with no accession to fill `{accession}` and no UniProt entry
+ * behind it.
+ *
+ *   - `accession:` as well → `accession-and-sequence`.
+ *   - An inline sequence is parsed here, synchronously, so editors, CI and
+ *     the playground catch bad residues without a fetch → `invalid-sequence`.
+ *     A file reference is fetched and parsed by the loader.
+ *   - At most one `needs-accession` per track, for the first reason that
+ *     applies: (a) a data URL — a `url:`, a `sources` value it names, or a
+ *     string shorthand — uses `{accession}`; (b) the track reads through a
+ *     UniProt-keyed provider adapter (`UNIPROT_KEYED_ADAPTERS`), either its
+ *     kind's or an explicit `adapter:`; (c) its label puts `{accession}` in a
+ *     link target or a tag attribute, which would build a broken link. A
+ *     group label gets rule (c) on its own.
+ *
+ * `{accession}` in plain label text is fine: the viewer substitutes the
+ * FASTA header. A consumer-registered kind or adapter is never flagged under
+ * (b) — the viewer can't know what it needs.
+ */
+function checkSequenceMode(
+  c: ProtvistaViewerConfig,
+  registry: Registry,
+  issues: ValidationIssue[]
+): void {
+  if (c.accession !== undefined) {
+    issues.push({
+      path: '/',
+      message: ACCESSION_AND_SEQUENCE_MESSAGE,
+      code: 'accession-and-sequence',
+    });
+  }
+
+  const sequence = c.sequence ?? '';
+  if (!isSequenceReference(sequence)) {
+    const parsed = parseSequenceText(sequence, undefined);
+    if (!parsed.ok) {
+      issues.push({
+        path: '/sequence',
+        message: parsed.message,
+        code: 'invalid-sequence',
+      });
+    }
+  }
+
+  const sources = c.sources ?? {};
+  const needs = (subject: string, path: string, reason: string) =>
+    issues.push({
+      path,
+      message: `${subject} ${path} needs UniProt data: ${reason}. With 'sequence:' only file, inline and custom sources work.`,
+      code: 'needs-accession',
+    });
+
+  for (const entry of c.rows) {
+    const groupId = isGroupConfig(entry) ? entry.id : undefined;
+    if (isGroupConfig(entry) && labelLinksAccession(entry.label)) {
+      needs('Group', entry.id, LABEL_LINK_REASON);
+    }
+    const tracks = isGroupConfig(entry) ? entry.tracks : [entry];
+    for (const track of tracks) {
+      const trackPath = groupId ? `${groupId}/${track.id}` : track.id;
+      const reason = needsAccessionReason(track, sources, registry);
+      if (reason !== undefined) needs('Track', trackPath, reason);
+    }
+  }
+}
+
+const LABEL_LINK_REASON =
+  'its label links to a UniProt-keyed URL ({accession})';
+
+/** Why a track can't work without an accession, or `undefined` if it can. */
+function needsAccessionReason(
+  track: TrackConfig,
+  sources: Record<string, string>,
+  registry: Registry
+): string | undefined {
+  const descriptors = collectDescriptors(track);
+
+  // (a) A data URL that would be built from the accession.
+  if (
+    descriptors.some((d) =>
+      descriptorUrls(d, sources).some((u) => u.includes(ACCESSION_PLACEHOLDER))
+    )
+  ) {
+    return `its data URL uses ${ACCESSION_PLACEHOLDER}`;
+  }
+
+  // (b) A provider adapter keyed on a UniProt entry. An explicit `adapter:`
+  // overrides the kind's, so the kind's only counts for a descriptor that
+  // doesn't name one.
+  for (const d of descriptors) {
+    if (isShorthand(d) || d.adapter === undefined) continue;
+    const provider = uniprotKeyedProvider(d.adapter);
+    if (provider) {
+      return `adapter '${d.adapter}' reads ${provider} data for a UniProt entry`;
+    }
+  }
+  const kindAdapter =
+    track.kind === undefined
+      ? undefined
+      : registry.getSemanticKind(track.kind)?.adapter;
+  const provider =
+    kindAdapter === undefined ? undefined : uniprotKeyedProvider(kindAdapter);
+  if (
+    provider &&
+    descriptors.some((d) => isShorthand(d) || d.adapter === undefined)
+  ) {
+    return `kind '${track.kind}' reads ${provider} data for a UniProt entry`;
+  }
+
+  // (c) A label link the accession would complete.
+  if (labelLinksAccession(track.label)) return LABEL_LINK_REASON;
+
+  return undefined;
+}
+
+/**
+ * Whether a Markdoc label puts `{accession}` inside a link target `](…)` (one
+ * level of nested parentheses allowed, as CommonMark does), an autolink
+ * `<scheme:…>` or a tag's attributes `{% … %}` — places where substituting a
+ * FASTA header would build a broken UniProt link.
+ */
+function labelLinksAccession(label: string | undefined): boolean {
+  if (!label?.includes(ACCESSION_PLACEHOLDER)) return false;
+  return (
+    /\]\((?:[^()]|\([^()]*\))*\{accession\}/.test(label) ||
+    /<[A-Za-z][A-Za-z0-9+.-]*:[^<>]*\{accession\}[^<>]*>/.test(label) ||
+    /\{%(?:(?!%\})[\s\S])*\{accession\}/.test(label)
+  );
+}
+
+/**
+ * Every URL or path one descriptor would fetch: a string shorthand (through
+ * the sources map when it names a key), a `url:` (scalar or list) and a
+ * `source:` (scalar or list, through the sources map). `descriptorIncludes`
+ * skips `source:`, so it isn't enough here.
+ */
+function descriptorUrls(
+  d: DataSourceDescriptor | { __shorthand: string },
+  sources: Record<string, string>
+): string[] {
+  const viaSources = (key: string) =>
+    Object.prototype.hasOwnProperty.call(sources, key) ? [sources[key]] : [];
+  if (isShorthand(d)) {
+    const raw = d.__shorthand;
+    return Object.prototype.hasOwnProperty.call(sources, raw)
+      ? [sources[raw]]
+      : [raw];
+  }
+  const urls =
+    d.url === undefined ? [] : Array.isArray(d.url) ? d.url : [d.url];
+  const keys =
+    d.source === undefined
+      ? []
+      : Array.isArray(d.source)
+        ? d.source
+        : [d.source];
+  return [...urls, ...keys.flatMap(viaSources)];
 }
 
 /**

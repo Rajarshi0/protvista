@@ -23,6 +23,8 @@ import {
   type KindAdapterDoc,
 } from '../adapters/adapter-reference.js';
 import { BUILTIN_ADAPTERS } from '../adapters/index.js';
+import { renderFeatureRecordSchema } from '../adapters/render-adapter-reference.js';
+import { FEATURE_RENDER_FIELDS } from '../adapters/feature-fields.js';
 import {
   POINT_COLUMNS,
   VARIATION_COLUMNS,
@@ -196,6 +198,40 @@ describe('the reference documents the vocabulary authors actually write', () => 
         `kind '${kind}' declares a shape but rejects './mine.csv'`
       ).toEqual([]);
     }
+  });
+});
+
+describe('adapter reference — render fields drift (#283)', () => {
+  // The decoders' render-field list lives in feature-fields.ts; the shape
+  // declaration and the published field table restate it. Pin both copies.
+  it.each(FEATURE_RENDER_FIELDS)(
+    '`%s` is an optional feature field and a documented record field',
+    (name) => {
+      expect(SHAPES.feature.optionalFields).toContain(name);
+      expect(FEATURE_RECORD_FIELDS.map((f) => f.name)).toContain(name);
+    }
+  );
+
+  it('the published `opacity` bounds are the ones the decoder enforces', () => {
+    const properties = renderFeatureRecordSchema().properties as Record<
+      string,
+      { minimum?: number; maximum?: number }
+    >;
+    const { minimum, maximum } = properties.opacity;
+    expect([minimum, maximum]).toEqual([0, 1]);
+    const decode = (opacity: number) =>
+      runPipeline(
+        'feature',
+        'json',
+        [{ type: 'D', start: 1, end: 2, opacity }],
+        {
+          source: './x.json',
+        }
+      );
+    expect(() => decode(minimum as number)).not.toThrow();
+    expect(() => decode(maximum as number)).not.toThrow();
+    expect(() => decode((minimum as number) - 0.01)).toThrow(/opacity/);
+    expect(() => decode((maximum as number) + 0.01)).toThrow(/opacity/);
   });
 });
 

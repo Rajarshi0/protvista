@@ -10,7 +10,7 @@ Every feature record has a `type` (see [Load your own data](/protvista/your-data
 
 The first of these that applies wins:
 
-1. A colour or shape carried on the feature record itself. Some built-in kinds set one (InterPro domains get a colour per entry; PTMeXchange peptides are triangles); records loaded from your own CSV, TSV, JSON or BED files cannot.
+1. A colour or shape carried on the feature record itself. Some built-in kinds set one (InterPro domains get a colour per entry; PTMeXchange peptides are triangles); records from your own CSV, TSV or JSON file can set one with a `color` / `shape` column (or key); BED files cannot.
 2. The track's `rendering.color` and `rendering.shape`, set on the track or inherited from its group or from `defaults:`. These apply to **every** feature in the track, whatever its type.
 3. The default for the feature's `type`, from [the table below](#recognised-types).
 4. `black` and `rectangle`.

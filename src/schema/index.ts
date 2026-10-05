@@ -61,6 +61,9 @@ export type {
   MergeExtendsOptions,
 } from './extends.js';
 
+// ── Sequence-only mode (`sequence:`) ─────────────────────────
+export type { ResolvedSequence } from './sequence.js';
+
 // ── Normalize (output shape is part of the runtime API) ──────
 export { normalizeConfig, titleCaseId } from './normalize.js';
 export type {

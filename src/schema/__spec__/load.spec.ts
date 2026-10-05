@@ -17,7 +17,7 @@
  * has it resolved.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadConfig, loadConfigWithSource } from '../load.js';
 import { ConfigValidationError } from '../errors.js';
 import { createRegistry } from '../registry.js';
@@ -303,5 +303,218 @@ describe('loadConfigWithSource — runtime variables', () => {
     });
     expect(loaded.config.variables).toBeUndefined();
     expect(loaded.authored.variables).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Sequence-only mode (`sequence:`)
+// ─────────────────────────────────────────────────────────────
+
+describe('loadConfigWithSource — sequence mode', () => {
+  const rows = [
+    {
+      id: 'g',
+      tracks: [
+        {
+          id: 't',
+          kind: 'features',
+          data: { from: 'inline', inlineData: [{ start: 1, end: 3 }] },
+        },
+      ],
+    },
+  ];
+  const FASTA = '>my construct v2\nMKTAY\nIAKQR\n';
+  const issuesOf = async (promise: Promise<unknown>) => {
+    try {
+      await promise;
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigValidationError);
+      return (err as ConfigValidationError).issues;
+    }
+    throw new Error('expected a ConfigValidationError');
+  };
+
+  it('resolves an inline sequence onto the normalized config', async () => {
+    const { config } = await loadConfigWithSource({ sequence: FASTA, rows });
+    expect(config.sequence).toEqual({
+      residues: 'MKTAYIAKQR',
+      header: 'my construct v2',
+    });
+    expect(config.accession).toBeUndefined();
+  });
+
+  it('fetches a referenced file once, with its path, and keeps the path authored', async () => {
+    const sequenceFetcher = vi.fn(async () => FASTA);
+    const { config, authored } = await loadConfigWithSource(
+      { sequence: './protein.fasta', rows },
+      { sequenceFetcher }
+    );
+    expect(sequenceFetcher).toHaveBeenCalledTimes(1);
+    expect(sequenceFetcher).toHaveBeenCalledWith('./protein.fasta');
+    expect(config.sequence?.residues).toBe('MKTAYIAKQR');
+    // `getConfig()` exports the path, not the residues.
+    expect(authored.sequence).toBe('./protein.fasta');
+  });
+
+  it('never fetches for a config that fails validation', async () => {
+    const sequenceFetcher = vi.fn(async () => FASTA);
+    const issues = await issuesOf(
+      loadConfigWithSource(
+        { sequence: './protein.fasta', accession: 'P05067', rows },
+        { sequenceFetcher }
+      )
+    );
+    expect(issues.map((i) => i.code)).toEqual(['accession-and-sequence']);
+    expect(sequenceFetcher).not.toHaveBeenCalled();
+  });
+
+  it('turns a fetcher failure into cannot-resolve-sequence', async () => {
+    const issues = await issuesOf(
+      loadConfigWithSource(
+        { sequence: './protein.fasta', rows },
+        {
+          sequenceFetcher: async () => {
+            throw new Error('HTTP 404 Not Found');
+          },
+        }
+      )
+    );
+    expect(issues).toEqual([
+      {
+        path: '/sequence',
+        code: 'cannot-resolve-sequence',
+        message:
+          "Could not load the sequence file './protein.fasta': HTTP 404 Not Found.",
+      },
+    ]);
+  });
+
+  it('names the status of a 404 through the default fetcher', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({ ok: false, status: 404, statusText: 'Not Found' }) as Response
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const issues = await issuesOf(
+        loadConfigWithSource({ sequence: './missing.fasta', rows })
+      );
+      expect(fetchMock).toHaveBeenCalledWith('./missing.fasta');
+      expect(issues.map((i) => [i.code, i.message])).toEqual([
+        [
+          'cannot-resolve-sequence',
+          "Could not load the sequence file './missing.fasta': HTTP 404 Not Found.",
+        ],
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('never lets a raw TypeError through for a relative path under Node', async () => {
+    // Node's fetch can't resolve a page-relative URL; no `sequenceFetcher`.
+    const issues = await issuesOf(
+      loadConfigWithSource({ sequence: './protein.fasta', rows })
+    );
+    expect(issues.map((i) => i.code)).toEqual(['cannot-resolve-sequence']);
+    expect(issues[0].message).toContain("'./protein.fasta'");
+  });
+
+  it('rejects a multi-record file as invalid-sequence', async () => {
+    const issues = await issuesOf(
+      loadConfigWithSource(
+        { sequence: './two.fasta', rows },
+        { sequenceFetcher: async () => '>a\nMKT\n>b\nMKT\n' }
+      )
+    );
+    expect(issues.map((i) => [i.path, i.code])).toEqual([
+      ['/sequence', 'invalid-sequence'],
+    ]);
+    expect(issues[0].message).toBe(
+      "./two.fasta (parsed as FASTA): contains 2 records; the viewer shows one protein. Keep a single '>' record."
+    );
+  });
+
+  it('does not inject a host accession, and says the host supplied it', async () => {
+    const issues = await issuesOf(
+      loadConfigWithSource({ sequence: FASTA, rows }, { accession: 'P05067' })
+    );
+    expect(issues).toEqual([
+      {
+        path: '/',
+        code: 'accession-and-sequence',
+        message:
+          "An accession ('P05067') was supplied by the host (the element's accession attribute), but this config declares 'sequence:'. Use 'accession:' to show a UniProt entry, or 'sequence:' to show your own protein — not both. Remove the attribute, or the 'sequence:'.",
+      },
+    ]);
+  });
+
+  it('uses a fallback accession only for a config that names no protein', async () => {
+    const opts = { fallbackAccession: 'P05067', requireProtein: true };
+    // Named no protein: the fallback fills it, so no `missing-protein`.
+    const kept = await loadConfigWithSource({ rows }, opts);
+    expect(kept.config.accession).toBe('P05067');
+    // Its own accession wins.
+    const own = await loadConfigWithSource({ accession: 'Q99999', rows }, opts);
+    expect(own.config.accession).toBe('Q99999');
+    // A sequence replaces it: dropped, not "both".
+    const seq = await loadConfigWithSource({ sequence: FASTA, rows }, opts);
+    expect(seq.config.accession).toBeUndefined();
+    expect(seq.config.sequence?.header).toBe('my construct v2');
+    expect(seq.issues).toEqual([]);
+    // A host accession still takes precedence over it.
+    const host = await loadConfigWithSource(
+      { rows },
+      { ...opts, accession: 'A11111' }
+    );
+    expect(host.config.accession).toBe('A11111');
+  });
+
+  it('adds a start-from-blank summary when extended tracks need UniProt', async () => {
+    const base = {
+      sources: {
+        features: 'https://www.ebi.ac.uk/proteins/api/features/{accession}',
+      },
+      rows: [
+        { id: 'a', tracks: [{ id: 'x', kind: 'features', data: 'features' }] },
+        { id: 'b', tracks: [{ id: 'y', kind: 'features', data: 'features' }] },
+      ],
+    };
+    const issues = await issuesOf(
+      loadConfigWithSource(
+        { extends: 'base', sequence: FASTA, rows },
+        { extendsResolver: { base } }
+      )
+    );
+    expect(issues.map((i) => [i.path, i.code])).toEqual([
+      ['a/x', 'needs-accession'],
+      ['b/y', 'needs-accession'],
+      ['/extends', 'needs-accession'],
+    ]);
+    expect(issues[2].message).toBe(
+      "2 tracks inherited through 'extends:' need UniProt data. 'sequence:' can't build on the UniProt default config — start from a blank config instead."
+    );
+  });
+
+  it('reports missing-protein alone for a protein-less default config', async () => {
+    const { default: defaultConfigYaml } =
+      await import('../../default-config.yaml?raw');
+    const issues = await issuesOf(
+      loadConfigWithSource(defaultConfigYaml, { requireProtein: true })
+    );
+    expect(issues).toEqual([
+      {
+        path: '/',
+        code: 'missing-protein',
+        message:
+          "Nothing to show: set 'accession:' (a UniProt entry) or 'sequence:' (your own protein), or the element's accession attribute.",
+      },
+    ]);
+  });
+
+  it('accepts a protein-less template without requireProtein', async () => {
+    const { config } = await loadConfigWithSource({ rows });
+    expect(config.accession).toBeUndefined();
+    expect(config.sequence).toBeUndefined();
   });
 });

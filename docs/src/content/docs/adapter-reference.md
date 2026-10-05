@@ -38,10 +38,16 @@ Readable as: `csv`, `tsv`, `json`, `bed` — by file extension, or with an expli
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `type` | string | Yes | Feature category label (e.g. DOMAIN, BINDING). Drives `filter:` and colour grouping. |
-| `start` | number | Yes | 1-based start position (inclusive). |
-| `end` | number | Yes | 1-based end position (inclusive). |
+| `start` | integer | Yes | 1-based start position (inclusive). |
+| `end` | integer | Yes | 1-based end position (inclusive). Must not be less than `start`. |
 | `description` | string | No | Free text shown in the default tooltip. Omitted when empty. |
 | `score` | number | No | Optional numeric score. Omitted when empty. |
+| `color` | string | No | Per-feature colour (any CSS colour) for the outline, and the fill unless `fill` is set; wins over the track's `rendering.color`. CSV/TSV/JSON only — BED never sets it. Omitted when empty. |
+| `shape` | string | No | Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty, and dropped with a warning when it names an Object.prototype property (`valueOf`, `constructor`, …). |
+| `fill` | string | No | Per-feature fill colour; defaults to `color`. CSV/TSV/JSON only. Omitted when empty. |
+| `opacity` | number | No | Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error. |
+
+Any other column of a CSV/TSV file, or key of a JSON record, is kept on the record as written, so a `dataTooltip` can show it. `tooltipContent`, `locations`, `residuesToHighlight` and names JavaScript reserves (`__proto__`, `toString`, …) are dropped with a `track-data` warning. BED records carry only the fields above that BED can express — never the render fields.
 
 ### point records (position, value)
 
@@ -51,7 +57,7 @@ Readable as: `csv`, `tsv`, `json` — by file extension, or with an explicit `fo
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `position` | number | Yes | 1-based residue position. |
+| `position` | integer | Yes | 1-based residue position. |
 | `value` | number | Yes | The number plotted at that position. Any finite value. |
 
 ### variation records (position, variant)
@@ -62,7 +68,7 @@ Readable as: `csv`, `tsv`, `json` — by file extension, or with an explicit `fo
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `position` | number | Yes | 1-based position of the changed residue. |
+| `position` | integer | Yes | 1-based position of the changed residue. |
 | `variant` | string | Yes | The residue it changes to. `*` for a stop, `-` for a deletion. |
 | `wildType` | string | No | The original residue. Shown on hover. |
 | `description` | string | No | Free text shown on hover/click. |

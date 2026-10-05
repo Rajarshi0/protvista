@@ -1,6 +1,5 @@
 /**
- * Shared parser core for the delimited generic-format adapters
- * (`features-csv`, `features-tsv`, and `bed`).
+ * Shared parser core for the delimited (CSV/TSV) readers and `bed`.
  *
  * Three independent pieces live here so they can be reused without
  * dragging the feature-mapping opinions along:
@@ -14,6 +13,7 @@
  *   - `rowsToFeatureRecords()` layers the ProtVista feature convention
  *     on top: a required `type,start,end,description[,score]` header,
  *     numeric coercion, and strict, row/column-named error reporting.
+ *     Every other column is kept on the record (see `./feature-fields`).
  *   - `rowsToPointRecords()` is its sibling for the graph kinds: the same
  *     header/ragged/number discipline over a `position,value` header,
  *     emitting the `{ position, value }` records `linegraph` consumes.
@@ -21,6 +21,11 @@
  *     share no columns and nothing but the validation grammar.
  *   - `parseDecimal()` is the shared strict-number validator, reused by
  *     `bed` for its `score` column so the number grammars can't drift.
+ *   - `suspectDelimiter()` diagnoses a header that fails the required-columns
+ *     check because the file uses a different delimiter from the one its
+ *     format implies. It is diagnosis only: the format alone picks the
+ *     delimiter (`DELIMITERS` in `./pipeline`), and nothing here ever
+ *     re-reads a file with another one.
  *
  * We deliberately hand-roll the tokenizer rather than pull in
  * `d3-dsv`/`papaparse`: it is small and stable, the shipped web-component
@@ -29,6 +34,17 @@
  * off-the-shelf parser produces.
  */
 
+import {
+  FEATURE_CANONICAL_FIELDS,
+  classifyExtraField,
+  ignoredFieldsWarning,
+  ignoredShapesWarning,
+  isReservedShape,
+  isUnpaintable,
+  unpaintableColorWarning,
+  type DecodeWarning,
+} from './feature-fields.js';
+
 /** One parsed feature record, matching the shape Nightingale tracks consume. */
 export interface FeatureRecord {
   type: string;
@@ -36,6 +52,48 @@ export interface FeatureRecord {
   end: number;
   description?: string;
   score?: number;
+}
+
+/**
+ * A feature record decoded from an author's CSV, TSV or JSON file: the
+ * canonical fields plus whatever else the file carried. The four render
+ * fields are typed because Nightingale reads them per record; every other
+ * extra is opaque data for `dataTooltip`.
+ *
+ * Kept separate from {@link FeatureRecord} so `bed()` — whose columns are
+ * positional and carry no extras — still returns the canonical shape, and
+ * the type checker holds it to that.
+ */
+export type AuthoredFeatureRecord = FeatureRecord & {
+  color?: string;
+  shape?: string;
+  fill?: string;
+  opacity?: number;
+  [field: string]: unknown;
+};
+
+/** A delimiter a header may turn out to use, for {@link suspectDelimiter}. */
+export type Delimiter = ',' | '\t' | ';';
+
+/**
+ * Raised when a delimited header lacks a column its shape requires.
+ *
+ * Typed so `runPipeline` can recognise this one failure — and only this one —
+ * and append a delimiter hint without matching on message text. `required`
+ * is the shape's full required list; `suspectedDelimiter` is set only on the
+ * hinted rethrow, never by the builders that raise it first.
+ */
+export class MissingHeaderColumnError extends Error {
+  constructor(
+    message: string,
+    public readonly column: string,
+    public readonly required: readonly string[],
+    public readonly suspectedDelimiter?: Delimiter
+  ) {
+    super(message);
+    this.name = 'MissingHeaderColumnError';
+    Object.setPrototypeOf(this, MissingHeaderColumnError.prototype);
+  }
 }
 
 /**
@@ -120,6 +178,56 @@ export function parseDelimited(text: string, delimiter: string): string[][] {
   return rows;
 }
 
+const CANDIDATE_DELIMITERS: readonly Delimiter[] = [',', '\t', ';'];
+
+/**
+ * The delimiter `text`'s header seems to use instead of `used`, or
+ * `undefined` when nothing points to a mismatch.
+ *
+ * Called only after a header has failed the required-columns check. Each
+ * other candidate (comma, tab, semicolon) re-tokenises the header through
+ * {@link parseDelimited}, so quoting rules hold — Excel's
+ * `"type";"start";…` splits cleanly under `;`. A candidate qualifies when
+ * either:
+ *
+ *   (a) its header contains every `required` column; or
+ *   (b) `used` read the header as a single cell and the candidate splits it
+ *       into two or more. A one-cell header that another delimiter splits is
+ *       near-conclusive, and this is what catches `Type;Start;End;Description`,
+ *       which (a) misses on case.
+ *
+ * A candidate passing (a) wins, then the one giving more cells, then
+ * candidate order. A genuinely missing column under the right delimiter
+ * qualifies no candidate, so it never gets a misleading hint.
+ */
+export function suspectDelimiter(
+  text: string,
+  used: string,
+  required: readonly string[]
+): Delimiter | undefined {
+  const headerOf = (delimiter: string) =>
+    (parseDelimited(text, delimiter)[0] ?? []).map((cell) => cell.trim());
+  const declaredCells = headerOf(used).length;
+
+  let best:
+    { delimiter: Delimiter; complete: boolean; cells: number } | undefined;
+  for (const delimiter of CANDIDATE_DELIMITERS) {
+    if (delimiter === used) continue;
+    const header = headerOf(delimiter);
+    const complete = required.every((col) => header.includes(col));
+    const splits = declaredCells === 1 && header.length >= 2;
+    if (!complete && !splits) continue;
+    if (
+      best === undefined ||
+      (complete && !best.complete) ||
+      (complete === best.complete && header.length > best.cells)
+    ) {
+      best = { delimiter, complete, cells: header.length };
+    }
+  }
+  return best?.delimiter;
+}
+
 /**
  * Whether a tokenized row is a blank line rather than data.
  *
@@ -166,28 +274,82 @@ export function parseDecimal(raw: string): number | null {
 }
 
 /**
- * Turn tokenized rows (header + data) into `FeatureRecord`s.
+ * Throw unless an already-parsed coordinate is a whole number. The message
+ * quotes the untrimmed cell, as the "expected a number" errors do.
+ */
+function wholeNumber(
+  cells: string[],
+  index: Map<string, number>,
+  col: string,
+  n: number,
+  line: number,
+  formatLabel: string
+): void {
+  if (Number.isInteger(n)) return;
+  throw new Error(
+    `${formatLabel}: row ${line}, column "${col}": expected a whole number, ` +
+      `got "${cells[index.get(col) as number]}".`
+  );
+}
+
+/**
+ * Turn tokenized rows (header + data) into feature records.
  *
  * The header row must contain `type`, `start`, `end`, and `description`
  * (in any order, no duplicates); `score` is optional. Every data row must
  * have exactly as many fields as the header. `start`/`end` are coerced to
- * decimal numbers and must be finite; `score`, when the column is present
- * and the cell is non-empty, is likewise coerced and validated.
+ * decimal numbers, must be finite whole numbers, and `end` may not precede
+ * `start` (equal endpoints — a single residue — are fine, as in BED);
+ * `score`, when the column is present and the cell is non-empty, is coerced
+ * and validated but may be any decimal.
  *
  * On any violation this throws with a message naming the offending row (by
  * 1-based line number, header = line 1) and, where meaningful, the column —
- * e.g. `features-csv: row 3, column "start": expected a number, got "abc"`.
- * The loader's per-track try/catch records the throw as that track's
+ * e.g. `./hits.csv (parsed as CSV): row 3, column "start": expected a number,
+ * got "abc"`. The loader's per-track try/catch records the throw as that track's
  * failure and leaves the track empty, so one bad file degrades one row. The
  * element routes it like any other track failure: this message is the ⚠
  * badge's text, the `protvista-error` event's `message`, and the console line
  * — so the author sees which row and column to fix without opening the
  * console.
+ *
+ * A missing required column throws {@link MissingHeaderColumnError}, which
+ * `runPipeline` extends with a delimiter hint when the header looks like it
+ * uses a different delimiter (see {@link suspectDelimiter}).
+ *
+ * Every other column is kept on the record, keyed by its trimmed header
+ * name, in header order after the canonical fields (`./feature-fields` has
+ * the rule):
+ *
+ *   - `color`, `shape`, `fill` are trimmed and `opacity` is coerced to a
+ *     number from 0 to 1 (anything else is a row/column error); a blank cell
+ *     leaves the field off, so the track's `rendering:` still applies to that
+ *     row.
+ *   - Any other column is kept as the verbatim cell string — untrimmed, and
+ *     `''` when blank, so the column exists on every row.
+ *   - `tooltipContent`, `locations`, `residuesToHighlight` and names on
+ *     `Object.prototype` are dropped; an empty header name is dropped
+ *     silently.
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
+ *
+ * `opts.warnings`, when given, is an out-array too: it receives at most one
+ * `data-field-ignored` warning for the dropped column names, one more for
+ * `shape` values dropped because they name an `Object.prototype` property
+ * (`isReservedShape`), and one `unpaintable-color` warning (the `color` /
+ * `fill` values a browser will not paint, which are still kept). Nothing is
+ * logged either way; a call that throws pushes nothing.
  */
 export function rowsToFeatureRecords(
   rows: string[][],
-  opts: { formatLabel: string }
-): FeatureRecord[] {
+  opts: {
+    formatLabel: string;
+    rowNumbers?: number[];
+    warnings?: DecodeWarning[];
+  }
+): AuthoredFeatureRecord[] {
   const { formatLabel } = opts;
 
   if (rows.length === 0) return [];
@@ -210,15 +372,23 @@ export function rowsToFeatureRecords(
 
   for (const col of REQUIRED_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain type, start, end, description[, score].`
+          `Header must contain type, start, end, description[, score].`,
+        col,
+        REQUIRED_COLUMNS
       );
     }
   }
   const hasScore = index.has('score');
+  const { extras, blocked } = planExtraColumns(index);
+  // Collected for the warnings, which are pushed only once every row has
+  // decoded: a file that throws reports its error alone.
+  const unpaintable: string[] = [];
+  let unpaintableRows = 0;
+  const reservedShapes: string[] = [];
 
-  const records: FeatureRecord[] = [];
+  const records: AuthoredFeatureRecord[] = [];
   for (let r = 1; r < rows.length; r++) {
     const cells = rows[r];
     const line = r + 1; // header is line 1
@@ -244,11 +414,22 @@ export function rowsToFeatureRecords(
       return n;
     };
 
-    const record: FeatureRecord = {
+    const record: AuthoredFeatureRecord = {
       type: cells[index.get('type') as number],
       start: num('start'),
       end: num('end'),
     };
+
+    // Coordinates must be whole residues; checked after both parse so a
+    // non-number start or end is reported first.
+    wholeNumber(cells, index, 'start', record.start, line, formatLabel);
+    wholeNumber(cells, index, 'end', record.end, line, formatLabel);
+    if (record.end < record.start) {
+      throw new Error(
+        `${formatLabel}: row ${line}: end (${record.end}) is before ` +
+          `start (${record.start}).`
+      );
+    }
 
     const description = cells[index.get('description') as number];
     if (description !== '') record.description = description;
@@ -267,10 +448,79 @@ export function rowsToFeatureRecords(
       }
     }
 
+    // Extras last, after every canonical check, so a coordinate error is
+    // still the one reported for a row that has both.
+    let rowUnpaintable = false;
+    for (const { name, i, render } of extras) {
+      const raw = cells[i];
+      if (!render) {
+        // Safe as plain assignment: every `Object.prototype` name was
+        // classified as blocked and is not in the plan.
+        record[name] = raw;
+        continue;
+      }
+      const value = raw.trim();
+      if (value === '') continue;
+      if (name === 'opacity') {
+        const n = parseDecimal(value);
+        if (n === null || n < 0 || n > 1) {
+          throw new Error(
+            `${formatLabel}: row ${line}, column "opacity": expected a ` +
+              `number from 0 to 1, got "${raw}".`
+          );
+        }
+        record.opacity = n;
+        continue;
+      }
+      if (isReservedShape(name, value)) {
+        reservedShapes.push(value);
+        continue;
+      }
+      if (isUnpaintable(name, value)) {
+        unpaintable.push(value);
+        rowUnpaintable = true;
+      }
+      record[name] = value;
+    }
+    if (rowUnpaintable) unpaintableRows++;
+
     records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
+  if (blocked.length > 0) {
+    opts.warnings?.push(ignoredFieldsWarning(formatLabel, blocked));
+  }
+  if (reservedShapes.length > 0) {
+    opts.warnings?.push(ignoredShapesWarning(formatLabel, reservedShapes));
+  }
+  if (unpaintableRows > 0) {
+    opts.warnings?.push(
+      unpaintableColorWarning(formatLabel, unpaintableRows, unpaintable)
+    );
+  }
   return records;
+}
+
+/**
+ * The non-canonical columns a feature file carries, in header order, plus
+ * the blocked names it dropped. Built once per file rather than per row.
+ */
+function planExtraColumns(index: ReadonlyMap<string, number>): {
+  extras: Array<{ name: string; i: number; render: boolean }>;
+  blocked: string[];
+} {
+  const extras: Array<{ name: string; i: number; render: boolean }> = [];
+  const blocked: string[] = [];
+  // A `Map` iterates in insertion order, which is header order.
+  for (const [name, i] of index) {
+    if (FEATURE_CANONICAL_FIELDS.has(name)) continue;
+    const group = classifyExtraField(name);
+    if (group === 'blocked') blocked.push(name);
+    else if (group !== 'skip')
+      extras.push({ name, i, render: group === 'render' });
+  }
+  return { extras, blocked };
 }
 
 /** One parsed graph point, matching the shape `linegraph` series carry. */
@@ -295,8 +545,10 @@ export const POINT_COLUMNS = ['position', 'value'] as const;
  * any order, no duplicates), every data row must have exactly as many
  * fields as the header, and both cells are coerced through
  * {@link parseDecimal} so the number grammar cannot drift between the
- * feature and graph formats. Extra columns are permitted and ignored,
- * matching the feature layer's treatment of unknown headers.
+ * feature and graph formats. `position` must be a whole number; `value`
+ * may be any decimal. Extra columns are permitted and ignored — unlike
+ * the feature layer, which keeps them for `dataTooltip`; a graph point has
+ * no per-item hover to show them in.
  *
  * Rows are returned in file order — `linegraph` draws points in the order
  * it receives them and neither sorts nor de-duplicates, so the file's
@@ -305,10 +557,14 @@ export const POINT_COLUMNS = ['position', 'value'] as const;
  * Errors name the offending row by 1-based line number (header = line 1)
  * and the column, e.g.
  * `linegraph-csv: row 3, column "value": expected a number, got "abc"`.
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
  */
 export function rowsToPointRecords(
   rows: string[][],
-  opts: { formatLabel: string }
+  opts: { formatLabel: string; rowNumbers?: number[] }
 ): PointRecord[] {
   const { formatLabel } = opts;
 
@@ -332,9 +588,11 @@ export function rowsToPointRecords(
 
   for (const col of POINT_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain position, value.`
+          `Header must contain position, value.`,
+        col,
+        POINT_COLUMNS
       );
     }
   }
@@ -365,7 +623,13 @@ export function rowsToPointRecords(
       return n;
     };
 
-    records.push({ position: num('position'), value: num('value') });
+    const record: PointRecord = {
+      position: num('position'),
+      value: num('value'),
+    };
+    wholeNumber(cells, index, 'position', record.position, line, formatLabel);
+    records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
   return records;
@@ -404,8 +668,8 @@ export const VARIATION_OPTIONAL_COLUMNS = [
  * with the same discipline: the header must contain `position` and `variant`
  * (in any order, no duplicates), every data row must have exactly as many
  * fields as the header, and `position` is coerced through
- * {@link parseDecimal}. Extra columns beyond the documented optional ones are
- * permitted and ignored.
+ * {@link parseDecimal} and must be a whole number. Extra columns beyond the
+ * documented optional ones are permitted and ignored.
  *
  * `variant` is a string, not a number — it is the residue (or residues) the
  * position changes to, `*` for a stop, `-` for a deletion. It is required to
@@ -414,10 +678,14 @@ export const VARIATION_OPTIONAL_COLUMNS = [
  * Errors name the offending row by 1-based line number (header = line 1) and
  * the column, e.g.
  * `variation-csv: row 3, column "position": expected a number, got "abc"`.
+ *
+ * `opts.rowNumbers`, when given, is an out-array: it receives each returned
+ * record's row number (same numbering as the errors), in the same order as
+ * the returned records. Skipped blank rows add nothing.
  */
 export function rowsToVariationRecords(
   rows: string[][],
-  opts: { formatLabel: string }
+  opts: { formatLabel: string; rowNumbers?: number[] }
 ): VariationRecord[] {
   const { formatLabel } = opts;
 
@@ -438,9 +706,11 @@ export function rowsToVariationRecords(
 
   for (const col of VARIATION_COLUMNS) {
     if (!index.has(col)) {
-      throw new Error(
+      throw new MissingHeaderColumnError(
         `${formatLabel}: missing required header column "${col}". ` +
-          `Header must contain ${VARIATION_COLUMNS.join(', ')}.`
+          `Header must contain ${VARIATION_COLUMNS.join(', ')}.`,
+        col,
+        VARIATION_COLUMNS
       );
     }
   }
@@ -472,6 +742,7 @@ export function rowsToVariationRecords(
           `got "${rawPosition}".`
       );
     }
+    wholeNumber(cells, index, 'position', position, line, formatLabel);
 
     const variant = cell('variant') ?? '';
     if (variant === '') {
@@ -490,6 +761,7 @@ export function rowsToVariationRecords(
       }
     }
     records.push(record);
+    opts.rowNumbers?.push(line);
   }
 
   return records;

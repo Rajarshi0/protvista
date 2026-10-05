@@ -1,7 +1,8 @@
 # Fully inline data — no `sources`, no file, no network for the track
-# itself. `accession` is still required: the element's top-level
-# sequence fetch is gated on it regardless of where track data comes
-# from. See examples/README.md.
+# itself. `accession` is still required unless you use `sequence:`
+# instead (see examples/sequence-only): the element fetches the
+# accession's sequence regardless of where track data comes from. See
+# examples/README.md.
 accession: P05067
 # `theme` recolours the viewer chrome from the config — no CSS needed.
 # `labelColor` tints the row-label side panel: group headers get the

@@ -120,7 +120,9 @@ serve the page from the same directory as the data, or use an absolute URL.
 
 :::tip[Try it live]
 Open [the CSV track in the playground](/protvista/playground/#preset=csv). It
-renders the same config against a hosted copy of `hotspots.csv`.
+renders the same config against a hosted copy of `hotspots.csv`. Or open the
+playground, press **Load data file…** and pick your own CSV. It is read in your
+browser and never uploaded.
 :::
 
 ![A ProtVista viewer showing a single track named Hotspots, with three labelled feature blocks positioned along the amino-acid sequence of P05067.](../../assets/screenshots/tutorial-standalone-csv.png)

@@ -1,0 +1,23 @@
+# Per-feature colours and tooltip columns from your own CSV file. The
+# `color` column paints each feature on its own and wins over the track's
+# `rendering.color`; the row with a blank `color` falls back to it. Every
+# other column (`ref`, `url`) is kept on the record, so the `dataTooltip`
+# below can show it — `{% link %}` turns the `url` column into a link, and
+# a row with no URL shows the text without one.
+accession: P05067
+rows:
+  - id: MY_LAB
+    label: My lab
+    tracks:
+      - id: hits
+        label: Styled hits
+        kind: features
+        data: ./hits.csv
+        rendering:
+          color: '#7f7f7f'
+        dataTooltip:
+          kind: markdown
+          template: |
+            **{% $description %}** ({% $type %}, {% $start %}–{% $end %})
+
+            Notebook {% $ref %} · {% link href=$url %}Read more{% /link %}

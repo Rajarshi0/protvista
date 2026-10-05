@@ -25,7 +25,12 @@
       ]
     },
     "accession": {
-      "description": "Primary accession (e.g. \"P05067\"). Used to interpolate {accession} placeholders. The element's accession attribute takes precedence.",
+      "description": "Primary accession (e.g. \"P05067\"). Used to interpolate {accession} placeholders. The element's accession attribute takes precedence. Required unless sequence is set; never both.",
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "description": "Show your own protein instead of a UniProt entry: raw residues, inline FASTA (a YAML `|` block), or a path/URL to a one-record FASTA file (resolved against the page). Mutually exclusive with accession, including the element's accession attribute. Tracks that need UniProt data ({accession} URLs, AlphaFold/AlphaMissense kinds, {accession} label links) are rejected.",
       "type": "string",
       "minLength": 1
     },

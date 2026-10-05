@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { render } from 'lit';
 
 import { loadConfig } from '../schema/load.js';
+import { parseConfigText } from '../schema/parse.js';
 import type { NormalizedConfig } from '../schema/normalize.js';
 import { loadProtvistaData, hasRenderableRows } from '../load-data.js';
 import { createRegistry } from '../schema/registry.js';
@@ -105,6 +106,8 @@ it('discovers the expected example directories', () => {
       'json',
       'bed',
       'extend-default',
+      'csv-styled',
+      'sequence-only',
     ])
   );
 });
@@ -140,6 +143,8 @@ function resolveLocalRef(exampleDir: string, ref: string): string {
 function makeExampleFetchers(exampleDir: string) {
   const extendsFetcher = async (ref: string): Promise<string> =>
     readFile(resolveLocalRef(exampleDir, ref), 'utf8');
+  // A `sequence:` FASTA file resolves exactly like an `extends:` target.
+  const sequenceFetcher = extendsFetcher;
 
   const fetchOne = async (
     url: string,
@@ -152,14 +157,16 @@ function makeExampleFetchers(exampleDir: string) {
     return responseType === 'json' ? JSON.parse(text) : text;
   };
 
-  return { extendsFetcher, fetchOne };
+  return { extendsFetcher, sequenceFetcher, fetchOne };
 }
 
 function buildInstance(overrides: Record<string, unknown>) {
   const el = document.createElement('protvista-uniprot') as any;
-  el.sequence = 'M'.repeat(SEQ_LEN);
-  el.displayCoordinates = { start: 1, end: SEQ_LEN };
-  el.accession = REFERENCE_ACCESSION;
+  // A `sequence:` example brings its own protein, and has no accession.
+  const own = (overrides.config as NormalizedConfig | undefined)?.sequence;
+  el.sequence = own?.residues ?? 'M'.repeat(SEQ_LEN);
+  el.displayCoordinates = { start: 1, end: el.sequence.length };
+  if (!own) el.accession = REFERENCE_ACCESSION;
   el.suspend = false;
   el.loading = false;
   el.rawData = {};
@@ -201,17 +208,23 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
 
   beforeAll(async () => {
     const text = await readFile(configPath, 'utf8');
-    const { extendsFetcher, fetchOne } = makeExampleFetchers(dir);
+    const { extendsFetcher, sequenceFetcher, fetchOne } =
+      makeExampleFetchers(dir);
+    // A `sequence:` example shows its own protein: an accession beside it is
+    // an error, so it gets none.
+    const parsed = (await parseConfigText(text)) as { sequence?: unknown };
+    const sequenceMode = parsed.sequence !== undefined;
     config = await loadConfig(text, {
-      accession: REFERENCE_ACCESSION,
+      ...(sequenceMode ? {} : { accession: REFERENCE_ACCESSION }),
       extendsFetcher,
+      sequenceFetcher,
     });
     // Loaded once and shared by every `it()` below — the config and
     // its data pipeline are read-only from here on, and re-running
     // `loadProtvistaData` per assertion bought nothing but CPU
     // (worst for `extend-default/`, which fans out to ~15 tracks).
     result = await loadProtvistaData(
-      REFERENCE_ACCESSION,
+      config.sequence ? '' : REFERENCE_ACCESSION,
       config,
       fetchOne,
       resolveAdapter

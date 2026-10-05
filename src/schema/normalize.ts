@@ -74,6 +74,7 @@ import type {
 } from './types.js';
 import { isGroupConfig } from './discriminate.js';
 import type { Registry } from './registry.js';
+import type { ResolvedSequence } from './sequence.js';
 import { formatForPath } from './file-formats.js';
 
 // ─────────────────────────────────────────────────────────────
@@ -88,6 +89,13 @@ import { formatForPath } from './file-formats.js';
 export interface NormalizedConfig {
   version: '1.0';
   accession?: string;
+  /**
+   * The resolved `sequence:` — residues plus the FASTA header, if any — when
+   * the config shows a protein that isn't in UniProt. Absent in accession
+   * mode. The loader resolves it (parsing inline text, or fetching the file a
+   * path names) and passes it in through `NormalizeOptions.sequence`.
+   */
+  sequence?: ResolvedSequence;
   sources: Record<string, string>;
   /** Author-set baseline template variables. See `ProtvistaViewerConfig.variables`. */
   variables?: Record<string, string>;
@@ -248,6 +256,12 @@ export interface NormalizeOptions {
    * without setting up a full registry.
    */
   registry?: Registry;
+  /**
+   * The config's `sequence:`, already resolved to residues. Normalize does no
+   * I/O, so a file reference must be fetched and parsed first (`load.ts`
+   * does). Copied to `NormalizedConfig.sequence` as given.
+   */
+  sequence?: ResolvedSequence;
 }
 
 export function normalizeConfig(
@@ -285,6 +299,7 @@ export function normalizeConfig(
   return {
     version: config.version ?? '1.0',
     ...(config.accession !== undefined ? { accession: config.accession } : {}),
+    ...(opts.sequence !== undefined ? { sequence: opts.sequence } : {}),
     sources,
     ...(config.variables !== undefined ? { variables: config.variables } : {}),
     defaults,

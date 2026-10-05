@@ -73,6 +73,19 @@ const versionTooltip = isPrerelease
         />
       </div>
 
+      <div class="field local-data">
+        <button id="load-data" type="button" aria-describedby="local-note">
+          Load data file…
+        </button>
+        <!-- No accept=: a file with any extension can be picked, and the
+             attach form then asks how to read it. -->
+        <input id="data-file" type="file" hidden />
+        <span id="local-note" class="local-note"
+          >Read in your browser — never uploaded. Only the file name goes into
+          the config.</span
+        >
+      </div>
+
       <button id="run" type="button" title="Update the preview (Ctrl/Cmd+Enter)">
         <span aria-hidden="true">▶</span> Run
       </button>
@@ -80,9 +93,21 @@ const versionTooltip = isPrerelease
     <p id="preset-desc" class="preset-desc" aria-live="polite"></p>
 
     <main id="panels">
-      <section class="pane" aria-label="Config editor">
+      <section id="config-pane" class="pane" aria-label="Config editor">
         <h2>Config (YAML or JSON)</h2>
+        <div class="local-files">
+          <div id="data-attach" hidden></div>
+          <p id="data-status" role="status" aria-live="polite"></p>
+          <pre id="data-snippet" hidden></pre>
+          <ul id="data-files" aria-label="Loaded data files" hidden></ul>
+        </div>
         <div id="editor"></div>
+        <div id="drop-overlay" class="drop-overlay" hidden>
+          <p>
+            Drop to load the file — read in your browser, never uploaded. Only
+            its name goes into the config.
+          </p>
+        </div>
         <div
           class="errors"
           role="region"
@@ -224,6 +249,14 @@ const versionTooltip = isPrerelease
       input#accession {
         width: 7rem;
       }
+      input#accession:disabled {
+        opacity: 0.6;
+      }
+      /* Added by the controller while the config sets `sequence:`. */
+      .accession-hint {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
       button#run {
         cursor: pointer;
         font-weight: 700;
@@ -233,6 +266,105 @@ const versionTooltip = isPrerelease
       }
       button#run:hover {
         filter: brightness(1.08);
+      }
+      button {
+        cursor: pointer;
+      }
+      .local-note {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      /* Loaded files, the attach form and its status: a strip above the
+         editor that takes no room until something is in it. */
+      .local-files {
+        flex: none;
+        background: #fff;
+        font-size: 0.85rem;
+      }
+      .local-files > * {
+        margin: 0;
+        padding: 0.4rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .local-files > [hidden] {
+        display: none;
+      }
+      /* An empty status line collapses but stays rendered: a live region that
+         is display:none when its text arrives is not reliably announced. */
+      .local-files > :empty {
+        padding: 0;
+        border: 0;
+      }
+      #data-snippet {
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+        background: var(--bg);
+      }
+      #data-files {
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem 1rem;
+      }
+      #data-files li {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      #data-files button,
+      .data-attach button {
+        font-size: 0.8rem;
+        padding: 0.15rem 0.5rem;
+      }
+      .data-attach fieldset {
+        border: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+      }
+      .data-attach legend {
+        font-weight: 700;
+        padding: 0 0 0.3rem;
+      }
+      .data-attach-note {
+        flex-basis: 100%;
+        margin: 0;
+        color: var(--muted);
+      }
+      .data-attach .actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .data-attach button[type='submit'] {
+        font-weight: 700;
+        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      #config-pane {
+        position: relative;
+      }
+      /* Over the pane while a file is dragged onto it. Ignores the pointer, so
+         the drop lands on the pane underneath (which owns the drop). */
+      .drop-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        text-align: center;
+        font-weight: 700;
+        color: var(--accent);
+        background: rgb(255 255 255 / 0.9);
+        border: 3px dashed var(--accent);
+        pointer-events: none;
+      }
+      .drop-overlay[hidden] {
+        display: none;
       }
       :focus-visible {
         outline: 3px solid var(--accent);

@@ -166,6 +166,7 @@ export default defineConfig({
           label: 'How-to guides',
           items: [
             { label: 'Load your own data', link: '/your-data' },
+            { label: 'Proteins outside UniProt', link: '/sequence-only' },
             { label: 'Theme the viewer', link: '/theming' },
             { label: 'Customize the layout', link: '/customize-layout' },
             { label: 'Author tooltips', link: '/data-tooltip' },

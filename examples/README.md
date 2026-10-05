@@ -41,11 +41,13 @@ here surfaces immediately rather than silently:
 | [`linegraph/`](./linegraph) | `kind: linegraph` — a bring-your-own line graph from inline `{ position, value }` records, y-axis fitted to the data |
 | [`linegraph-csv/`](./linegraph-csv) | The same line graph from a CSV file — the `.csv` extension supplies the encoding, `kind: linegraph` the records |
 | [`csv/`](./csv) | Bring-your-own CSV file as a **single standalone track** (one `rows:` entry, no group wrapper) — feature records, read as CSV from the extension |
+| [`csv-styled/`](./csv-styled) | Per-feature colours and custom tooltip columns from your own CSV — a `color` column overrides the track's `rendering.color`, and a `dataTooltip` shows the extra `ref` / `url` columns with a `{% link %}` |
 | [`tsv/`](./tsv) | Bring-your-own TSV file — the same records as `csv/`, tab-separated |
 | [`json/`](./json) | A live **UniProt** API track next to a bring-your-own JSON file — same kind on both, different sources |
 | [`bed/`](./bed) | Bring-your-own BED file — the one format that fixes its own records (feature records only) |
 | [`variation-csv/`](./variation-csv) | Your own variants on `kind: variants` — the same kind the UniProt viewer uses, reading a `position,variant` CSV instead of the variation API |
 | [`extend-default/`](./extend-default) | `extends:` the shipped canonical UniProt config and layers one custom CSV-backed track on top |
+| [`sequence-only/`](./sequence-only) | A protein that isn't in UniProt: `sequence: ./protein.fasta` instead of an accession, with a CSV track on top. The viewer makes no request of its own |
 
 Which records each `kind` reads, and which encodings can carry them, are
 documented in the "Shape and format" section of
@@ -58,23 +60,26 @@ The full config schema is documented in
 [`specs/config-approach.md`](../specs/config-approach.md), which is
 the normative source these examples are drawn from.
 
-## Why every example declares `accession: P05067`
+## Why the examples declare `accession: P05067`
 
-`<protvista-uniprot>` gates its entire load pipeline — including
-purely local or inline track data — behind a truthy `accession`
-(the element fetches the sequence for the accession before loading
-any track). Without an `accession`, even a fully-offline example like
-`inline-data/` would render nothing when mounted standalone. Every
-example here bakes in `P05067` (Amyloid precursor protein — the
-reference accession used across this repo's test suite) purely so it
-is genuinely runnable on its own.
+`<protvista-uniprot>` needs a protein: an `accession` for a UniProt entry,
+or a `sequence:` for one of your own. With an accession, the element fetches
+that entry's sequence before loading any track — including purely local or
+inline track data. Every example except `sequence-only/` bakes in `P05067`
+(Amyloid precursor protein — the reference accession used across this
+repo's test suite) so it is genuinely runnable on its own, and so its tracks
+sit on a real UniProt sequence.
 
-One consequence worth knowing: because of this, mounting even the
-"offline" examples (`inline-data/`, `csv/`, `tsv/`, `json/`, `bed/`)
-for real still performs one network call — the element's top-level
-sequence fetch for `P05067` — even though their own track data never
-touches the network. This is an existing architectural characteristic
-of the element, not something specific to these examples.
+One consequence worth knowing: mounting even the "offline" examples
+(`inline-data/`, `csv/`, `tsv/`, `json/`, `bed/`) for real still performs
+one network call — the element's top-level sequence fetch for `P05067` —
+even though their own track data never touches the network.
+
+[`sequence-only/`](./sequence-only) is the no-network example: its
+`sequence: ./protein.fasta` gives the viewer the protein itself, so it makes
+no request of its own — no UniProt entry, no structure panel — and fetches
+only its own two files. See
+[Proteins outside UniProt](https://ebi-webcomponents.github.io/protvista/sequence-only).
 
 ## Running an example
 
@@ -90,19 +95,23 @@ to see it render live (run `pnpm docs:dev` and open `/protvista/playground` loca
 **Path-resolution caveat.** `<protvista-uniprot>` fetches `config-src`
 itself relative to the hosting page, but everything *inside* the
 fetched config — a track's `data: ./hotspots.csv` shorthand, an
-`extends:` reference — is resolved by the loader's default fetcher as
-a bare `fetch(url)`, which the browser resolves against the *hosting
-page's* URL, not the config file's own directory. This is transparent
-for `basic/` and `inline-data/` (neither references another file), so
-"point `config-src` at any example" is literally true only for those
-two. For the file-backed examples (`csv/`, `tsv/`, `json/`, `bed/`,
-`extend-default/`), the snippet above only resolves correctly when
-the hosting page itself lives in that example's own directory (e.g.
-serve from `examples/csv/` and use `config-src="./config.yaml"`) — a
-page at the repo root loading `config-src="./examples/csv/config.yaml"`
-will fetch `./hotspots.csv` against the repo root instead and render
-that group empty. `extend-default/config.yaml` sidesteps this for its
-own `extends:` target by using an origin-absolute path
-(`/src/default-config.yaml`, see the comment in that file) — but its
-`data: ./hotspots.csv` track is still page-relative like every other
-file-backed example.
+`extends:` reference, a `sequence: ./protein.fasta` file — is resolved
+by the loader's default fetcher as a bare `fetch(url)`, which the
+browser resolves against the *hosting page's* URL, not the config
+file's own directory. This is transparent for `basic/` and
+`inline-data/` (neither references another file), so "point
+`config-src` at any example" is literally true only for those two. For
+the file-backed examples (`csv/`, `tsv/`, `json/`, `bed/`,
+`extend-default/`, `sequence-only/`), the snippet above only resolves
+correctly when the hosting page itself lives in that example's own
+directory (e.g. serve from `examples/csv/` and use
+`config-src="./config.yaml"`) — a page at the repo root loading
+`config-src="./examples/csv/config.yaml"` will fetch `./hotspots.csv`
+against the repo root instead and render that group empty. For
+`sequence-only/` it is worse: `./protein.fasta` is the protein itself,
+so fetched from the wrong directory it fails the whole viewer with a
+`cannot-resolve-sequence` config error. `extend-default/config.yaml`
+sidesteps this for its own `extends:` target by using an
+origin-absolute path (`/src/default-config.yaml`, see the comment in
+that file) — but its `data: ./hotspots.csv` track is still
+page-relative like every other file-backed example.

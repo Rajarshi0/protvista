@@ -30,13 +30,14 @@ import {
   loadProtvistaData,
   UNFILTERED_SUFFIX,
   type CustomTrackData,
+  type TooltipFieldMiss,
   type TrackProcessingFailure,
 } from './load-data.js';
 import {
   installClickTooltip,
   type TooltipController,
 } from './tooltips/popover.js';
-import { renderLabel } from './tooltips/resolve.js';
+import { formatTooltipFieldMiss, renderLabel } from './tooltips/resolve.js';
 import { escapeHtml } from './utils/security.js';
 import { getFeatureSource, type FeatureSource } from './feature-source.js';
 import { warnLostProperties } from './lost-properties.js';
@@ -140,6 +141,16 @@ import {
 } from './schema/errors.js';
 import { RENDERABLE_COMPONENT_NAMES } from './schema/components.js';
 import type { ErrorPhase, ErrorContext } from './errors/report.js';
+import {
+  findOutOfRange,
+  formatOutOfRangeWarning,
+  type TrackCoordinates,
+} from './schema/adapters/coordinates.js';
+import type { DecodeWarning } from './schema/adapters/feature-fields.js';
+import {
+  escapeMarkdocInline,
+  sequenceDisplayLabel,
+} from './schema/sequence.js';
 import {
   routeFailure,
   type FailureChannels,
@@ -304,6 +315,14 @@ type EntryResult =
 const entryUrl = (accession: string): string =>
   `https://www.ebi.ac.uk/proteins/api/proteins/${accession}`;
 
+/**
+ * The protein key for a `sequence:` config, which has no accession: what the
+ * authored-coordinate check compares `_sequenceAccession` and each pending
+ * check against. Not a valid accession (`ACCESSION_PATTERN` admits no NUL), so
+ * it can never collide with one.
+ */
+const SEQUENCE_MODE_KEY = '\u0000sequence';
+
 const isAbortError = (e: unknown): boolean =>
   (e as { name?: string } | null)?.name === 'AbortError';
 
@@ -345,6 +364,15 @@ const hasRenderableData = (value: unknown): boolean => {
  */
 const showsSeriesLabel = (tracks: readonly NormalizedTrack[]): boolean =>
   !tracks.some((t) => t.data?.some((d) => isAuthoredSource(d)));
+
+/**
+ * The `path` a runtime track warning's issue names the track by: the bare
+ * track id on a standalone row, which has no group of its own, and
+ * `group/track` otherwise. Shared by every track-scoped runtime warning, so
+ * they all name a row the same way.
+ */
+const issuePath = (row: NormalizedRow, trackId: string): string =>
+  row.standalone ? trackId : `${row.id}/${trackId}`;
 
 /**
  * How long a just-moved row stays highlighted. Long enough to find the row
@@ -471,9 +499,30 @@ class ProtvistaUniprot extends LitElement {
    * adapters, set `viewerConfig` — then clear it to load.
    */
   suspend?: boolean;
+  private _accession: string | undefined;
+
   /** The UniProt accession to show (`accession` attribute). */
-  accession?: string;
-  /** The protein sequence, fetched from `accession` when not given. */
+  get accession(): string | undefined {
+    return this._accession;
+  }
+
+  /**
+   * Every write is the host's (the property or the attribute), so it ends a
+   * backfill here, at the write, even when it equals the backfilled value:
+   * Lit reports no change for that, and `updated()` would never see it.
+   * `_applyConfig` marks its own write as a backfill again just after.
+   */
+  set accession(value: string | undefined) {
+    const old = this._accession;
+    this._accession = value;
+    this._backfilledAccession = undefined;
+    this.requestUpdate('accession', old);
+  }
+  /**
+   * The protein sequence the viewer draws: fetched for `accession`, or taken
+   * from the config's `sequence:` in sequence-only mode. Set by the element;
+   * a host that sets it is overwritten by the next load.
+   */
   sequence?: string;
   /**
    * Fully-resolved config consumed by the renderer and
@@ -611,6 +660,49 @@ class ProtvistaUniprot extends LitElement {
   private _groupErrors: Set<string> = new Set();
 
   /**
+   * The protein key `this.sequence` belongs to: the accession it was fetched
+   * for, or `SEQUENCE_MODE_KEY` when it came from the config's `sequence:`.
+   * An accession change re-runs `_init()` without clearing `sequence`, so the
+   * new protein's track data can land while the old protein's sequence is
+   * still stored; the coordinate check must not run against it.
+   */
+  private _sequenceAccession: string | undefined;
+
+  /**
+   * The accession `_applyConfig` backfilled from the config's `accession:`
+   * (the host left the attribute blank). While `this.accession` still holds
+   * it, it is the config's, not the host's (`_hostAccession`): the next
+   * config resolves with it only as a fallback, and `_applyConfig` replaces
+   * it with whatever that config names — dropping it for a `sequence:`.
+   * Cleared by the `accession` setter on any write by the host, so a host
+   * value that happens to equal it is still the host's.
+   */
+  private _backfilledAccession: string | undefined;
+
+  /**
+   * Set by `_applyConfig` when it changes `this.accession` for a config, and
+   * consumed by `updated()` when that change arrives (Lit delivers it a
+   * microtask later), so the config's own change doesn't re-run `_init()`:
+   * the `_init()` that applied the config goes on to load for it.
+   */
+  private _configAccessionChange = false;
+
+  /**
+   * Authored tracks' decoded coordinates still waiting for the
+   * sequence-bounds check, keyed by `${groupId}-${trackId}`, with the
+   * protein key their batch loaded (`_proteinKey`: the accession, or
+   * `SEQUENCE_MODE_KEY` in sequence mode). Filled by `_loadData` and drained by
+   * `_checkCoordinates`, so each track is checked once per data load. A
+   * load drops the entries it supersedes when it starts — so a sequence
+   * landing mid-load can't check the data being replaced — and queues its
+   * own when it commits.
+   */
+  private _pendingCoordinateChecks: Map<
+    string,
+    { protein: string; coordinates: TrackCoordinates }
+  > = new Map();
+
+  /**
    * Derived error sets, recomputed once per render (in
    * `_recomputeErrorVisibility`) so the badge/gating sites are O(1)
    * lookups. `_visibleGroupErrors` = groups with ≥1 track error;
@@ -622,7 +714,7 @@ class ProtvistaUniprot extends LitElement {
   private _anyVisibleError = false;
 
   /**
-   * Plain-text labels, keyed by `accession\nsource`. `_labelText` is called
+   * Plain-text labels, keyed by `protein label\nsource`. `_labelText` is called
    * per row and per track on every customize-mode render (and on the moved-key
    * clear timer), and the derived text is stable for a given label + protein,
    * so it is parsed once rather than on every frame. Cleared on every full
@@ -1007,7 +1099,8 @@ class ProtvistaUniprot extends LitElement {
   static get properties() {
     return {
       suspend: { type: Boolean, reflect: true },
-      accession: { type: String, reflect: true },
+      // Its own accessor: see `set accession`.
+      accession: { type: String, reflect: true, noAccessor: true },
       sequence: { type: String },
       data: { type: Object },
       openGroups: { type: Array },
@@ -1284,8 +1377,10 @@ class ProtvistaUniprot extends LitElement {
    * path. Without it, every track is loaded.
    */
   async _loadData(only?: Set<string>) {
-    const accession = this.accession;
-    if (!accession || !this.config) {
+    // An accession, or in sequence mode the config's own sequence: either is
+    // a protein to load tracks for.
+    const protein = this._proteinKey;
+    if (!protein || !this.config) {
       this._tracksPending = false;
       this.loading = false;
       this.requestUpdate();
@@ -1300,6 +1395,15 @@ class ProtvistaUniprot extends LitElement {
     // later full load. Returning here also leaves `_lastLoadVariables` to the
     // full load, which is the one that will commit it.
     if (only && this._loadBatches.some((b) => !b.only)) return;
+
+    // Drop the coordinate checks this load supersedes (see
+    // `_pendingCoordinateChecks`) — after the promotion above, so a
+    // promoted retry drops them all.
+    if (only) {
+      for (const key of only) this._pendingCoordinateChecks.delete(key);
+    } else {
+      this._pendingCoordinateChecks.clear();
+    }
 
     // A full (re)load means a new protein or config, so the plain-text label
     // cache (keyed by accession+source) is stale — drop it, bounding growth to
@@ -1352,74 +1456,83 @@ class ProtvistaUniprot extends LitElement {
       Omit<TrackFetchError, 'groupId' | 'trackId'>
     >();
 
-    const { rawData, data, hasData, trackUrls, trackFailures, skipWarnings } =
-      await loadProtvistaData(
-        variables,
-        this.config,
-        // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
-        // errors are swallowed with a warning, leaving a null in the
-        // per-URL slot. `AbortError` thrown by a later `_loadData()`
-        // re-entry is recognised and silently returned as `null` so it
-        // doesn't pollute the console.
-        async (url, responseType) => {
-          // Three distinct failure modes are recorded so the badge / event
-          // can tell "couldn't reach the server" from "server said 500"
-          // from "unparseable body". Each still returns `null` into the
-          // per-URL slot (legacy swallow-and-continue). `AbortError` from a
-          // superseding `_loadData()` re-entry is silently ignored.
-          let response: Response;
+    const {
+      rawData,
+      data,
+      hasData,
+      trackUrls,
+      trackCoordinates,
+      trackFailures,
+      trackWarnings,
+      skipWarnings,
+      tooltipFieldMisses,
+    } = await loadProtvistaData(
+      variables,
+      this.config,
+      // Preserve the legacy fetchAll semantics: 4xx/5xx and thrown
+      // errors are swallowed with a warning, leaving a null in the
+      // per-URL slot. `AbortError` thrown by a later `_loadData()`
+      // re-entry is recognised and silently returned as `null` so it
+      // doesn't pollute the console.
+      async (url, responseType) => {
+        // Three distinct failure modes are recorded so the badge / event
+        // can tell "couldn't reach the server" from "server said 500"
+        // from "unparseable body". Each still returns `null` into the
+        // per-URL slot (legacy swallow-and-continue). `AbortError` from a
+        // superseding `_loadData()` re-entry is silently ignored.
+        let response: Response;
+        try {
+          response = await fetch(url, { signal });
+        } catch (error) {
+          if (isAbortError(error)) return null;
+          fetchErrors.set(url, { url, kind: 'network', cause: error });
+          return null;
+        }
+        if (!response.ok) {
+          fetchErrors.set(url, {
+            url,
+            kind: 'http',
+            status: response.status,
+          });
+          return null;
+        }
+        // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
+        // everything else — JSON files included — is parsed as JSON.
+        // `response.text()` does not reject on content, so the parse-failure
+        // branch below only guards the JSON path.
+        if (responseType === 'text') {
           try {
-            response = await fetch(url, { signal });
+            return await response.text();
           } catch (error) {
             if (isAbortError(error)) return null;
-            fetchErrors.set(url, { url, kind: 'network', cause: error });
+            fetchErrors.set(url, { url, kind: 'parse', cause: error });
             return null;
           }
-          if (!response.ok) {
-            fetchErrors.set(url, {
-              url,
-              kind: 'http',
-              status: response.status,
-            });
-            return null;
-          }
-          // Delimited bodies (CSV / TSV / BED) reach their decoder as raw text;
-          // everything else — JSON files included — is parsed as JSON.
-          // `response.text()` does not reject on content, so the parse-failure
-          // branch below only guards the JSON path.
-          if (responseType === 'text') {
-            try {
-              return await response.text();
-            } catch (error) {
-              if (isAbortError(error)) return null;
-              fetchErrors.set(url, { url, kind: 'parse', cause: error });
-              return null;
-            }
-          }
-          try {
-            return await response.json();
-          } catch (error) {
-            if (isAbortError(error)) return null;
-            // The parser's own text says where it gave up — on an author's
-            // malformed file, the one detail that makes it fixable.
-            fetchErrors.set(url, {
-              url,
-              kind: 'parse',
-              ...(error instanceof Error && error.message
-                ? { message: error.message }
-                : {}),
-              cause: error,
-            });
-            return null;
-          }
-        },
-        // Resolve adapter functions by name through the registry — the same
-        // source of truth config validation consults, so a consumer's
-        // `registerAdapter()` adapter both validates and runs.
-        (name) => this.registry.getAdapter(name),
-        this.customTrackData,
-        only ? { only, previousData: this.data } : undefined
-      );
+        }
+        try {
+          return await response.json();
+        } catch (error) {
+          if (isAbortError(error)) return null;
+          // The parser's own text says where it gave up — on an author's
+          // malformed file, the one detail that makes it fixable.
+          fetchErrors.set(url, {
+            url,
+            kind: 'parse',
+            ...(error instanceof Error && error.message
+              ? { message: error.message }
+              : {}),
+            cause: error,
+          });
+          return null;
+        }
+      },
+      // Resolve adapter functions by name through the registry — the same
+      // source of truth config validation consults, so a consumer's
+      // `registerAdapter()` adapter both validates and runs.
+      (name) => this.registry.getAdapter(name),
+      this.customTrackData,
+      only ? { only, previousData: this.data } : undefined
+    );
 
     // If a newer load started while we were awaiting, drop the result
     // on the floor — the newer call owns subsequent state writes.
@@ -1446,6 +1559,15 @@ class ProtvistaUniprot extends LitElement {
         consoleLevel: 'warn',
       });
     }
+
+    // What a feature decoder noticed without rejecting the file — a column it
+    // dropped, a colour the canvas cannot paint. Once per load, like the
+    // coordinate warning; a targeted retry reports only the tracks it reran.
+    this._reportDecodeWarnings(trackWarnings, trackCoordinates);
+
+    // An authored tooltip template that names a field no record carries.
+    // Once per load, after the decoder's own warnings about the same data.
+    this._reportTooltipFieldMisses(tooltipFieldMisses);
 
     // A targeted retry only carries the reloaded URLs' raw responses —
     // merge so the rest of `rawData` survives; a full load replaces it.
@@ -1496,6 +1618,13 @@ class ProtvistaUniprot extends LitElement {
       if (!(key in data)) delete merged[key];
     }
 
+    // Queue this batch's authored tracks for the sequence-bounds check,
+    // replacing any unchecked entry a reloaded track left behind.
+    for (const key of reloadedKeys) this._pendingCoordinateChecks.delete(key);
+    for (const [key, coordinates] of Object.entries(trackCoordinates)) {
+      this._pendingCoordinateChecks.set(key, { protein, coordinates });
+    }
+
     // Recompute each reloaded group's aggregate from the LIVE merged
     // per-track values rather than the loader's snapshot-derived
     // `data[groupId]`. Two concurrent targeted retries on different tracks
@@ -1517,6 +1646,7 @@ class ProtvistaUniprot extends LitElement {
       );
     }
     this.data = merged;
+    this._checkCoordinates();
 
     // The variation filter's pristine baseline now rides along in
     // `data` under `${groupId}-${trackId}${UNFILTERED_SUFFIX}` for any
@@ -1549,15 +1679,71 @@ class ProtvistaUniprot extends LitElement {
    * resolves against. Precedence, lowest first: the config's `variables:`
    * block < the host's `data-*` attributes < the named `accession`
    * attribute (an alias for `data-accession` that wins on conflict).
-   * `this.accession` is always set by the time this is read (`_loadData`
-   * won't run without it), so `data-accession` never reaches a URL here.
+   * In accession mode `this.accession` is always set by the time this is
+   * read (`_loadData` won't run without a protein), so `data-accession`
+   * never reaches a URL here.
+   *
+   * In sequence mode there is no accession at all: one merged in from a
+   * config `variables:` entry or a `data-accession` attribute is dropped, so
+   * `$ctx.accession` in a tooltip stays `''` and no tooltip builds a UniProt
+   * link from a stray attribute. (Validation already rejects `{accession}`
+   * data URLs in this mode.)
    */
   private _variables(): Variables {
-    return mergeVariables({
+    const variables = mergeVariables({
       configVariables: this.config?.variables,
       dataset: this.dataset,
       accession: this.accession,
     });
+    if (this.config?.sequence) delete variables.accession;
+    return variables;
+  }
+
+  /**
+   * The accession the host set (the attribute or property), as opposed to
+   * one `_applyConfig` backfilled from a config's `accession:`. Only the
+   * host's is passed to the loader as such — and is an error beside a
+   * `sequence:` — and only a change to it re-runs a config resolve.
+   */
+  private get _hostAccession(): string | undefined {
+    return this.accession && this.accession !== this._backfilledAccession
+      ? this.accession
+      : undefined;
+  }
+
+  /**
+   * The key the loaded protein is known by: its accession, or
+   * `SEQUENCE_MODE_KEY` when the config shows its own `sequence:`.
+   * `undefined` with neither — there is nothing to load.
+   */
+  private get _proteinKey(): string | undefined {
+    if (this.config?.sequence) return SEQUENCE_MODE_KEY;
+    return this.accession || undefined;
+  }
+
+  /**
+   * The protein's name as plain text, wherever the viewer shows it: the
+   * accession, or in sequence mode the FASTA header (cut at 80 characters)
+   * or "your sequence". `undefined` with neither. Used for the label cache
+   * key, the no-results message and the coordinate warning.
+   */
+  private get _proteinLabel(): string | undefined {
+    const sequence = this.config?.sequence;
+    if (sequence) return sequenceDisplayLabel(sequence);
+    return this.accession || undefined;
+  }
+
+  /**
+   * `_proteinLabel` as it is substituted for `{accession}` in a label's
+   * Markdoc source. A FASTA header is author data, not markup, so in sequence
+   * mode it is escaped: a header can't inject a link or a tag. An accession
+   * is passed through unchanged, exactly as before.
+   */
+  private get _labelAccession(): string | undefined {
+    const label = this._proteinLabel;
+    return this.config?.sequence && label !== undefined
+      ? escapeMarkdocInline(label)
+      : this.accession;
   }
 
   /**
@@ -1597,7 +1783,7 @@ class ProtvistaUniprot extends LitElement {
    * at fetch time. The superseded batch is aborted by `_loadData()`.
    */
   private _onVariablesChanged(): void {
-    if (!this.config || this.suspend || !this.accession) return;
+    if (!this.config || this.suspend || !this._proteinKey) return;
     if (this._variablesKey(this._variables()) === this._lastLoadVariables) {
       return;
     }
@@ -1643,6 +1829,183 @@ class ProtvistaUniprot extends LitElement {
       if (!Array.isArray(p.variants)) continue;
       if (typeof p.sequence === 'string' && p.sequence !== '') continue;
       p.sequence = this.sequence;
+    }
+  }
+
+  /**
+   * Run the sequence-bounds check for every authored track that is waiting
+   * for one, and report a `track-data` warning for each track with rows
+   * below 1 or past the last residue.
+   *
+   * The sequence and a track's data come from independent fetches and can
+   * land in either order, so this runs after each: a track is checked only
+   * once both are present for the current protein (its accession, or the
+   * config's own `sequence:`). If no usable sequence
+   * loads, nothing runs — the `sequence` phase already reports that. Each
+   * pending entry is drained when checked, so a re-render never re-emits;
+   * a reload queues the track again.
+   *
+   * The warning never touches rendering: the track already holds its data
+   * as authored. Its routing row (`src/errors/router.ts`) keeps it off the
+   * mount panel even under `strict`, and off the row's `⚠` badge.
+   */
+  private _checkCoordinates() {
+    const sequence = this.sequence;
+    // Named by its display label, never the private key; with no label there
+    // is no protein, so no pending check could match one anyway.
+    const label = this._proteinLabel;
+    if (!sequence || !this.config || !label) return;
+    for (const group of this.config.rows) {
+      for (const track of group.tracks) {
+        const key = `${group.id}-${track.id}`;
+        const pending = this._pendingCoordinateChecks.get(key);
+        if (!pending) continue;
+        if (
+          pending.protein !== this._sequenceAccession ||
+          pending.protein !== this._proteinKey
+        ) {
+          continue;
+        }
+        this._pendingCoordinateChecks.delete(key);
+        const { coordinates } = pending;
+        const found = findOutOfRange(coordinates.rows, sequence.length);
+        if (!found) continue;
+        // A sequence-mode message reads "outside my construct v2 (240
+        // residues)", not the private key.
+        const message = formatOutOfRangeWarning(
+          coordinates,
+          label,
+          sequence.length,
+          found
+        );
+        this._report(
+          {
+            severity: 'warning',
+            phase: 'track-data',
+            scope: { trackKey: key },
+            ...(coordinates.url !== undefined
+              ? { source: coordinates.url }
+              : {}),
+            message: `[protvista-uniprot] ${message}`,
+            consoleLevel: 'warn',
+          },
+          {
+            issues: [
+              {
+                path: issuePath(group, track.id),
+                message,
+                code: 'coordinate-out-of-range',
+                severity: 'warning',
+              },
+            ],
+            context: {
+              groupId: group.id,
+              trackId: track.id,
+              ...(coordinates.url !== undefined
+                ? { url: coordinates.url }
+                : {}),
+            },
+          }
+        );
+      }
+    }
+  }
+
+  /**
+   * Route each feature decoder warning the loader returned as a `track-data`
+   * warning on its row.
+   *
+   * The row loaded and renders as written — a dropped `tooltipContent`
+   * column changes nothing it draws, and an unpaintable colour is kept — so
+   * this rides the same routing row as the sequence-bounds warning: the
+   * event (with a `data-field-ignored` / `unpaintable-color` issue, which the
+   * playground lists) and the console, never the `⚠` badge or the panel,
+   * even under `strict`.
+   *
+   * `trackCoordinates` supplies the fetched URL for a file or URL track, the
+   * same value the bounds warning reports; inline data has none.
+   */
+  private _reportDecodeWarnings(
+    trackWarnings: Record<string, DecodeWarning[]>,
+    trackCoordinates: Record<string, TrackCoordinates>
+  ) {
+    if (!this.config) return;
+    for (const group of this.config.rows) {
+      for (const track of group.tracks) {
+        const key = `${group.id}-${track.id}`;
+        const warnings = trackWarnings[key];
+        if (!warnings) continue;
+        const url = trackCoordinates[key]?.url;
+        for (const { code, message } of warnings) {
+          this._report(
+            {
+              severity: 'warning',
+              phase: 'track-data',
+              scope: { trackKey: key },
+              ...(url !== undefined ? { source: url } : {}),
+              message: `[protvista] ${message}`,
+              consoleLevel: 'warn',
+            },
+            {
+              issues: [
+                {
+                  path: issuePath(group, track.id),
+                  message,
+                  code,
+                  severity: 'warning',
+                },
+              ],
+              context: {
+                groupId: group.id,
+                trackId: track.id,
+                ...(url !== undefined ? { url } : {}),
+              },
+            }
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Route each track the loader found with an authored `dataTooltip` naming
+   * fields none of its records carries, as one `tooltip-field-miss` warning
+   * per track listing every such field.
+   *
+   * Every record renders; only the tooltip shows blanks where the template
+   * expected a value. Its routing row (`src/errors/router.ts`) keeps it to the
+   * event (with a `tooltip-field-miss` issue, which the playground lists) and
+   * the console — never the `⚠` badge or the panel, even under `strict`. No
+   * `source`: the mistake is in the config's template, not in a file, and a
+   * Retry would read the same template again.
+   */
+  private _reportTooltipFieldMisses(misses: TooltipFieldMiss[]) {
+    if (!this.config) return;
+    for (const { groupId, trackId, fields } of misses) {
+      const group = this.config.rows.find((row) => row.id === groupId);
+      if (!group) continue;
+      const path = issuePath(group, trackId);
+      const message = formatTooltipFieldMiss(path, fields);
+      this._report(
+        {
+          severity: 'warning',
+          phase: 'tooltip-field-miss',
+          scope: { trackKey: `${groupId}-${trackId}` },
+          message: `[protvista-uniprot] ${message}`,
+          consoleLevel: 'warn',
+        },
+        {
+          issues: [
+            {
+              path,
+              message,
+              code: 'tooltip-field-miss',
+              severity: 'warning',
+            },
+          ],
+          context: { groupId, trackId, fields },
+        }
+      );
     }
   }
 
@@ -1992,6 +2355,12 @@ class ProtvistaUniprot extends LitElement {
       variationComponent.colorConfig = colorConfig;
     }
 
+    // Consumed before any early return: left set past the `suspend` return
+    // below, the flag would swallow the next real accession change.
+    const changedByConfig =
+      this._configAccessionChange && changedProperties.has('accession');
+    if (changedByConfig) this._configAccessionChange = false;
+
     if (changedProperties.has('suspend')) {
       if (this.suspend) return;
       this._init();
@@ -2013,12 +2382,28 @@ class ProtvistaUniprot extends LitElement {
     // schedule, each firing another `updated()` cycle that will hit
     // the gate below. Running the push on THIS tick would inject
     // stale (old-accession) data into components.
-    if (
-      changedProperties.has('accession') &&
-      changedProperties.get('accession') !== undefined
-    ) {
-      this._init();
-      return;
+    //
+    // `_applyConfig` replacing or dropping an accession the previous config
+    // supplied is not such a change — the `_init()` that applied the config
+    // loads for it — so its flag is consumed here and the change otherwise
+    // ignored.
+    //
+    // A sequence-mode element given an accession after mount is the other
+    // exception: `undefined → value` is ignored above, but here the config
+    // was resolved without one and must be re-resolved, which fails with
+    // `accession-and-sequence` rather than silently keeping a config never
+    // checked against the attribute.
+    if (changedProperties.has('accession')) {
+      if (changedByConfig) {
+        // The config's own change: the `_init()` that applied it loads.
+      } else if (changedProperties.get('accession') !== undefined) {
+        this._init();
+        return;
+      } else if (this.config?.sequence && this.accession) {
+        this._dropConfig();
+        this._init();
+        return;
+      }
     }
 
     // Only push data into Nightingale when something that could
@@ -2073,6 +2458,11 @@ class ProtvistaUniprot extends LitElement {
    *   2. `viewerConfig.accession` (programmatic)
    *   3. `accession:` field in the YAML/JSON config file
    *
+   * A config that sets `sequence:` instead takes no accession from anywhere
+   * (an attribute is an `accession-and-sequence` config error): its
+   * sequence comes from the config, `loadEntry` never runs, and only the
+   * track data loads.
+   *
    * Re-entrancy: a consumer that calls `_init()` while a previous
    * call's `loadConfig` promise is in flight gets the later input's
    * config — the earlier resolve simply overwrites fields the later
@@ -2088,8 +2478,32 @@ class ProtvistaUniprot extends LitElement {
     // Taken before the first `await`, so it orders calls, not completions.
     const generation = ++this._entryGeneration;
     if (!this.config) {
+      // The loader is handed the host's accession as it is *now*. One set
+      // while the config resolves (a host that sets `accession` right after
+      // appending the element) is an `undefined → value` change `updated()`
+      // ignores, so without this re-run a sequence config would mount past it
+      // unchecked and an accession-less config would fail as
+      // `missing-protein`. The generation check skips the re-run when a newer
+      // `_init()` already started (a defined → defined change). Only the
+      // host's accession counts: an overlapping, superseded `_init()` that
+      // applied its config meanwhile may have backfilled one, and re-running
+      // for that would load its config in place of this newer one. That
+      // stale config is dropped, so the re-run resolves this one's input.
+      const requestedAccession = this._hostAccession;
+      const outcome = await this.resolveViewerConfig().then(
+        (loaded) => ({ loaded }),
+        (error: unknown) => ({ error })
+      );
+      if (
+        generation === this._entryGeneration &&
+        this._hostAccession !== requestedAccession
+      ) {
+        this._dropConfig();
+        return this._init();
+      }
       try {
-        const loaded = await this.resolveViewerConfig();
+        if ('error' in outcome) throw outcome.error;
+        const { loaded } = outcome;
         this._applyConfig(loaded);
         // Issues on a config that still validated — warnings. Reported
         // through the same seam as a failure so they reach the
@@ -2158,14 +2572,41 @@ class ProtvistaUniprot extends LitElement {
       }
     }
 
-    // No accession means nothing to fetch, and `_loadData()` — the only other
+    // Sequence-only mode: the config carries the protein itself, so there is
+    // no entry to fetch — the viewer makes no request of its own, and only the
+    // track data loads. The flags are set explicitly: a superseded
+    // accession-mode `loadEntry` is dropped by the generation guard *before*
+    // it clears `_sequencePending`, so an accession → sequence `setConfig()`
+    // mid-fetch would otherwise leave the spinner up for good. The generation
+    // bump above also keeps that late result from overwriting this sequence.
+    const resolved = this.config?.sequence;
+    if (resolved) {
+      this._sequencePending = false;
+      this._tracksPending = true;
+      this.sequence = resolved.residues;
+      this._sequenceAccession = SEQUENCE_MODE_KEY;
+      this.displayCoordinates = { start: 1, end: resolved.residues.length };
+      if (this._mountError?.phase === 'sequence') this._mountError = null;
+      this._loadData();
+      return;
+    }
+    // Back from sequence mode: the stored sequence was the config's, not
+    // this accession's, so it must not render while the entry loads. An
+    // accession → accession switch keeps today's behaviour.
+    if (this._sequenceAccession === SEQUENCE_MODE_KEY) {
+      this.sequence = undefined;
+      this._sequenceAccession = undefined;
+      this.displayCoordinates = {};
+    }
+
+    // No protein means nothing to fetch, and `_loadData()` — the only other
     // place `loading` is cleared — is below this return, so leaving the flag
-    // set spun the loader forever. Harmless while the readiness gate hid it;
-    // now that the spinner covers the whole initial load, a misconfigured
-    // element would sit under a permanent spinner, which reads as "working on
-    // it" rather than "nothing was asked for". Clear it and render what the
-    // gate in `render()` produces: an empty element, or — when the host
-    // supplied `sequence` itself — the no-results message.
+    // set spun the loader forever. A freshly resolved config can't get here:
+    // the loader rejects a mount with neither an accession nor a `sequence:`
+    // (`missing-protein`), and that reaches the panel through the catch
+    // above. What remains is an already-loaded config re-initialised without
+    // one (a Retry after the host cleared the attribute): clear the spinner
+    // and render what the gate in `render()` produces.
     if (!this.accession) {
       this.loading = false;
       this.requestUpdate();
@@ -2175,14 +2616,17 @@ class ProtvistaUniprot extends LitElement {
     // later of the two lands (`_settleLoading`).
     this._sequencePending = true;
     this._tracksPending = true;
-    this.loadEntry(this.accession)
+    const requested = this.accession;
+    this.loadEntry(requested)
       .then((result) => {
         if (generation !== this._entryGeneration) return;
         this._sequencePending = false;
         const seq = result.entry?.sequence?.sequence;
         if (typeof seq === 'string' && seq.length > 0) {
           this.sequence = seq;
+          this._sequenceAccession = requested;
           this.displayCoordinates = { start: 1, end: this.sequence.length };
+          this._checkCoordinates();
           // A now-valid accession clears any stale sequence-level panel
           // left over from a previous (bad-accession) attempt.
           if (this._mountError?.phase === 'sequence') {
@@ -2240,10 +2684,19 @@ class ProtvistaUniprot extends LitElement {
    */
   private _applyConfig(loaded: LoadedConfig): void {
     const normalized = loaded.config;
-    // Accession precedence: HTML attribute wins, so only backfill
-    // from the config when the author left the attribute blank.
-    if (!this.accession && normalized.accession) {
-      this.accession = normalized.accession;
+    // Accession precedence: HTML attribute wins, so only backfill from the
+    // config when the host left the attribute blank. An accession a previous
+    // config backfilled is this config's to replace: kept when it names no
+    // protein (the loader injected it as a fallback), swapped for its own
+    // `accession:`, and dropped for a `sequence:` (no accession at all).
+    if (!this._hostAccession) {
+      const next = normalized.accession;
+      if (this.accession !== next) {
+        this._configAccessionChange = true;
+        this.accession = next;
+      }
+      // After the write, which (like any write) cleared it.
+      this._backfilledAccession = next;
     }
     this._authoredConfig = loaded.authored;
     // The pristine rows, kept before any layout edit: the baseline "reset to
@@ -2287,15 +2740,32 @@ class ProtvistaUniprot extends LitElement {
    */
   async setConfig(config: ProtvistaViewerConfig | string): Promise<void> {
     this.viewerConfig = config;
+    // An accession the previous config supplied stays until the new config
+    // resolves: it is handed to the loader only as a fallback, and
+    // `_applyConfig` then keeps, replaces or drops it by what the new config
+    // names (see `_backfilledAccession`).
     // Drop the current config so `_init` re-resolves rather than
     // short-circuiting, and so a failure can't leave a half-swapped state.
-    this.config = undefined;
+    this._dropConfig();
     this._baseRows = undefined;
     this._authoredConfig = undefined;
     this.data = Object.create(null);
     this.rawData = {};
-    this.loading = true;
+    this._pendingCoordinateChecks.clear();
     await this._init();
+  }
+
+  /**
+   * Drop the loaded config so the next `_init()` resolves it again. The
+   * track loads still in flight read the config when they land, so they are
+   * aborted with it; and the spinner shows until the new one resolves,
+   * rather than the blank `render()` gives a config-less, idle element.
+   */
+  private _dropConfig(): void {
+    for (const batch of this._loadBatches) batch.controller.abort();
+    this._loadBatches = [];
+    this.config = undefined;
+    this.loading = true;
   }
 
   /**
@@ -2308,16 +2778,25 @@ class ProtvistaUniprot extends LitElement {
    * the validator's `missing-accession` rule accepts template
    * configs (like the bundled default YAML) whose URLs carry
    * `{accession}` placeholders. `loadConfig` will ignore this when
-   * the config already declares its own accession. Likewise the host's
-   * `data-*` attributes, so `missing-variable` accepts their tokens.
+   * the config already declares its own accession, and rejects it
+   * (`accession-and-sequence`) for a config that declares `sequence:`.
+   * An accession a previous config backfilled goes as `fallbackAccession`
+   * instead: kept by a config that names no protein, ignored by a
+   * `sequence:` one. Likewise the host's `data-*` attributes, so
+   * `missing-variable` accepts their tokens.
    */
   private async resolveViewerConfig(): Promise<LoadedConfig> {
     // `data-*` names go along so `missing-variable` accepts the tokens this
     // host supplies; values are read later, at fetch time.
+    // `requireProtein`: a viewer with neither an accession nor a `sequence:`
+    // has nothing to show, so it says so (`missing-protein`) in the panel
+    // rather than mounting blank.
     const loadOpts = {
-      accession: this.accession,
+      accession: this._hostAccession,
+      fallbackAccession: this.accession || undefined,
       registry: this.registry,
       variables: { ...this.dataset },
+      requireProtein: true,
     };
     if (this.viewerConfig !== undefined) {
       return loadConfigWithSource(this.viewerConfig, loadOpts);
@@ -3300,7 +3779,7 @@ class ProtvistaUniprot extends LitElement {
             >${
               (track.filterUI === 'nightingale-filter' &&
                 this.getFilterComponent(key)) ||
-              unsafeHTML(renderLabel(track.label, this.accession))
+              unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
           >${this._renderTrackBadge(key)}${this._renderRowControls(
             group,
@@ -3471,7 +3950,7 @@ class ProtvistaUniprot extends LitElement {
                   this._labelText(group.label),
                   expanded
                 )}<span class="${CSS_PREFIX}-label-text"
-                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                  >${unsafeHTML(renderLabel(group.label, this._labelAccession))}</span
                 >${this._renderGroupBadge(group.id)}${this._renderRowControls(
                   group,
                   index,
@@ -3489,7 +3968,7 @@ class ProtvistaUniprot extends LitElement {
                 @keydown="${this.handleGroupKeydown}"
               >
                 <span class="${CSS_PREFIX}-label-text"
-                  >${unsafeHTML(renderLabel(group.label, this.accession))}</span
+                  >${unsafeHTML(renderLabel(group.label, this._labelAccession))}</span
                 >${this._renderGroupBadge(group.id)}
               </div>`
         }
@@ -3538,9 +4017,12 @@ class ProtvistaUniprot extends LitElement {
 
   /** The empty-state message: nothing to draw, and nothing hidden. */
   private _renderNoResults() {
-    // No accession is reachable here when a host supplies `sequence` itself,
-    // so the "for …" clause is dropped rather than left dangling.
-    const forWhat = this.accession ? ` for ${this.accession}` : '';
+    // The clause names the protein: its accession, or in sequence mode the
+    // FASTA header (or "your sequence"). With neither — only reachable for an
+    // already-loaded config re-initialised without an accession — it is
+    // dropped rather than left dangling.
+    const label = this._proteinLabel;
+    const forWhat = label ? ` for ${label}` : '';
     return html`<div class="protvista-no-results">
       No feature data available${forWhat}
     </div>`;
@@ -3612,7 +4094,7 @@ class ProtvistaUniprot extends LitElement {
             >${
               (track.filterUI === 'nightingale-filter' &&
                 this.getFilterComponent(key)) ||
-              unsafeHTML(renderLabel(track.label, this.accession))
+              unsafeHTML(renderLabel(track.label, this._labelAccession))
             }</span
           >${this._renderTrackBadge(key)}${this._renderTrackControls(
             group,
@@ -3676,7 +4158,7 @@ class ProtvistaUniprot extends LitElement {
               ? this._collapseButton(row, this._labelText(row.label), expanded)
               : ''
           }<span class="${CSS_PREFIX}-label-text"
-            >${unsafeHTML(renderLabel(row.label, this.accession))}</span
+            >${unsafeHTML(renderLabel(row.label, this._labelAccession))}</span
           >${this._renderRowControls(row, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
@@ -3712,7 +4194,7 @@ class ProtvistaUniprot extends LitElement {
           title="${track.description ?? ''}"
         >
           <span class="${CSS_PREFIX}-label-text"
-            >${unsafeHTML(renderLabel(track.label, this.accession))}</span
+            >${unsafeHTML(renderLabel(track.label, this._labelAccession))}</span
           >${this._renderTrackControls(group, track, index, total)}
         </div>
         <div class="${CSS_PREFIX}-track-content"></div>
@@ -3722,10 +4204,10 @@ class ProtvistaUniprot extends LitElement {
 
   /** Plain-text label (Markdoc → text), for `aria-label`s and announcements. */
   private _labelText(source: string): string {
-    const key = `${this.accession}\n${source}`;
+    const key = `${this._proteinLabel}\n${source}`;
     const cached = this._labelTextCache.get(key);
     if (cached !== undefined) return cached;
-    const html = renderLabel(source, this.accession);
+    const html = renderLabel(source, this._labelAccession);
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const text = (doc.body.textContent || '').trim() || source;
     this._labelTextCache.set(key, text);
@@ -4293,7 +4775,9 @@ class ProtvistaUniprot extends LitElement {
           </div>
         </div>
         ${
-          !this.nostructure
+          // A `sequence:` protein has no UniProt entry, so no structure to
+          // look up: the panel is omitted rather than shown empty.
+          !this.nostructure && !this.config?.sequence
             ? html`
                 <protvista-uniprot-structure
                   accession="${this.accession || ''}"
@@ -4403,7 +4887,7 @@ class ProtvistaUniprot extends LitElement {
           title="${group.description ?? ''}"
         >
           ${unsafeHTML(
-            renderLabel(group.label, this.accession)
+            renderLabel(group.label, this._labelAccession)
           )}${this._renderGroupBadge(group.id)}
         </div>
       </div>

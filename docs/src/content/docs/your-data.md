@@ -23,6 +23,9 @@ Kinds named for a provider — `alphafold-confidence`,
 `alphamissense-pathogenicity`, `alphamissense-heatmap` — read that provider's
 feed only; see [Built-in track kinds](/protvista/track-kinds).
 
+Your protein isn't in UniProt? Give the config a `sequence:` instead of an
+`accession:` — see [Proteins outside UniProt](/protvista/sequence-only).
+
 ## The feature record
 
 A `features` track draws a list of **feature records**. Each record has:
@@ -30,10 +33,18 @@ A `features` track draws a list of **feature records**. Each record has:
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `type` | yes | A label/category for the feature (e.g. `DOMAIN`, `BINDING`). Also what `filter:` matches on. |
-| `start` | yes | 1-based start position (inclusive). |
-| `end` | yes | 1-based end position (inclusive). |
+| `start` | yes | 1-based start position (inclusive), a whole number. |
+| `end` | yes | 1-based end position (inclusive), a whole number no less than `start`. |
 | `description` | no | Free text shown on hover/click. |
 | `score` | no | A number, typically 0–1, for quality or confidence. |
+| `color` | no | This feature's colour — any CSS colour (`#1f77b4`, `steelblue`, `rgb(…)`). Wins over the track's `rendering.color`. |
+| `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. A value that names a JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a `track-data` warning, so the feature takes the track's or type's shape. |
+| `fill` | no | This feature's fill colour, when it should differ from `color`. |
+| `opacity` | no | A number from 0 to 1 (default 0.9). |
+
+Any other column is kept on the record for `dataTooltip` — see
+[Style and annotate each feature from your file](#style-and-annotate-each-feature-from-your-file).
+BED files carry only the first five fields.
 
 A machine-readable version is published as
 [`feature-record.schema.json`](https://ebi-webcomponents.github.io/protvista/schema/v1/feature-record.schema.json).
@@ -98,6 +109,33 @@ rows:
         data: ./hotspots.tsv
 ```
 
+#### Spreadsheet exports
+
+ProtVista reads commas (`.csv`) and tabs (`.tsv`) only, and the format alone
+decides which — it never guesses from the content. Excel's "CSV" export in many
+European locales writes semicolons instead, so save the sheet as **Text (Tab
+delimited)** and read it as TSV. Excel names that file `.txt`, so say the
+encoding outright with `format:`, which works whatever the name:
+
+```yaml
+data:
+  url: ./hotspots.txt
+  format: tsv
+```
+
+Renaming the file to `.tsv` works too.
+
+If a file's header looks like it uses a different separator from the one its
+format implies, the missing-column error also names the separator the header
+seems to use and the fix:
+
+```
+./hotspots.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks semicolon-separated, which ProtVista does not read. …
+```
+
+The same locales also write decimal commas (`0,5`). Those still fail as
+`expected a number, got "0,5"`, so change them to `0.5`.
+
 ### JSON
 
 An array of feature-record objects. Use a `.json` extension:
@@ -140,6 +178,83 @@ rows:
 BED has no type column, so every record gets `type: BED`. That isn't one of
 the [recognised types](/protvista/type-and-shape-vocabulary), so without the
 `rendering` block above every region draws as a black rectangle.
+
+## Style and annotate each feature from your file
+
+Add a `color` column and each feature is painted on its own, so `DOMAIN` rows
+can be blue and `BINDING` rows red in the same track. Add any other column —
+a reference, a gene name, a link — and a [`dataTooltip`](/protvista/data-tooltip)
+can show it:
+
+```yaml
+accession: P05067
+rows:
+  - id: MY_LAB
+    label: My lab
+    tracks:
+      - id: hits
+        label: Styled hits
+        kind: features
+        data: ./hits.csv
+        rendering:
+          color: '#7f7f7f'
+        dataTooltip:
+          kind: markdown
+          template: |
+            **{% $description %}** ({% $type %}, {% $start %}–{% $end %})
+
+            PMID {% $pmid %} · {% link href=$url %}PubMed{% /link %}
+```
+
+```csv
+type,start,end,description,color,pmid,url
+DOMAIN,18,189,E1 domain,#1f77b4,12345678,https://pubmed.ncbi.nlm.nih.gov/12345678/
+BINDING,132,140,Predicted heparin-binding site,#d62728,23456789,https://pubmed.ncbi.nlm.nih.gov/23456789/
+REGION,290,340,Acidic-rich linker region,,,
+```
+
+(The PubMed IDs are placeholders.) For a runnable variant, see
+[`examples/csv-styled/`](https://github.com/ebi-webcomponents/protvista/tree/next/examples/csv-styled):
+the same track and pattern, with a lab-notebook `ref` column in place of
+`pmid`, a "Read more" link, and one more `DOMAIN` row.
+
+How it works:
+
+- **Which colour wins.** A feature's own `color` / `shape` wins over the
+  track's `rendering:`, which wins over the default for its `type`. A blank
+  cell leaves the field off, so the `REGION` row above is drawn in the track's
+  grey. The same goes for `fill` and `opacity`.
+- **Colours must be valid CSS colours.** The canvas cannot paint a typo like
+  `bleu` or `#catFace`, and draws that feature in the *previous* feature's
+  colour instead. The viewer keeps the value but reports a `track-data`
+  warning naming it (in the console, on the
+  [`protvista-error` event](/protvista/troubleshooting), and in the
+  playground). The check doesn't know every modern CSS colour, so `oklch(…)`
+  also warns, though it paints fine.
+- **`opacity` must be a number from 0 to 1.** Anything else fails the track,
+  naming the row.
+- **Every other column is kept as written**, as text — a blank cell is an
+  empty string — so a template can use it as `{% $pmid %}` and a `fields` list
+  as `path: pmid`. `{% link href=$url %}…{% /link %}` turns a URL column into a
+  link; a row whose URL is empty, or not an `http(s):` / `mailto:` / `/…` /
+  `#…` / `?…` URL, shows the text without one. A protocol-relative
+  `//host/…` value counts as `/…` and links to that host. Name columns like identifiers (`gene_name`,
+  `p-value`): a template cannot reference a name with a space in it, a
+  `fields` path cannot reach one with a dot, and `$ctx` is reserved for the
+  tooltip context.
+- **A few names cannot come from a file.** `tooltipContent`, `locations`,
+  `residuesToHighlight`, and names JavaScript reserves (`toString`,
+  `constructor`, `__proto__`, …) are dropped from CSV/TSV/JSON files and from
+  inline text read with `format:`, with a `track-data` warning naming them.
+  Records written straight into the config with `from: inline` (and
+  `setTrackData()` arrays) are trusted and may still set them.
+- **JSON files work the same way**: `color`, `shape` and `fill` must be
+  strings and `opacity` a number, and any other key is kept as it is, nested
+  objects included.
+- **BED files can't carry any of this.** Their columns are positional; use the
+  track's `rendering:` instead.
+
+Column names are matched exactly: `Color` is just another column, not a colour.
 
 ## Your data next to public data
 
@@ -192,11 +307,13 @@ rows:
 every feature in the `binding_sites` track — see
 [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for
 the full set, and for how this replaces `BINDING`'s own default colour and
-shape.
+shape. A record's own `color` / `shape` (say `{ type: BINDING, start: 45, end:
+52, color: '#2e86c1' }`) wins over `rendering` for that one feature, exactly as
+a `color` column does in a file.
 
 ## A line graph of your own values
 
-The `kind: linegraph` setting draws a line graph from a JSON array of `{ position, value }` records (both numbers).
+The `kind: linegraph` setting draws a line graph from a JSON array of `{ position, value }` records: `position` is a whole number, `value` any number.
 
 ```yaml
 accession: P05067
@@ -252,7 +369,7 @@ position,value
 60,905
 ```
 
-Columns may be in either order, extra columns are ignored, and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind` — a bare `data: ./x.csv` on a track with no `kind` means feature records instead.
+Columns may be in either order, extra columns are ignored (graph points have no per-point tooltip to show them in, unlike feature records), and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind` — a bare `data: ./x.csv` on a track with no `kind` means feature records instead.
 
 `kind: variant-counts` and `kind: rna-editing-counts` read the same
 `position,value` records, so a count you computed yourself renders on the same
@@ -283,7 +400,7 @@ position,wildType,variant,description,consequence
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `position` | yes | 1-based position of the changed residue. |
+| `position` | yes | 1-based position of the changed residue, a whole number. |
 | `variant` | yes | The residue it changes to. `*` for a stop, `-` for a deletion. |
 | `wildType` | no | The original residue. Shown on hover and used to label the change. |
 | `description` | no | Free text shown on hover/click. |
@@ -300,7 +417,8 @@ The same records work as `.tsv`, or as `.json` with one object per change:
 
 Your file doesn't carry the protein sequence — the viewer already fetched it for
 `accession:` and supplies it, which is what lets the track lay out one row per
-residue.
+residue. With a [`sequence:`](/protvista/sequence-only) config, the residues
+come from your `sequence:` instead.
 
 `kind: rna-editing` reads exactly the same shape.
 
@@ -322,6 +440,35 @@ page from the same directory as the data (or use an absolute URL). The runnable
 each carry their data file beside the config for exactly this reason — see
 [`examples/README.md`](https://github.com/ebi-webcomponents/protvista/blob/next/examples/README.md).
 
+## Try your file in the playground
+
+You don't have to host a file to see it render. In the
+[playground](/protvista/playground/), press **Load data file…** (or drop the
+file onto the config editor) and pick a CSV, TSV, JSON or BED file. It is read
+in your browser and never uploaded. Only its *name* goes into the config, and
+so into any link you share: the playground adds a track with
+`data: ./hits.csv`, exactly as a config next to the real file would say it.
+
+- A file whose extension doesn't say how to read it (`hits.txt`, `export.tab`)
+  asks you to choose a format, and the config gets `format:` to match:
+  `data: { url: ./hits.txt, format: csv }`. A `.csv` whose header is
+  tab-separated is offered as `tsv` the same way, and the new track's `kind`
+  follows the header's columns (`position,value` makes a line graph).
+- In a config that `extends:` another, a new track's id ends in `-local`
+  (`PTM.csv` becomes `PTM-local`), so it can't replace a base row with the
+  same id.
+- If the config already names the file — say you pasted a Starter Kit config
+  with `data: ./data/hits.csv` — just load `hits.csv`. It renders in that
+  track with no edit to the config.
+- Problems with the file are listed under the editor, naming it: a parse error
+  (`./hits.csv (parsed as CSV): row 3, column "start": …`) with the same advice
+  a hosted viewer gives, and, once it renders, any rows that fall outside the
+  protein.
+
+The file stays loaded until you reload the page. A shared link carries only the
+name, so whoever opens it is asked to load the file themselves. After fixing the
+file on disk, load it again to pick up the change.
+
 ## Custom columns or formats
 
 If your file doesn't match the feature-record columns — different headings, a
@@ -333,6 +480,7 @@ name it on the track. See [Escape hatches](/protvista/escape-hatches).
 - [Configuration vs data](/protvista/configuration-vs-data) — the boundary this page sits on.
 - [Adapter reference](/protvista/adapter-reference) — exact payload shapes.
 - [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) — what each `type` looks like, and every `shape`.
+- [Proteins outside UniProt](/protvista/sequence-only) — your own sequence instead of an accession.
 - [Troubleshoot errors](/protvista/troubleshooting) — when a track won't load.
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._

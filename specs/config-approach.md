@@ -60,7 +60,7 @@ The schema is split into two conceptual layers:
 
 ### Intent Layer
 
-**Template variables.** Every `{token}` in a data URL — a `sources` value or a descriptor `url:` — resolves against one merged variables dictionary fed by three sources, lowest precedence first: the config's top-level `variables:` block (baseline values shared by every mount of that config), the host element's `data-*` attributes (`<protvista-uniprot data-species="mouse">` supplies `{species}`; HTML's reserved `data-*` namespace keeps author variables clear of `class` / `id` / `aria-*`), and the named `accession` attribute, which is an alias for `data-accession` and wins over it on conflict, so `<protvista-uniprot accession="P05067">` stays the zero-learning-curve path. The element only loads track data once it has an accession (the named attribute, or the config's `accession:` copied into it), so inside the element `{accession}` always comes from that, and `data-accession` never reaches a URL. Only a direct `loadProtvistaData` caller sees it. Token names match `[A-Za-z][A-Za-z0-9_]*` and are case-sensitive; braces that don't match (`{foo-bar}`) are literal text. `data-*` values are read through `element.dataset`, so the DOM's kebab → camelCase rule applies: `data-dataset-id` supplies `{datasetId}` — write `data-species` in HTML and `{species}` in URLs. Values are URL-encoded when substituted (`encodeURIComponent`), so a value cannot add a path segment, query, or fragment. A value encoding can't make safe is refused, and its URL is skipped with a console warning: exactly `.` or `..` (a dot-segment the URL parser would collapse, climbing out of the template's path) and malformed Unicode (a lone surrogate). `{accession}` instead keeps its `[A-Za-z0-9_-]{1,32}` gate. Every occurrence of a token is replaced. Variables are read at fetch time (after parse → validate → normalize), so a config loaded via `config-src` sees the mount's `data-*`, and changing a `data-*` attribute on a live element re-runs the data load — a burst of changes coalesces into one load on the next animation frame, the superseded load is aborted, and a change that alters no URL the config uses (`data-testid`, a same-value write, a `data-accession` shadowed by the named attribute) does nothing. A token defined nowhere is a `missing-variable` validator warning, and at fetch time that URL is skipped (with a console warning) rather than requested half-built. Labels and tooltips are unaffected: they still interpolate `{accession}` only.
+**Template variables.** Every `{token}` in a data URL — a `sources` value or a descriptor `url:` — resolves against one merged variables dictionary fed by three sources, lowest precedence first: the config's top-level `variables:` block (baseline values shared by every mount of that config), the host element's `data-*` attributes (`<protvista-uniprot data-species="mouse">` supplies `{species}`; HTML's reserved `data-*` namespace keeps author variables clear of `class` / `id` / `aria-*`), and the named `accession` attribute, which is an alias for `data-accession` and wins over it on conflict, so `<protvista-uniprot accession="P05067">` stays the zero-learning-curve path. The element only loads track data once it has a protein: an accession (the named attribute, or the config's `accession:` copied into it), so inside the element `{accession}` always comes from that, and `data-accession` never reaches a URL; only a direct `loadProtvistaData` caller sees it. A `sequence:` config has no accession at all: the element withholds `accession` from the merged dictionary (from `data-accession` and `variables:` too), and validation rejects every `{accession}` data URL. Token names match `[A-Za-z][A-Za-z0-9_]*` and are case-sensitive; braces that don't match (`{foo-bar}`) are literal text. `data-*` values are read through `element.dataset`, so the DOM's kebab → camelCase rule applies: `data-dataset-id` supplies `{datasetId}` — write `data-species` in HTML and `{species}` in URLs. Values are URL-encoded when substituted (`encodeURIComponent`), so a value cannot add a path segment, query, or fragment. A value encoding can't make safe is refused, and its URL is skipped with a console warning: exactly `.` or `..` (a dot-segment the URL parser would collapse, climbing out of the template's path) and malformed Unicode (a lone surrogate). `{accession}` instead keeps its `[A-Za-z0-9_-]{1,32}` gate. Every occurrence of a token is replaced. Variables are read at fetch time (after parse → validate → normalize), so a config loaded via `config-src` sees the mount's `data-*`, and changing a `data-*` attribute on a live element re-runs the data load — a burst of changes coalesces into one load on the next animation frame, the superseded load is aborted, and a change that alters no URL the config uses (`data-testid`, a same-value write, a `data-accession` shadowed by the named attribute) does nothing. A token defined nowhere is a `missing-variable` validator warning, and at fetch time that URL is skipped (with a console warning) rather than requested half-built. Labels and tooltips are unaffected: they still interpolate `{accession}` only.
 
 ```typescript
 /**
@@ -146,8 +146,42 @@ interface ProtvistaViewerConfig {
    * contains `{accession}` placeholders, validation emits:
    *   "Config contains {accession} placeholders but no accession
    *    was provided via attribute or config."
+   *
+   * Required unless `sequence` is set; the two are mutually exclusive.
+   * A mounted element with neither fails with `missing-protein`.
    */
   accession?: string;
+
+  /**
+   * Sequence-only mode: show a protein that isn't in UniProt. The
+   * alternative to `accession` — setting both (in the config, or the
+   * element's `accession` attribute beside a `sequence:` config) fails
+   * with `accession-and-sequence`.
+   *
+   * One of: raw residues (`MKTAYIAKQR…`, whitespace ignored); inline
+   * FASTA (a YAML `|` block starting `>header`); or a path / URL to a
+   * one-record FASTA file (`http(s)://`, `/`, `./`, `../`, or a bare
+   * name ending `.fasta` / `.fa` / `.faa` / `.fas`), fetched relative
+   * to the page when the config loads. Residues are A–Z (uppercased;
+   * one trailing `*` dropped); more than one FASTA record, no
+   * residues, or any other character fails with `invalid-sequence`,
+   * and a file that can't be fetched with `cannot-resolve-sequence`.
+   *
+   * With `sequence` set the viewer makes no request of its own — no
+   * entry fetch, no structure panel — and renders only tracks that
+   * read the author's own data (file, inline, custom). A track that
+   * needs UniProt fails validation with `needs-accession`: a data URL
+   * using `{accession}`, a UniProt-keyed provider adapter
+   * (`alphafold-prediction-json`, `alphamissense-average-csv`,
+   * `alphamissense-full-csv`, by kind or explicit `adapter:`), or a
+   * label with `{accession}` in a link target or tag attribute. The
+   * FASTA header (cut at 80 characters), or "your sequence", is
+   * substituted for `{accession}` in labels — Markdoc-escaped — and
+   * names the protein in the no-results message and the
+   * `coordinate-out-of-range` warning. `$ctx.accession` in tooltips
+   * is `''`.
+   */
+  sequence?: string;
 
   /**
    * Optional map of named URL templates.
@@ -371,7 +405,8 @@ interface TrackConfig {
    *         label: Description
    *
    *   // Markdoc template — plain Markdoc syntax with `{% $field %}`
-   *   // variable interpolation. No domain-specific tags; rich /
+   *   // variable interpolation, plus a `{% link href=$field %}…{% /link %}`
+   *   // tag for field-valued links. No domain-specific tags; rich /
    *   // interactive / stateful tooltips are a consumer concern (listen
    *   // for the Nightingale `change` event, mount your own UI, set
    *   // `notooltip` on the element to suppress the built-in popover).
@@ -390,7 +425,9 @@ interface TrackConfig {
    *
    * Interpolated field values are HTML-escaped before they enter the
    * Markdoc render, so a malicious adapter payload cannot smuggle
-   * raw HTML into a tooltip. Missing fields render as empty strings.
+   * raw HTML into a tooltip. Missing fields render as empty strings;
+   * a field no record on the track carries is reported once per track
+   * per load as a `tooltip-field-miss` warning.
    */
   dataTooltip?: string | AuthoredTooltipSpec;
 
@@ -724,7 +761,7 @@ Field names follow the sequence vocabulary (`position`, `begin`, `end`, `score`)
 
 `linegraph` is the one kind that is bring-your-own-data by nature rather than by extension — it has no provider feed at all, which is why it keeps a bare adapter name (`adapter: linegraph`) alongside `kind: linegraph`; kinds and adapters are separate registries. The `variation` adapter family is likewise distinct from `uniprot-variation-json`, which feeds the same component but applies UniProt-specific transforms.
 
-A variation payload is the one shape the viewer completes: `nightingale-variation-canvas` needs the protein `sequence` to lay out its residue rows, and an author's file has none, so the viewer injects the sequence it already fetched for `accession`. The reserved names `track`, `colored-sequence`, and `heatmap` remain unregistered; `variation` is now taken by the adapter family above, and needs no generic *kind* because `variants` itself accepts author data.
+A variation payload is the one shape the viewer completes: `nightingale-variation-canvas` needs the protein `sequence` to lay out its residue rows, and an author's file has none, so the viewer injects the sequence it already fetched for `accession` (or, in sequence-only mode, took from `sequence:`). The reserved names `track`, `colored-sequence`, and `heatmap` remain unregistered; `variation` is now taken by the adapter family above, and needs no generic *kind* because `variants` itself accepts author data.
 
 ### Detail-only tracks
 
@@ -785,7 +822,10 @@ type DataFormat = 'csv' | 'tsv' | 'json' | 'bed';
 
 `format` states **how the bytes are encoded** — nothing else. It is not
 compression (`.csv.gz` is out of scope), not a schema version, and not a
-dialect (delimiter, quoting and number grammar are fixed per format).
+dialect (delimiter, quoting and number grammar are fixed per format). A
+delimited header that fails the required-columns check is diagnosed for a
+likely different delimiter, and the error names it and the fix; the reading
+is never switched.
 
 Authors write it only when nothing can infer it: inline text, or a URL with no
 recognised extension. `data: ./hits.csv` needs no `format:`.
@@ -902,8 +942,32 @@ silently breaks author-authored tooltips — an author who adds a `gene` column
 to see it on hover is doing the expected thing, not an unexpected one. A
 delimited cell is preserved as the **string** it was: unknown columns are
 carried through uncoerced, which keeps them useful without guessing a type.
-This was a behaviour change for the JSON feature decoder, which previously
-kept exactly its five documented fields and dropped the rest.
+This was a behaviour change for the feature decoders (JSON and CSV/TSV),
+which previously kept exactly their five documented fields and dropped the
+rest; feature records now conform (#283). Two groups of names are the
+exception for feature records:
+
+- **Render fields** — `color`, `shape`, `fill` (strings) and `opacity` (a
+  number from 0 to 1). Nightingale reads them per record ahead of the track's
+  `rendering:`, so they are trimmed and type-checked rather than preserved as
+  written: a blank cell or JSON `null` leaves the field off (the track's
+  `rendering:` still applies), a delimited `opacity` is coerced, and a wrong
+  type or out-of-range `opacity` is a row/field error. A `color` / `fill` a
+  browser will not paint is kept but reported as a `track-data` warning
+  (`unpaintable-color`). A `shape` that names an `Object.prototype` property
+  (`valueOf`, `constructor`, …) is dropped and reported as
+  `data-field-ignored`: the canvas looks shapes up on plain objects, so such
+  a name finds an inherited method and throws mid-draw (or draws nothing),
+  where an unknown name would draw `?`.
+- **Blocked names** — `tooltipContent`, `locations`, `residuesToHighlight`
+  and every name on `Object.prototype` (`__proto__`, `toString`, …) are
+  dropped from decoded data (a file, or inline text read with `format:`) and
+  reported as a `track-data` warning (`data-field-ignored`). Structured inline
+  records and `setTrackData()` arrays bypass the decoder and may still set
+  them. An empty header name is dropped silently.
+
+Point and variation records still ignore extra fields (see the `point`
+rules above): a known gap, left for a follow-up.
 
 Preserved fields are therefore *not* warned about — that would fire on every
 correct config. What is worth reporting is a **near miss**: an unrecognised
@@ -1145,7 +1209,7 @@ type ProtvistaErrorPhase =
   | 'track-fetch'         // a track's URL failed (network / HTTP 5xx / unparseable)
   | 'set-track-data'      // misuse of the setTrackData() escape hatch
   | 'transform-calculate' // a `calculate` expression threw (see transform-engine.md)
-  | 'tooltip-field-miss'; // a dataTooltip template referenced a missing field
+  | 'tooltip-field-miss'; // an authored dataTooltip names a field no record on the track carries
 
 interface ProtvistaErrorDetail {
   phase: ProtvistaErrorPhase;
@@ -1159,6 +1223,7 @@ interface ProtvistaErrorDetail {
     url?: string;
     status?: number;                            // http failures only
     errorKind?: 'network' | 'http' | 'parse';   // track-fetch: how it failed
+    fields?: string[];                          // tooltip-field-miss: the unknown fields, in template order
   };
 }
 
@@ -1174,10 +1239,13 @@ element.addEventListener('protvista-error', (e: CustomEvent<ProtvistaErrorDetail
 
 The `phase` vocabulary intentionally aligns with the
 `ValidationIssueCode` taxonomy where the two overlap, so consumers switch
-on one stable set of strings. `transform-calculate` and
-`tooltip-field-miss` are reserved for the transform engine and the
-tooltip field-miss warning respectively; when those features land they
-emit through the same event seam.
+on one stable set of strings. `transform-calculate` is reserved for the
+transform engine; when it lands it emits through the same event seam.
+`tooltip-field-miss` is emitted: an authored `dataTooltip` references a
+field no record on the track carries. It is a warning (event and console,
+never a badge or the panel, even under `strict`), and its single issue
+carries `code: 'tooltip-field-miss'`, `severity: 'warning'` and the track as
+its `path`.
 
 A track's data fetch can fail three ways. The viewer draws one line —
 **broken** (surface it) vs **missing** (hide it) — because the goal is to
@@ -1344,6 +1412,7 @@ The viewer runs in the embedder's browsing context and inherits the embedder's C
 - **`from: inline` data** never triggers a fetch and is the most trustworthy form for offline / local-dev use.
 - **`from: custom` data** is injected by the embedder via `setTrackData()`; the trust posture is whatever the embedder applies to its own data.
 - **Template variables** (`data-*` attributes, `variables:`, `accession`) are URL-encoded before substitution, so a hostile value cannot add a path segment, query string or fragment to a data URL. A value of exactly `.` or `..` is refused rather than encoded, because the URL parser treats it (and `%2E%2E`) as a dot-segment that climbs out of the template's path; so is malformed Unicode. `{accession}` is restricted to `[A-Za-z0-9_-]{1,32}`. Encoding protects URL *structure* only — an embedder that copies untrusted input (a query parameter, say) into a `data-*` attribute still decides which value is requested within that structure.
+- **`sequence:` references** are fetched at config-load time, after the config validates, with the same 2 MiB body ceiling and trust posture as `extends`: the default fetcher is `globalThis.fetch`, an embedder can supply its own (`sequenceFetcher`), and the body is parsed as FASTA, never evaluated. A FASTA header is author data, not markup: it is Markdoc-escaped wherever it is substituted into a label, so it cannot inject a link or a tag. Otherwise a `sequence:` viewer makes no request of its own — no entry fetch, no structure lookups — which makes it usable offline.
 - **`extends` resolution** can transitively introduce fetches at config-load time. The default fetcher accepts URLs (`http(s)://…`) and file paths (`/…`, `./…`, `../…`) and enforces a 2 MiB body ceiling; bare names are rejected unless the embedder supplies an `opts.resolver` that maps them to a parsed config. Authors are trusting the contents of whatever URL or file they name in `extends:` — including the `sources` URLs that target will introduce. Adopters who expose `extends:` values to end-users (dashboarding tools, admin UIs) should wrap the loader with their own origin allow-list before handing URLs on.
 - **Tooltip HTML** flows through Markdoc's own safe renderer — the document never reaches a raw `innerHTML` seam. User-interpolated data in `{% $field %}` placeholders is HTML-escaped before entering the Markdoc pipeline, so a malicious adapter payload cannot smuggle `<script>` into a tooltip. Authors registering custom adapters via `registerAdapter()` should nevertheless treat adapter output as the same trust level as the upstream data source. Consumers rendering their own tooltip UI via the Nightingale `change`-event pattern (with `notooltip` on the element to suppress the built-in popover) own their escaping in that path — the library's declarative tooltip pipeline is not in play there.
 
@@ -1571,14 +1640,15 @@ The `features` track fetches `https://api.example.org/mouse/v2024.12/features/P0
 | The top-level **sequence** is **missing** (HTTP `4xx`, or a `2xx` body with no `sequence` field — the accession has no entry)      | A `role="alert"` panel shows _"No UniProt entry found for '<accession>'. Check that the accession is correct."_ — no Retry (a 404 is deterministic). The `protvista-error` `phase: 'sequence'` event still fires. Unlike a *missing track* (which hides silently), the mount can't hide itself, so a panel is always shown here.                                                                                                                                                            |
 | A `source` (or bare `url`) value is not a URL, not a file path, and does not match any key in `sources`                           | Config validation fails at load time: `"Unknown source key: '<value>' in track <groupId>/<trackId>. Known sources: ..."`. Viewer does not mount.                                                                                                                                                                                                                                                                                                                                        |
 | `adapter` name does not match any built-in or registered adapter                                                                  | Config validation fails: `"Unknown adapter: <name> in track <groupId>/<trackId>. Did you forget to call registerAdapter()?"`.                                                                                                                                                                                                                                                                                                                                                           |
-| A bring-your-own **CSV/TSV** file has a malformed header or row (a missing/duplicate required column, a non-numeric coordinate, or a ragged row) | The decoder throws a descriptive error naming the author's own file, the reading applied to it, the offending row (by 1-based line number, header = line 1) and — where meaningful — the column: e.g. `./hits.csv (parsed as CSV): row 3, column "start": expected a number, got "abc"`, `./hits.csv (parsed as CSV): missing required header column "end"`, or `./hits.csv (parsed as CSV): row 4 is ragged — expected 4 columns, got 3`. The loader's per-track `try/catch` catches the throw, emits a developer `console.warn` (so the author can find and fix the file), and renders **that one track empty**; the rest of the viewer renders normally. Because a semantically-malformed file still fetches as valid *text*, this does **not** currently raise the fetch-level ⚠ badge / `protvista-error` surface — promoting adapter throws to track errors is a follow-up. |
-| A bring-your-own **JSON** file has a malformed record (not an array, an element that isn't an object, a missing/non-string `type`, a non-numeric `start`/`begin`/`end`, or a present-but-wrong-typed `description`/`score`) | The decoder throws a descriptive error naming the file, the offending 0-based array index and — where meaningful — the field: e.g. `./hits.json (parsed as JSON): record 2, field "start": expected a number, got string`, `./hits.json (parsed as JSON): record 0, field "type": expected a string, got number`, or `./hits.json (parsed as JSON): record 1 is not an object (got string)`. A top-level body that isn't an array is treated more leniently — a `console.warn` and an empty track, not a throw. Otherwise the same per-track `try/catch` / `console.warn` / empty-track / no-⚠-badge behavior as CSV/TSV applies. |
-| A bring-your-own **BED** file has a malformed line (fewer than 3 tab-separated columns, a non-numeric coordinate/score, or an inverted `chromEnd < chromStart` interval) | The `bed` adapter throws a descriptive error naming the offending line by 1-based physical line number and the BED column: e.g. `./regions.bed (parsed as BED): line 3: non-numeric start coordinate "abc" (BED column 2).`, `./regions.bed (parsed as BED): line 1: expected at least 3 tab-separated columns (chrom, start, end), got 2.`, or `./regions.bed (parsed as BED): line 1: end (4) is before start (5) (BED columns 2–3).`. Blank lines and `track` / `browser` / `#` comment lines are skipped, not errors; a legal **zero-length** feature (`chromStart == chromEnd`, an insertion point) is kept and rendered as a single-base point (`start == end`) rather than treated as inverted. Handled exactly like the CSV/TSV case above: the loader's per-track `try/catch` logs a `console.warn` and renders **that one track empty** while the rest of the viewer renders normally; it does not (yet) raise the fetch-level ⚠ badge / `protvista-error` surface. |
+| A bring-your-own **CSV/TSV** file has a malformed header or row (a missing/duplicate required column, a non-numeric coordinate, or a ragged row) | The decoder throws a descriptive error naming the author's own file, the reading applied to it, the offending row (by 1-based line number, header = line 1) and — where meaningful — the column: e.g. `./hits.csv (parsed as CSV): row 3, column "start": expected a number, got "abc"`, `./hits.csv (parsed as CSV): missing required header column "end"`, or `./hits.csv (parsed as CSV): row 4 is ragged — expected 4 columns, got 3`. When a missing column is really a delimiter mismatch — a semicolon export from Excel, a tab file read as CSV, a comma file read as TSV — the message gains a one-line hint naming the delimiter the header seems to use and the fix, e.g. `` ./hits.csv (parsed as CSV): missing required header column "type". Header must contain type, start, end, description[, score]. The header looks tab-separated — read it as TSV: set `format: tsv` (or rename the file to .tsv). ``; the reading itself is never switched. The loader's per-track `try/catch` records the throw in `LoadResult.trackFailures` and renders **that one track empty**; the rest of the viewer renders normally. The element routes the failure as a `track-fetch` error (`errorKind: 'adapter'`, no Retry) to the track's ⚠ badge, the `protvista-error` event and the console, using the decoder's message verbatim. |
+| A bring-your-own **JSON** file has a malformed record (not an array, an element that isn't an object, a missing/non-string `type`, a non-numeric `start`/`begin`/`end`, or a present-but-wrong-typed `description`/`score`) | The decoder throws a descriptive error naming the file, the offending 0-based array index and — where meaningful — the field: e.g. `./hits.json (parsed as JSON): record 2, field "start": expected a number, got string`, `./hits.json (parsed as JSON): record 0, field "type": expected a string, got number`, or `./hits.json (parsed as JSON): record 1 is not an object (got string)`. A top-level body that isn't an array throws too: e.g. `./hits.json (parsed as JSON): expected an array of feature records; got object.` Every such throw is routed like the CSV/TSV case above: that one track renders empty and the failure reaches its ⚠ badge, the `protvista-error` event and the console as a `track-fetch` error (`errorKind: 'adapter'`, no Retry). |
+| A bring-your-own **BED** file has a malformed line (fewer than 3 tab-separated columns, a non-numeric coordinate/score, or an inverted `chromEnd < chromStart` interval) | The `bed` adapter throws a descriptive error naming the offending line by 1-based physical line number and the BED column: e.g. `./regions.bed (parsed as BED): line 3: non-numeric start coordinate "abc" (BED column 2).`, `./regions.bed (parsed as BED): line 1: expected at least 3 tab-separated columns (chrom, start, end), got 2.`, or `./regions.bed (parsed as BED): line 1: end (4) is before start (5) (BED columns 2–3).`. Blank lines and `track` / `browser` / `#` comment lines are skipped, not errors; a legal **zero-length** feature (`chromStart == chromEnd`, an insertion point) is kept and rendered as a single-base point (`start == end`) rather than treated as inverted. Handled exactly like the CSV/TSV case above: that one track renders empty while the rest of the viewer renders normally, and the failure is routed as a `track-fetch` error (`errorKind: 'adapter'`) to the ⚠ badge, the `protvista-error` event and the console. |
+| A bring-your-own **CSV/TSV/JSON** feature file carries extra columns — `color`, a `pmid`, or a `tooltipContent` column | Every extra column is kept on the record for `dataTooltip` (a delimited cell as the string it was; `''` when blank). `color` / `shape` / `fill` / `opacity` style that one feature ahead of the track's `rendering:` (left off when blank; a bad `opacity` fails the track). `tooltipContent`, `locations`, `residuesToHighlight` and `Object.prototype` names are dropped, as is a `shape` value that is an `Object.prototype` name (`valueOf`); that, and any `color` / `fill` a browser will not paint (kept), is reported once per track per load as a `protvista-error` with `phase: 'track-data'`, `severity: 'warning'` and issue code `data-field-ignored` / `unpaintable-color`, plus a `[protvista] …` console line. No ⚠ badge and no panel, even under `strict`: the track renders as written. |
 | A `data:` string shorthand is a file path with an **unrecognised extension** (e.g. `./notes.gff`)                                   | Not a known generic format, so it falls through to the sources-key rule: config validation fails with `"Unknown source key: './notes.gff' in track <groupId>/<trackId>. Known sources: ..."`. Use a hosted URL, a supported extension (`.csv` / `.tsv` / `.json` / `.bed`), or the object form with an explicit `format:`.                                                                                                                                                                                    |
 | `kind` (semantic) value is not in the semantic-kind vocabulary and is not registered                                              | Config validation fails: `"Unknown semantic kind: '<value>' in track <groupId>/<trackId>. Valid values: .... Register custom kinds with registerSemanticKind()."`.                                                                                                                                                                                                                                                                                                                      |
 | A track has no `kind`, no `component`, and the parent group has no `component`                                                    | Config validation fails: `"Track <groupId>/<trackId> has no 'kind' or 'component'. Set a semantic 'kind' (e.g. 'features') or provide 'component' explicitly."`.                                                                                                                                                                                                                                                                                                                        |
-| A `dataTooltip` template references a field that does not exist on the adapter's output                                           | That placeholder renders as an empty string. The viewer does not fail.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| A `dataTooltip` template contains `<script>` or other dangerous HTML                                                              | For `kind: fields` and `kind: markdown`: all interpolated data from `{% $field %}` placeholders is HTML-escaped before rendering. Scripts and other raw markup are dropped. URL scheme whitelist: only `http:`, `https:`, and `mailto:` are allowed in anchor `href=` attributes; other schemes (e.g. `javascript:`) collapse to empty `href=""`. Consumer-owned tooltips (`change`-event pattern + `notooltip` on the element) are outside this trust envelope — the consumer is responsible for its own escaping.                                                                                                                                                         |
+| A `dataTooltip` template references a field that does not exist on the adapter's output                                           | That placeholder renders as an empty string (a `fields` row drops out). After the track's data loads, a single summary `console.warn` (`[protvista-uniprot] Track <groupId>/<trackId>: dataTooltip references unknown fields: …`, or `Track <trackId>: …` for a standalone row) lists every field absent from all of the track's records, and a `tooltip-field-miss` `protvista-error` (`severity: 'warning'`) fires. Never per data point; the viewer does not fail. |
+| A `dataTooltip` template contains `<script>` or other dangerous HTML                                                              | For `kind: fields` and `kind: markdown`: all interpolated data from `{% $field %}` placeholders is HTML-escaped before rendering. Scripts and other raw markup are dropped. URL allowlist: absolute `http:`, `https:` and `mailto:` URLs and URLs starting with `/`, `#` or `?` are allowed (a protocol-relative `//host/…` one is an off-site link); `javascript:`, `data:` and bare relative paths are refused. A refused URL in a Markdown link collapses to `href=""`, and `{% link href=$field %}` renders its text with no `<a>`. Consumer-owned tooltips (`change`-event pattern + `notooltip` on the element) are outside this trust envelope — the consumer is responsible for its own escaping.                                                                                                                                                         |
 | `colorScale.theme` references a name that is not built-in or registered                                                           | Config validation fails: `"Unknown colorScale theme: '<name>'. Registered themes: ..."`.                                                                                                                                                                                                                                                                                                                                                                                                |
 | `colorScale` has neither `theme` nor `stops`                                                                                      | Config validation fails: `"colorScale must specify either 'theme' or 'stops' ..."`.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `version` is explicitly set to an unsupported value                                                                               | Validation fails: `"Unsupported config version: '<value>'. Supported: '1.0'."`. Omitting `version` is allowed (defaults to "1.0").                                                                                                                                                                                                                                                                                                                                                      |
@@ -1596,11 +1666,16 @@ The `features` track fetches `https://api.example.org/mouse/v2024.12/features/P0
 | `filter` shortcut is specified but adapter returns no items matching that type                                                    | Track is hidden. Group is hidden if all sibling tracks are also empty.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Config JSON is syntactically invalid                                                                                              | Standard JSON parse error surfaced to the consumer.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Config contains `{accession}` placeholders but no accession was provided via attribute or config                                  | Validation fails: `"Config contains {accession} placeholders but no accession was provided via attribute or config."`                                                                                                                                                                                                                                                                                                                                                                   |
+| Config sets both `accession:` and `sequence:`                                                                                     | Validation fails (`accession-and-sequence`): `"This config sets both 'accession:' and 'sequence:'. Use 'accession:' to show a UniProt entry, or 'sequence:' to show your own protein — not both."` The element's `accession` attribute beside a `sequence:` config fails the same way, with a message naming the host attribute; a later attribute change on a sequence-mode element re-resolves the config and reports it. |
+| A mounted element has neither an accession (attribute or config) nor a `sequence:`                                                | The loader fails with `missing-protein` (`"Nothing to show: set 'accession:' (a UniProt entry) or 'sequence:' (your own protein), or the element's accession attribute."`), replacing any `missing-accession`. The config panel shows it. A bare `validateConfig` accepts the protein-less template. |
+| `sequence:` holds more than one FASTA record, no residues, or a character outside A–Z                                             | Validation (inline) or loading (file) fails with `invalid-sequence`, naming the input — `./x.fasta (parsed as FASTA): contains 2 records; the viewer shows one protein. …` — and, for a bad character, its 1-based residue position. |
+| `sequence:` names a FASTA file that 404s or can't be fetched                                                                      | `cannot-resolve-sequence`: `"Could not load the sequence file './x.fasta': HTTP 404 Not Found."` A config error, so the panel offers no Retry. |
+| A track in a `sequence:` config needs UniProt (an `{accession}` data URL, an AlphaFold / AlphaMissense adapter, an `{accession}` label link) | Validation fails with one `needs-accession` per track: `"Track <path> needs UniProt data: <reason>. With 'sequence:' only file, inline and custom sources work."` When the tracks came through `extends:`, one more issue at `/extends` says to start from a blank config instead. |
 | Both the HTML attribute and the config file specify `accession`                                                                   | The HTML attribute wins. No warning — this is the expected reuse pattern (one config, many entries).                                                                                                                                                                                                                                                                                                                                                                                    |
 | A data URL (`sources` value or descriptor `url:`) uses a `{token}` that `variables:` doesn't define and that isn't `{accession}`    | Validation warning (`missing-variable`), at `/sources/<name>` or the track path: `"Source '<name>' references undefined variable '{<token>}'. Define it in top-level 'variables:' or pass it as a data-<token-in-kebab-case> attribute at runtime."` (`Track '<groupId>/<trackId>' …` for a URL on the track itself). The attribute is named in the kebab case `dataset` maps back to the token, so `{datasetId}` names `data-dataset-id`. The config still loads. The element passes its current `data-*` names to validation, so a token the host supplies is not reported.                                                                         |
 | A data URL's `{token}` resolves against none of `variables:`, `data-*`, or `accession` at fetch time                               | That URL is **not fetched**; a developer `console.warn` names the template, the track, and the missing tokens (`Not fetching '<template>' for track <groupId>/<trackId>: undefined variable(s) {<token>}. …`), once per template. The track renders empty — no ⚠ badge, no `protvista-error` (nothing was fetched, so nothing broke) — and every other track loads normally. Setting the missing `data-*` attribute later re-runs the load.                                                       |
 | A variable's value is exactly `.` or `..`, or contains malformed Unicode (a lone surrogate)                                         | That URL is **not fetched**; a developer `console.warn` names the template, the track, and the token (`Not fetching '<template>' for track <groupId>/<trackId>: invalid value for {<token>} ('.', '..' and malformed Unicode are refused).`), once per template. As with an undefined token, the track renders empty and every other track loads normally. `{accession}` is unaffected: its character gate already turns such a value into `''`. |
-| Both the named `accession` attribute and `data-accession` are set                                                                 | The named attribute wins for `{accession}`. No warning. Changing `data-accession` does not reload. `data-accession` without an accession (named or config `accession:`) mounts nothing: `missing-accession`. The element never lets `data-accession` reach a URL.                                                                                                                                                                                                                                                                                                                                                        |
+| Both the named `accession` attribute and `data-accession` are set                                                                 | The named attribute wins for `{accession}`. No warning. Changing `data-accession` does not reload. `data-accession` without an accession (named or config `accession:`) or a `sequence:` mounts nothing: `missing-protein`, not `missing-accession`. The element never lets `data-accession` reach a URL.                                                                                                                                                                                                                                                                                                                |
 
 ## Design Invariants
 
@@ -1678,6 +1753,7 @@ The grant deliverable (P1 — the config schema) has no external cross-project d
 - [x] Explicit `component` on a track or `adapter` on a data source override the semantic-kind resolution.
 - [x] `filterUI: "nightingale-filter"` attaches the variant filter widget.
 - [x] `dataTooltip` accepts the three authoring forms — shorthand string, `kind: fields`, and `kind: markdown` — and renders correctly for each data point on the track. Markdown is rendered via `@markdoc/markdoc`; `{% $field %}` placeholders reference fields on the adapter's output and are HTML-escaped before substitution.
+- [x] Missing field references in `dataTooltip` render as empty strings and emit one summary warning per track, not per data point (`resolve.spec.ts`, `pipeline.spec.ts`, `error-surface.spec.ts`).
 - [x] YAML configs load and validate equivalently to JSON configs. A round-trip (JSON → YAML → JSON) on the default config is lossless.
 - [x] Adapter names follow the `<source>-<format>` convention. A config author can tell at a glance which adapter is tied to which API. Every remaining adapter is a provider transform; bring-your-own-data files need none.
 - [x] Built-in themes `alphafold-ramp` and `alphamissense-ramp` are defined once, used by default in `alphafold-confidence` / `alphamissense-pathogenicity` semantic kinds, and available to any track via `colorScale.theme`.

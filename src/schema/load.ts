@@ -43,19 +43,54 @@
  * `loadConfig` is `async` because of the YAML lazy-load; for
  * JSON-only inputs, the resolved promise is available on the
  * microtask queue and the cost is negligible.
+ *
+ *
+ * ## Sequence-only mode
+ *
+ * A config that sets `sequence:` instead of `accession:` is resolved here,
+ * the way `extends:` is: between parse and render, with an injectable
+ * fetcher. After the config validates, an inline sequence is parsed and a
+ * file reference is fetched (`sequenceFetcher`, default `globalThis.fetch`
+ * with the 2 MiB ceiling `extends:` uses) and parsed; the result reaches the
+ * renderer as `NormalizedConfig.sequence`. A fetch or parse failure is a
+ * `ConfigValidationError` at `/sequence` (`cannot-resolve-sequence` /
+ * `invalid-sequence`), never a raw `TypeError`.
+ *
+ * The loader also adds the checks only it can make, because only it knows
+ * the caller's accession, whether the config was extended, and whether a
+ * protein is required: a host accession plus `sequence:`
+ * (`accession-and-sequence`), an `extends:` summary when inherited tracks
+ * need UniProt (`needs-accession` at `/extends`), and a viewer with no
+ * protein at all (`missing-protein`, with `requireProtein`). This module
+ * logs nothing and dispatches nothing — every failure is thrown.
  */
 
 import type { ProtvistaViewerConfig } from './types.js';
 import { type Registry, createRegistry } from './registry.js';
-import { validateConfig } from './validate.js';
+import { ACCESSION_OR_SEQUENCE_GUIDANCE, validateConfig } from './validate.js';
+import { isPlainObject } from './shape.js';
 import { normalizeConfig, type NormalizedConfig } from './normalize.js';
-import { ConfigValidationError, type ValidationIssue } from './errors.js';
+import {
+  ConfigValidationError,
+  isError,
+  type ValidationIssue,
+} from './errors.js';
 import { parseConfigText, type ParseFormat } from './parse.js';
 import {
   mergeExtends,
   type ExtendsResolver,
   type ExtendsFetcher,
 } from './extends.js';
+import {
+  isSequenceReference,
+  parseSequenceText,
+  type ResolvedSequence,
+} from './sequence.js';
+import {
+  fetchTextCapped,
+  FetchTextError,
+  MAX_FETCH_TEXT_BYTES,
+} from './fetch-text.js';
 
 // ─────────────────────────────────────────────────────────────
 // Public API
@@ -114,8 +149,39 @@ export interface LoadConfigOptions {
    * accession is left untouched (authors opt in to per-config
    * accessions, and the HTML attribute must not silently override
    * them).
+   *
+   * Passing it for a config that declares `sequence:` is an error
+   * (`accession-and-sequence`): a viewer shows a UniProt entry or your own
+   * protein, never both. It is not injected into such a config.
    */
   accession?: string;
+
+  /**
+   * An accession to fall back on when `accession` is unset: injected like it
+   * into a config that names no protein of its own, but simply ignored —
+   * not an `accession-and-sequence` error — by a config that declares
+   * `sequence:`. `<protvista-uniprot>` passes the accession a previous config
+   * supplied, so a `setConfig()` that names no protein keeps showing it,
+   * while one that brings its own sequence replaces it.
+   */
+  fallbackAccession?: string;
+
+  /**
+   * Fetch implementation for a `sequence:` that names a FASTA file.
+   * Defaults to `globalThis.fetch` with a 2 MiB ceiling, the same as
+   * `extendsFetcher`. Provide a stub in tests or a filesystem-backed
+   * fetcher under Node, where a relative path can't be fetched.
+   */
+  sequenceFetcher?: (url: string) => Promise<string>;
+
+  /**
+   * Require a protein: with neither an accession (this option or the
+   * config's) nor a `sequence:`, fail with `missing-protein` rather than
+   * accepting a protein-less template. `<protvista-uniprot>` sets it, since
+   * a mounted viewer with nothing to show would otherwise render blank.
+   * Editor tooling leaves it off: the default config is such a template.
+   */
+  requireProtein?: boolean;
 
   /**
    * Template variables the mounting code will supply at runtime (for
@@ -202,31 +268,164 @@ export async function loadConfigWithSource(
   // unconditional strip of `extends`) for configs that don't use the
   // feature, so JSON-only adopters pay nothing extra for its
   // presence in the pipeline.
+  // `mergeExtends` strips `extends`, so note now whether the config used it.
+  const extended = isPlainObject(parsed) && parsed.extends !== undefined;
   const merged = await resolveExtends(parsed, opts);
+  const declaresSequence =
+    isPlainObject(merged) && merged.sequence !== undefined;
 
   // Inject the caller-supplied accession *before* validation so the
   // `missing-accession` rule sees it. We only inject when the config
   // doesn't already declare one — otherwise an HTML-attribute
   // accession would silently override an accession the author
   // deliberately hard-coded, which would be more surprising than
-  // helpful.
-  const withAccession = injectAccession(merged, opts.accession);
+  // helpful. Never into a `sequence:` config, where a host accession
+  // is an error of its own (below) rather than a fill-in, and a fallback
+  // one is dropped.
+  const withAccession = declaresSequence
+    ? merged
+    : injectAccession(merged, opts.accession ?? opts.fallbackAccession);
 
   const result = validateConfig(withAccession, registry, {
     runtimeVariables: Object.keys(opts.variables ?? {}),
   });
-  if (!result.valid) {
-    throw new ConfigValidationError(result.issues);
+  const issues = [
+    ...result.issues,
+    ...contextIssues(withAccession, result.issues, opts, extended),
+  ];
+  if (opts.requireProtein && issues.some((i) => i.code === 'missing-protein')) {
+    // One problem, one issue: "no protein" already explains every
+    // unfilled `{accession}`.
+    removeWhere(issues, (i) => i.code === 'missing-accession');
+  }
+  if (!result.valid || issues.some(isError)) {
+    throw new ConfigValidationError(issues);
   }
   // `validateConfig` has proven `withAccession` conforms to the
   // schema, so the cast below is sound. TypeScript's inability to
   // narrow from `ValidationResult` to the config type is expected.
   const authored = withAccession as ProtvistaViewerConfig;
+  // Resolved only now, so a broken config never triggers a request. The
+  // authored config keeps the path, so `getConfig()` still exports it.
+  const sequence =
+    authored.sequence === undefined
+      ? undefined
+      : await resolveSequence(authored.sequence, opts);
   return {
-    config: normalizeConfig(authored, { registry }),
+    config: normalizeConfig(authored, { registry, sequence }),
     authored,
-    issues: result.issues,
+    issues,
   };
+}
+
+/**
+ * The issues only the loader can raise, from what it knows beyond the config
+ * text: the caller's accession, whether `extends:` was used, and whether a
+ * protein is required.
+ */
+function contextIssues(
+  config: unknown,
+  validatorIssues: readonly ValidationIssue[],
+  opts: LoadConfigOptions,
+  extended: boolean
+): ValidationIssue[] {
+  if (!isPlainObject(config)) return [];
+  const out: ValidationIssue[] = [];
+  const hostAccession = opts.accession;
+
+  if (config.sequence !== undefined) {
+    // The config-level form (`accession:` beside `sequence:`) is the
+    // validator's; this is the same conflict arriving from the host.
+    if (hostAccession && config.accession === undefined) {
+      out.push({
+        path: '/',
+        message:
+          `An accession ('${hostAccession}') was supplied by the host (the element's accession attribute), ` +
+          `but this config declares 'sequence:'. ${ACCESSION_OR_SEQUENCE_GUIDANCE} ` +
+          "Remove the attribute, or the 'sequence:'.",
+        code: 'accession-and-sequence',
+      });
+    }
+    const needs = validatorIssues.filter(
+      (i) => i.code === 'needs-accession'
+    ).length;
+    if (extended && needs > 0) {
+      out.push({
+        path: '/extends',
+        message:
+          `${needs} track${needs === 1 ? '' : 's'} inherited through 'extends:' ` +
+          `need${needs === 1 ? 's' : ''} UniProt data. 'sequence:' can't build on the ` +
+          'UniProt default config — start from a blank config instead.',
+        code: 'needs-accession',
+      });
+    }
+  } else if (opts.requireProtein && config.accession === undefined) {
+    out.push({
+      path: '/',
+      message:
+        "Nothing to show: set 'accession:' (a UniProt entry) or 'sequence:' (your own protein), " +
+        "or the element's accession attribute.",
+      code: 'missing-protein',
+    });
+  }
+  return out;
+}
+
+/**
+ * Turn a validated `sequence:` into residues: parse it in place, or fetch the
+ * FASTA file it names and parse that. Every failure is a
+ * `ConfigValidationError` at `/sequence`.
+ */
+async function resolveSequence(
+  value: string,
+  opts: LoadConfigOptions
+): Promise<ResolvedSequence> {
+  const reference = isSequenceReference(value) ? value.trim() : undefined;
+  let text = value;
+  if (reference !== undefined) {
+    const fetcher = opts.sequenceFetcher ?? fetchTextCapped;
+    try {
+      text = await fetcher(reference);
+    } catch (err) {
+      throw new ConfigValidationError([
+        {
+          path: '/sequence',
+          message: `Could not load the sequence file '${reference}': ${describeFetchFailure(err)}.`,
+          code: 'cannot-resolve-sequence',
+        },
+      ]);
+    }
+  }
+  const parsed = parseSequenceText(text, reference);
+  if (!parsed.ok) {
+    throw new ConfigValidationError([
+      { path: '/sequence', message: parsed.message, code: 'invalid-sequence' },
+    ]);
+  }
+  return parsed.value;
+}
+
+/** Why a sequence fetch failed, in a few words. */
+function describeFetchFailure(err: unknown): string {
+  if (err instanceof FetchTextError) {
+    const f = err.failure;
+    switch (f.reason) {
+      case 'http':
+        return `HTTP ${f.status}${f.statusText ? ` ${f.statusText}` : ''}`;
+      case 'too-large':
+        return `the file is ${f.bytes} bytes, over the ${MAX_FETCH_TEXT_BYTES}-byte ceiling`;
+      case 'no-fetch':
+        return 'no fetch implementation is available — pass sequenceFetcher';
+    }
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return message.replace(/\.$/, '');
+}
+
+function removeWhere<T>(items: T[], drop: (item: T) => boolean): void {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (drop(items[i])) items.splice(i, 1);
+  }
 }
 
 /**

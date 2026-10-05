@@ -137,7 +137,8 @@ export function renderFeatureVocabularyMarkdown(
   lines.push(
     '1. A colour or shape carried on the feature record itself. Some built-in kinds ' +
       'set one (InterPro domains get a colour per entry; PTMeXchange peptides are ' +
-      'triangles); records loaded from your own CSV, TSV, JSON or BED files cannot.'
+      'triangles); records from your own CSV, TSV or JSON file can set one with a ' +
+      '`color` / `shape` column (or key); BED files cannot.'
   );
   lines.push(
     "2. The track's `rendering.color` and `rendering.shape`, set on the track or " +

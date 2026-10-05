@@ -243,24 +243,70 @@ describe('initial loading state', () => {
   });
 
   it('does not spin forever for an element with no accession', async () => {
-    // Nothing was asked for, so there is nothing to wait on. `_init()` returns
-    // before `_loadData()` here, and `_loadData()` is the only other place
-    // `loading` is cleared — so the spinner that now covers the whole initial
-    // load would otherwise run forever on a misconfigured element, which reads
-    // as "working on it" rather than "no accession set".
+    // Nothing was asked for, so there is nothing to wait on. A spinner here
+    // would read as "working on it" rather than "no protein set". Nor is the
+    // element left blank, which says nothing at all: the loader rejects a
+    // mount with neither an accession nor a `sequence:` (`missing-protein`),
+    // and the config panel says so — what the troubleshooting page's "Nothing
+    // renders at all" now tells the reader to expect.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     stubHungFetch();
     const el = mountEl({
       viewerConfig: VALID_CONFIG,
       // no `accession`
     });
 
-    await settle(el);
+    await vi.waitFor(() => {
+      if (!el.querySelector(PANEL)) throw new Error('panel not ready');
+    });
 
     expect(el.querySelector(LOADER)).toBeNull();
     expect(el.querySelector('nightingale-manager')).toBeNull();
-    // Blank, which is what the troubleshooting page tells the reader a missing
-    // `accession` looks like. A spinner would contradict it.
-    expect(el.textContent?.trim()).toBe('');
+    expect(el.querySelector(PANEL)?.textContent).toContain(
+      'Config validation failed (1 issue)'
+    );
+  });
+
+  it('sequence mode never waits on a sequence fetch', async () => {
+    // The sequence is in the config, so the spinner covers only the track
+    // data — and no Proteins API URL is ever requested.
+    let releaseTrack!: () => void;
+    const fetchFn = vi.fn(async (url: string) => {
+      await new Promise<void>((resolve) => (releaseTrack = resolve));
+      expect(url).toBe('./y.csv');
+      return {
+        ok: true,
+        status: 200,
+        text: async () => 'type,start,end\nDOMAIN,1,5\n',
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchFn);
+    const el = mountEl({
+      viewerConfig: {
+        sequence: 'MSEQENCEKR',
+        rows: [
+          { id: 'g', tracks: [{ id: 'y', kind: 'features', data: './y.csv' }] },
+        ],
+      },
+    });
+
+    await vi.waitFor(() => {
+      if (fetchFn.mock.calls.length === 0)
+        throw new Error('no track fetch yet');
+    });
+    await settle(el);
+    // The sequence is already known, but the track is still on the wire.
+    expect(el.sequence).toBe('MSEQENCEKR');
+    expect(el.querySelector(LOADER)).not.toBeNull();
+
+    releaseTrack();
+    await vi.waitFor(() => {
+      if (!el.querySelector('nightingale-manager')) {
+        throw new Error('viewer not ready');
+      }
+    });
+    expect(el.querySelector(LOADER)).toBeNull();
+    expect(fetchFn.mock.calls.map(([url]) => String(url))).toEqual(['./y.csv']);
   });
 
   it('renders nothing while suspended, spinner included', async () => {

@@ -43,10 +43,13 @@ import type {
 /** One documented field of a generic bring-your-own-data payload. */
 export interface FieldDoc {
   name: string;
-  type: 'string' | 'number';
+  type: 'string' | 'number' | 'integer';
   /** Required in the emitted feature record (the shape the track renders). */
   required: boolean;
   notes?: string;
+  /** Inclusive numeric bounds the decoders enforce, emitted into the schema. */
+  minimum?: number;
+  maximum?: number;
 }
 
 
@@ -85,9 +88,12 @@ export type AdapterDoc = DomainAdapterDoc;
 export type KindAdapterDoc = DomainAdapterDoc;
 
 /**
- * The canonical output shape shared by the generic feature adapters —
- * the `FeatureRecord` in `./dsv`. Reused for the CSV/TSV/JSON field tables
- * and as the source for the generated `feature-record.schema.json` fragment.
+ * The documented fields of a feature record — the canonical `FeatureRecord`
+ * in `./dsv`, plus the four per-feature render fields CSV/TSV/JSON files may
+ * carry (`AuthoredFeatureRecord`). Reused for the feature field table (shared
+ * by every feature format, BED included, hence the "CSV/TSV/JSON only"
+ * notes) and as the source for the generated `feature-record.schema.json`
+ * fragment.
  */
 export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
   {
@@ -99,15 +105,15 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
   },
   {
     name: 'start',
-    type: 'number',
+    type: 'integer',
     required: true,
     notes: '1-based start position (inclusive).',
   },
   {
     name: 'end',
-    type: 'number',
+    type: 'integer',
     required: true,
-    notes: '1-based end position (inclusive).',
+    notes: '1-based end position (inclusive). Must not be less than `start`.',
   },
   {
     name: 'description',
@@ -120,6 +126,36 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
     type: 'number',
     required: false,
     notes: 'Optional numeric score. Omitted when empty.',
+  },
+  {
+    name: 'color',
+    type: 'string',
+    required: false,
+    notes:
+      "Per-feature colour (any CSS colour) for the outline, and the fill unless `fill` is set; wins over the track's `rendering.color`. CSV/TSV/JSON only — BED never sets it. Omitted when empty.",
+  },
+  {
+    name: 'shape',
+    type: 'string',
+    required: false,
+    notes:
+      "Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty, and dropped with a warning when it names an Object.prototype property (`valueOf`, `constructor`, …).",
+  },
+  {
+    name: 'fill',
+    type: 'string',
+    required: false,
+    notes:
+      'Per-feature fill colour; defaults to `color`. CSV/TSV/JSON only. Omitted when empty.',
+  },
+  {
+    name: 'opacity',
+    type: 'number',
+    required: false,
+    minimum: 0,
+    maximum: 1,
+    notes:
+      'Per-feature opacity, from 0 to 1 (the canvas default is 0.9). CSV/TSV/JSON only. Omitted when empty; any other value is an error.',
   },
 ];
 

@@ -2999,6 +2999,8 @@ exports[`loadProtvistaData baseline (schema-driven default config) > produces a 
     },
   },
   "skipWarnings": [],
+  "tooltipFieldMisses": [],
+  "trackCoordinates": {},
   "trackFailures": {},
   "trackUrls": {
     "ALPHAFOLD_CONFIDENCE-alphafold_confidence": [
@@ -3155,6 +3157,7 @@ exports[`loadProtvistaData baseline (schema-driven default config) > produces a 
       "https://www.ebi.ac.uk/proteins/api/variation/P05067",
     ],
   },
+  "trackWarnings": {},
 }
 `;
 

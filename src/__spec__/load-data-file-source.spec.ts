@@ -10,6 +10,9 @@
  *     the delimited body reaches the decoder as raw text, not parsed
  *     JSON), while ordinary API tracks still fetch as `'json'`;
  *   • the decoded feature records land on the track's data slot.
+ *
+ * It also pins the failure path: a malformed JSON file renders empty with a
+ * file/record-named track failure.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -234,5 +237,57 @@ describe('loadProtvistaData — from: file (features-json)', () => {
     const fetchOne = vi.fn(async () => []);
     const result = await loadProtvistaData('P05067', config, fetchOne, resolveAdapter);
     expect(result.hasData).toBe(false);
+  });
+
+  it('renders a JSON file with an inverted interval empty, naming the file and record', async () => {
+    const config = await loadConfig({
+      rows: [
+        {
+          id: 'MY',
+          tracks: [{ id: 'hits', kind: 'features', data: './features.json' }],
+        },
+      ],
+    });
+    const fetchOne = vi.fn(async () => [{ type: 'DOMAIN', start: 5, end: 4 }]);
+    const result = await loadProtvistaData(
+      'P05067',
+      config,
+      fetchOne,
+      resolveAdapter
+    );
+    expect(result.data['MY-hits']).toBeUndefined();
+    expect(result.trackFailures['MY-hits'].message).toBe(
+      './features.json (parsed as JSON): record 0: end (4) is before start (5).'
+    );
+  });
+});
+
+describe('loadProtvistaData — from: file (delimiter mismatch)', () => {
+  it('renders a tab file named .csv empty, naming the delimiter and the fix', async () => {
+    const config = await loadConfig({
+      rows: [
+        {
+          id: 'MY',
+          tracks: [{ id: 'hits', kind: 'features', data: './hits.csv' }],
+        },
+      ],
+    });
+    const fetchOne = vi.fn(
+      async () => 'type\tstart\tend\tdescription\nDOMAIN\t5\t9000\tKinase\n'
+    );
+    const result = await loadProtvistaData(
+      'P05067',
+      config,
+      fetchOne,
+      resolveAdapter
+    );
+    expect(result.data['MY-hits']).toBeUndefined();
+    // The header fails before any row is decoded, so no coordinates are
+    // collected for the bounds check either.
+    expect(result.trackCoordinates['MY-hits']).toBeUndefined();
+    const { message } = result.trackFailures['MY-hits'];
+    expect(message).toContain('./hits.csv (parsed as CSV)');
+    expect(message).toContain('tab-separated');
+    expect(message).toContain('`format: tsv`');
   });
 });

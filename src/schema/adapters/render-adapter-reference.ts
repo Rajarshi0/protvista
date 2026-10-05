@@ -17,6 +17,7 @@ import {
   type KindAdapterDoc,
   type FieldDoc,
 } from './adapter-reference.js';
+import { FEATURE_VIEWER_FIELDS } from './feature-fields.js';
 import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../file-formats.js';
 import { SHAPES, SHAPE_NAMES } from '../shapes.js';
 import { createRegistry } from '../registry.js';
@@ -60,7 +61,7 @@ const SHAPE_FIELDS: Record<ShapeName, readonly FieldDoc[]> = {
   point: [
     {
       name: 'position',
-      type: 'number',
+      type: 'integer',
       required: true,
       notes: '1-based residue position.',
     },
@@ -74,7 +75,7 @@ const SHAPE_FIELDS: Record<ShapeName, readonly FieldDoc[]> = {
   variation: [
     {
       name: 'position',
-      type: 'number',
+      type: 'integer',
       required: true,
       notes: '1-based position of the changed residue.',
     },
@@ -139,6 +140,17 @@ function shapeSection(shape: ShapeName): string {
   );
   parts.push('');
   parts.push(fieldTable(SHAPE_FIELDS[shape]));
+  if (shape === 'feature') {
+    parts.push('');
+    parts.push(
+      'Any other column of a CSV/TSV file, or key of a JSON record, is kept ' +
+        'on the record as written, so a `dataTooltip` can show it. ' +
+        `${FEATURE_VIEWER_FIELDS.map((f) => `\`${f}\``).join(', ')} and names ` +
+        'JavaScript reserves (`__proto__`, `toString`, …) are dropped with a ' +
+        '`track-data` warning. BED records carry only the fields above that ' +
+        'BED can express — never the render fields.'
+    );
+  }
   return parts.join('\n');
 }
 
@@ -296,11 +308,13 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
   for (const f of FEATURE_RECORD_FIELDS) {
     const prop: Record<string, unknown> = { type: f.type };
     if (f.notes) prop.description = f.notes;
+    if (f.minimum !== undefined) prop.minimum = f.minimum;
+    if (f.maximum !== undefined) prop.maximum = f.maximum;
     if (f.name === 'start') {
       prop.description =
         '1-based start position (inclusive).';
       prop.$comment =
-        'features-json also accepts `begin` as an alias for `start`; `start` wins when both are present.';
+        'JSON sources also accept `begin` as an alias for `start`; `start` wins when both are present.';
     }
     properties[f.name] = prop;
   }
@@ -309,7 +323,10 @@ export function renderFeatureRecordSchema(): Record<string, unknown> {
     $id: FEATURE_RECORD_SCHEMA_ID,
     title: 'ProtVista feature record',
     description:
-      'The canonical payload the generic bring-your-own-data adapters (features-csv, features-tsv, features-json, bed) emit and the feature tracks consume. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
+      'The feature record your own CSV, TSV, JSON or BED file decodes to, and the feature tracks consume. ' +
+      'CSV/TSV/JSON records keep every extra column or key (for dataTooltip) except ' +
+      `${FEATURE_VIEWER_FIELDS.join(', ')} and Object.prototype names; ` +
+      'BED records carry only the canonical fields. Generic format only — domain-adapter (EBI API) payloads are not schematised. See docs/adapter-reference.md.',
     type: 'object',
     required: FEATURE_RECORD_FIELDS.filter((f) => f.required).map((f) => f.name),
     additionalProperties: true,

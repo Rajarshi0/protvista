@@ -2,9 +2,12 @@
 #
 # `accession:` is the UniProt entry the viewer is built around. The
 # component fetches that protein's sequence before it draws anything,
-# so this field is required even when every track is a local file —
-# which also means the page needs internet access even for your own
-# offline data.
+# so, unless you use `sequence:` instead (see below), this field is
+# required even when every track is a local file — which also means the
+# page needs internet access even for your own offline data. For a
+# protein that isn't in UniProt, replace it with `sequence:` (a FASTA
+# file such as ./data/my-protein.fasta, or the residues themselves):
+# the viewer then makes no request of its own.
 #
 # `rows:` is what to draw. Each entry is either a group of tracks or,
 # as here, a single standalone track: an entry with `data:` and no

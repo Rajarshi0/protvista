@@ -16,11 +16,41 @@
  * which is redundant but harmless (ESM evaluates the module once).
  */
 import '../protvista-uniprot.js';
-import type { ValidationIssue } from '../schema/index.js';
+import { parseConfigText } from '../schema/parse.js';
 import { createEditor, type PlaygroundEditor } from './editor.js';
 import { createDiagnosticsView } from './diagnostics-view.js';
-import { computeDiagnostics, type PlaygroundDiagnostic } from './lint.js';
+import { lintConfig, memoizedExtendsFetcher, type LintResult } from './lint.js';
 import { initSplitter } from './splitter.js';
+import {
+  KIND_FOR_SHAPE,
+  basename,
+  createLocalFileStore,
+  findLocalReferences,
+  guessShape,
+  inferFormat,
+  isPreflightDuplicate,
+  localDataDiagnostics,
+  referenceFor,
+  relabelRuntime,
+  sanitizeName,
+  sniffFormat,
+  withLocalFiles,
+  type LocalDataResult,
+  type LocalFile,
+  type RuntimeDetail,
+} from './local-files.js';
+import {
+  appendTrack,
+  attachToTrack,
+  listTargetTracks,
+  rowIdFor,
+  rowLabelFor,
+  type DataValue,
+  type EditResult,
+} from './config-edit.js';
+import { createLocalDataControl, type ReadFile } from './local-data-control.js';
+import { DATA_FORMATS, DATA_FORMAT_NAMES } from '../schema/file-formats.js';
+import type { DataFormat } from '../schema/types.js';
 import {
   PRESETS,
   DEV_PRESETS,
@@ -41,7 +71,7 @@ const DEBOUNCE_MS = 400;
 
 /** Minimal structural view of the preview element's writable inputs. */
 type PreviewElement = HTMLElement & {
-  viewerConfig?: string;
+  viewerConfig?: string | object;
   accession?: string;
 };
 
@@ -61,6 +91,33 @@ const previewStale = $<HTMLElement>('preview-stale');
 const editorHost = $<HTMLElement>('editor');
 const presetDesc = $<HTMLElement>('preset-desc');
 
+/**
+ * Says why the accession input is disabled while the config declares
+ * `sequence:`. Built here rather than in the page markup so every page that
+ * hosts the controller gets it; linked to the input by `aria-describedby`
+ * only while it applies.
+ */
+const accessionHint = document.createElement('span');
+accessionHint.id = 'accession-hint';
+accessionHint.className = 'accession-hint';
+accessionHint.hidden = true;
+accessionHint.textContent = 'Not used: this config sets sequence:';
+accessionInput.insertAdjacentElement('afterend', accessionHint);
+
+/**
+ * Disable the accession input for a `sequence:` config, which shows its own
+ * protein: an accession is not used there, and passing one is an error.
+ */
+function syncAccessionInput(declaresSequence: boolean): void {
+  accessionInput.disabled = declaresSequence;
+  accessionHint.hidden = !declaresSequence;
+  if (declaresSequence) {
+    accessionInput.setAttribute('aria-describedby', accessionHint.id);
+  } else {
+    accessionInput.removeAttribute('aria-describedby');
+  }
+}
+
 /** Id of the preset currently loaded; used to keep shared links short. */
 let activePresetId = DEFAULT_PRESET_ID;
 // Declared here so the pipeline functions below can reference it; assigned
@@ -71,7 +128,23 @@ let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 /** Monotonic stamp so a slow async run can't apply over a newer one. */
 let updateSeq = 0;
 /** Snapshot of what the preview currently shows, to detect staleness. */
-let lastRendered: { text: string; accession: string } | null = null;
+let lastRendered: { text: string; accession: string; files: number } | null =
+  null;
+/**
+ * What the mounted preview was rendered with, for reading its events: the
+ * track keys whose loaded file the pre-flight failed to decode (the
+ * preview's own report of the same failure is skipped), and the files it was
+ * handed (their `blob:` URLs are put back to `./name`). Captured at mount, so
+ * live validation of later edits cannot change how the preview's events,
+ * which arrive asynchronously, are read.
+ */
+let mounted: {
+  preflightFailed: ReadonlySet<string>;
+  files: readonly LocalFile[];
+} = { preflightFailed: new Set(), files: [] };
+
+/** Files the user loaded — read in this browser, never uploaded. */
+const store = createLocalFileStore();
 
 // ── Preset picker ─────────────────────────────────────────────
 // The dev playground (`/protvista/playground?dev`) surfaces an extra "Edge cases"
@@ -120,16 +193,34 @@ presetSelect.append(customOption);
 const diagnosticsView = createDiagnosticsView(errorSummary, errorList);
 
 // ── Live preview ──────────────────────────────────────────────
-function renderPreview(configText: string, accession: string): void {
+function renderPreview(
+  configText: string,
+  accession: string | undefined,
+  parsed?: unknown,
+  local?: LocalDataResult
+): void {
   previewHost.textContent = '';
+  mounted = {
+    preflightFailed: local?.preflightFailed ?? new Set(),
+    files: store.list(),
+  };
   const element = document.createElement('protvista-uniprot') as PreviewElement;
   // Property set (not attribute) before connection so the mount-time
   // pipeline parses the raw YAML/JSON string directly. `setConfig()` would
   // also work now that it re-inits properly, but a fresh element per Run is
   // what a playground wants: it clears any error panel, tooltip, or
   // structure-viewer state left over from the previous config.
-  element.viewerConfig = configText;
-  element.setAttribute('accession', accession);
+  //
+  // With files loaded, the parsed config goes in instead, its references to
+  // them pointed at their `blob:` URLs — the editor text (and so the share
+  // link) keeps naming `./hits.csv`.
+  element.viewerConfig =
+    parsed !== undefined && store.list().length > 0
+      ? (withLocalFiles(parsed, store) as object)
+      : configText;
+  // No accession for a `sequence:` config: it shows its own protein, and an
+  // accession beside it is an error.
+  if (accession) element.setAttribute('accession', accession);
   previewHost.append(element);
 }
 
@@ -137,14 +228,13 @@ function renderPreview(configText: string, accession: string): void {
 // `protvista-error` with detail
 // `{ phase, severity, message, source, issues, context }` (see `_report` in
 // protvista-uniprot.ts). Surface them alongside config diagnostics — they can
-// arrive after a config that itself validated cleanly.
+// arrive after a config that itself validated cleanly. For a loaded file, the
+// event names the `blob:` URL the preview fetched: put the file's `./name`
+// back, and skip a decode failure the pre-flight has already listed.
 previewHost.addEventListener('protvista-error', (event) => {
-  const { detail } = event as CustomEvent<{
-    phase?: string;
-    severity?: 'error' | 'warning' | 'info';
-    message?: string;
-    issues?: ValidationIssue[];
-  }>;
+  const raw = (event as CustomEvent<RuntimeDetail>).detail;
+  if (isPreflightDuplicate(raw, mounted.preflightFailed)) return;
+  const detail = relabelRuntime(raw, mounted.files);
   diagnosticsView.appendRuntime(
     detail?.issues,
     detail?.phase,
@@ -181,29 +271,60 @@ function syncPicker(text: string): void {
   presetDesc.textContent = pristine ? (preset?.description ?? '') : '';
 }
 
+/** Each `extends:` base is fetched once per page, not on every lint. */
+const extendsFetcher = memoizedExtendsFetcher();
+
 async function computeSafe(
   text: string,
   accession: string
-): Promise<PlaygroundDiagnostic[]> {
+): Promise<LintResult> {
   try {
-    return await computeDiagnostics(text, accession);
+    return await lintConfig(text, accession, { extendsFetcher });
   } catch (error) {
     // Validation is not supposed to throw, but never let an unexpected
     // failure silently freeze the pipeline — surface it as an error.
-    return [
-      {
-        from: 0,
-        to: 0,
-        severity: 'error',
-        code: 'internal',
-        message: `Internal validation error: ${(error as Error).message}`,
-      },
-    ];
+    return {
+      diagnostics: [
+        {
+          from: 0,
+          to: 0,
+          severity: 'error',
+          code: 'internal',
+          message: `Internal validation error: ${(error as Error).message}`,
+        },
+      ],
+      declaresSequence: false,
+    };
   }
 }
 
 /** The validated snapshot, or `null` when a newer run superseded this one. */
-type ValidateResult = { text: string; accession: string; valid: boolean } | null;
+type ValidateResult = {
+  text: string;
+  accession: string;
+  valid: boolean;
+  /** The parsed config, when local files made parsing it worthwhile. */
+  parsed?: unknown;
+  /** The config sets `sequence:`, so the preview gets no accession. */
+  declaresSequence: boolean;
+  /** `store.version` at validation time. */
+  files: number;
+  /** The pre-flight of the loaded files, when it ran. */
+  local?: LocalDataResult;
+} | null;
+
+/** A data-file extension (from the format table) or a `format:` anywhere. */
+const LOCAL_FILE_HINT = new RegExp(
+  `\\.(?:${DATA_FORMAT_NAMES.map((n) => DATA_FORMATS[n].ext.slice(1)).join('|')})\\b|\\bformat:`,
+  'i'
+);
+
+/**
+ * Whether the text could name a local data file. A cheap test, so the
+ * default config is not pre-flighted on every keystroke when nothing is
+ * loaded.
+ */
+const mayNameLocalFile = (text: string): boolean => LOCAL_FILE_HINT.test(text);
 
 /**
  * Shared validation step for both pipeline entry points: cancel any
@@ -222,13 +343,37 @@ async function validateCurrent(): Promise<ValidateResult> {
   const accession = accessionValue();
   syncPicker(text);
 
-  const diagnostics = await computeSafe(text, accession);
+  const files = store.version;
+  const lint = await computeSafe(text, accession);
+  const { diagnostics: configDiagnostics, declaresSequence } = lint;
   if (seq !== updateSeq) return null;
+  syncAccessionInput(declaresSequence);
+  // Only the config's own errors hold the preview back. A data problem in a
+  // loaded file renders that track empty, as a hosted viewer would.
+  const valid = !configDiagnostics.some((d) => d.severity === 'error');
 
+  // The config the lint parsed, not a second parse of the same text.
+  let parsed: unknown;
+  let local: LocalDataResult | undefined;
+  if (
+    valid &&
+    lint.parsed !== undefined &&
+    (store.list().length > 0 || mayNameLocalFile(text))
+  ) {
+    parsed = lint.parsed;
+    try {
+      local = await localDataDiagnostics(text, parsed, store);
+    } catch {
+      // A throw here leaves the data unchecked.
+    }
+    if (seq !== updateSeq) return null;
+  }
+
+  const diagnostics = [...configDiagnostics, ...(local?.diagnostics ?? [])];
   editor.setDiagnostics(diagnostics);
-  const valid = diagnosticsView.showConfig(diagnostics);
+  diagnosticsView.showConfig(diagnostics);
   writeHash(currentState());
-  return { text, accession, valid };
+  return { text, accession, valid, parsed, declaresSequence, files, local };
 }
 
 /**
@@ -242,7 +387,8 @@ async function refreshDiagnostics(): Promise<void> {
   setStale(
     !lastRendered ||
       result.text !== lastRendered.text ||
-      result.accession !== lastRendered.accession
+      result.accession !== lastRendered.accession ||
+      result.files !== lastRendered.files
   );
 }
 
@@ -250,17 +396,27 @@ async function refreshDiagnostics(): Promise<void> {
  * Explicit "Run": validate, then (re)mount the preview when the config is
  * valid. This is the ONLY path that mounts `<protvista-uniprot>`.
  */
-async function run(): Promise<void> {
+async function run(): Promise<ValidateResult> {
   const result = await validateCurrent();
-  if (!result) return;
+  if (!result) return null;
   if (result.valid) {
-    renderPreview(result.text, result.accession);
-    lastRendered = { text: result.text, accession: result.accession };
+    renderPreview(
+      result.text,
+      result.declaresSequence ? undefined : result.accession,
+      result.parsed,
+      result.local
+    );
+    lastRendered = {
+      text: result.text,
+      accession: result.accession,
+      files: result.files,
+    };
     setStale(false);
   } else {
     // Keep the last valid preview mounted but flagged out of date.
     setStale(true);
   }
+  return result;
 }
 
 function scheduleRefresh(): void {
@@ -285,6 +441,16 @@ document.addEventListener(
   true
 );
 
+/**
+ * A new preset or accession starts over: the status line's word on the last
+ * file loaded (and any snippet to paste) is about what came before. The
+ * loaded files stay, listed, for the new config to name.
+ */
+function clearDataStatus(): void {
+  control.setStatus('');
+  control.setSnippet('');
+}
+
 // Selecting a preset is a deliberate "show me this" → render once.
 presetSelect.addEventListener('change', () => {
   const preset = getPreset(presetSelect.value);
@@ -292,11 +458,224 @@ presetSelect.addEventListener('change', () => {
   activePresetId = preset.id;
   accessionInput.value = preset.accession;
   editor.setText(preset.config);
+  clearDataStatus();
   void run();
 });
 
 // Accession changes fire once on blur/enter → render once.
-accessionInput.addEventListener('change', () => void run());
+accessionInput.addEventListener('change', () => {
+  clearDataStatus();
+  void run();
+});
+
+// ── Local data files ──────────────────────────────────────────
+// A picked or dropped file is read in this browser and never uploaded. The
+// config names it as a hosted config would (`data: ./hits.csv`); the preview
+// is pointed at a `blob:` copy at render time (see `renderPreview`).
+const control = createLocalDataControl({
+  button: $<HTMLButtonElement>('load-data'),
+  input: $<HTMLInputElement>('data-file'),
+  panel: $<HTMLElement>('data-attach'),
+  status: $<HTMLElement>('data-status'),
+  snippet: $<HTMLElement>('data-snippet'),
+  list: $<HTMLElement>('data-files'),
+  dropTarget: $<HTMLElement>('config-pane'),
+  overlay: $<HTMLElement>('drop-overlay'),
+  onFile: loadFile,
+  onRemove(ref) {
+    const name = store.get(ref)?.name ?? ref;
+    store.remove(ref);
+    control.showFiles(store.list());
+    control.setStatus(`Removed ${name}.`);
+    void refreshDiagnostics();
+  },
+});
+
+async function parseEditor(): Promise<unknown> {
+  try {
+    return await parseConfigText(editor.getText());
+  } catch {
+    return undefined;
+  }
+}
+
+function registerFile(file: ReadFile, ref: string, format: DataFormat): void {
+  store.register({
+    ref,
+    name: file.name,
+    size: file.size,
+    format,
+    text: file.text,
+  });
+  control.showFiles(store.list());
+}
+
+/** Render with the file in place, then say how it went. */
+async function runWithFile(
+  file: ReadFile,
+  ref: string,
+  note: string
+): Promise<void> {
+  const result = await run();
+  const as = ref === `./${file.name}` ? '' : ` as ${ref}`;
+  let outcome: string;
+  if (!result) {
+    // A newer validation (an edit made meanwhile) superseded this run, and
+    // the preview was not re-rendered.
+    outcome = 'Press Run to see it in the preview.';
+  } else if (!result.valid) {
+    outcome = 'Fix the config problems listed below, then press Run.';
+  } else if (result.local?.failedRefs.has(ref)) {
+    outcome = "It couldn't be read — see the problem listed below.";
+  } else {
+    const count = result.local?.counts.get(ref);
+    const how = 'read in your browser, never uploaded.';
+    outcome =
+      count === undefined
+        ? `It was ${how}`
+        : `${count} record${count === 1 ? '' : 's'} — ${how}`;
+  }
+  control.setStatus(`${note}Loaded ${file.name}${as}. ${outcome}`);
+}
+
+/**
+ * A file was read. When the config already names it — by the reference it
+ * would get, or by a path with its name (`./data/hits.csv`, as in a pasted
+ * Starter Kit config) — it answers to that reference and the preview runs
+ * with no edit. Otherwise the attach form asks where it goes.
+ */
+async function loadFile(file: ReadFile, skipped: number): Promise<void> {
+  control.setSnippet('');
+  const note =
+    skipped > 0 ? `Load one file at a time — loaded ${file.name} only. ` : '';
+  const names = new Set([file.name, sanitizeName(file.name)]);
+  // A reference already registered to a *different* file (`a(b.csv` under
+  // `./a-b.csv`, now loading `a b.csv`) is that file's: the new one goes
+  // through the form and gets a reference of its own. One registered to this
+  // file is its own, whatever its name says (`a b.csv` under `./a-b-2.csv`),
+  // so a reload replaces it in place.
+  const answers = (value: string | undefined): value is string => {
+    if (value === undefined) return false;
+    const owner = store.get(value)?.name;
+    return owner === undefined
+      ? names.has(basename(value))
+      : owner === file.name;
+  };
+  // A tab-separated export saved as `.csv` is offered as `tsv`, so the new
+  // track reads it the way its header is written.
+  const byName = inferFormat(file.name);
+  const inferred = sniffFormat(file.text, byName);
+
+  const parsed = await parseEditor();
+  const matching = findLocalReferences(parsed).filter((r) => answers(r.value));
+  const distinct = [...new Set(matching.map((r) => r.value))];
+  if (distinct.length === 1) {
+    const [ref] = distinct;
+    const format = matching[0].format ?? inferFormat(ref) ?? inferred;
+    if (format) {
+      registerFile(file, ref, format);
+      await runWithFile(file, ref, note);
+      return;
+    }
+  }
+
+  const targets = listTargetTracks(parsed);
+  const choice = await control.ask({
+    file,
+    inferred,
+    ...(inferred !== byName && inferred !== undefined
+      ? {
+          reason:
+            `Its header looks ${inferred === 'tsv' ? 'tab' : 'comma'}-separated, ` +
+            `so it is read as ${inferred}.`,
+        }
+      : {}),
+    options: targets.map((t) => ({ value: t.path, label: t.label })),
+    selected: targets.find((t) => answers(t.ref))?.path,
+  });
+  if (!choice) {
+    control.setStatus(`${note}${file.name} was not loaded.`);
+    return;
+  }
+
+  // The text may have changed while the form was open.
+  const text = editor.getText();
+  const current = await parseEditor();
+  const target = choice.target
+    ? listTargetTracks(current).find((t) => t.path === choice.target)
+    : undefined;
+  if (choice.target && !target) {
+    control.setStatus(
+      `${note}Track ${choice.target} is no longer in the config — ` +
+        `${file.name} was not loaded.`
+    );
+    return;
+  }
+  // The chosen track already names a path with this file's name: answer it.
+  // When the format chosen is not the one the config reads it with, say so
+  // in the config, so the share link (and a hosted viewer) reads it the same.
+  if (target && answers(target.ref)) {
+    const ref = target.ref;
+    const stated = findLocalReferences(current).find(
+      (r) => r.trackPath === target.path
+    );
+    const reads = stated?.format ?? inferFormat(ref);
+    const edit =
+      stated?.adapter === undefined && reads !== choice.format
+        ? await attachToTrack(text, current, target, {
+            url: ref,
+            format: choice.format,
+          })
+        : undefined;
+    await finishLoad(file, ref, choice.format, edit, note);
+    return;
+  }
+
+  const ref = referenceFor(
+    file.name,
+    new Map(store.list().map((f) => [f.ref, f.name]))
+  );
+  // The shorthand when the extension says the format; otherwise `format:`.
+  const value: DataValue =
+    inferFormat(ref) === choice.format
+      ? ref
+      : { url: ref, format: choice.format };
+  const edit: EditResult = target
+    ? await attachToTrack(text, current, target, value)
+    : await appendTrack(text, current, {
+        id: rowIdFor(file.name, current),
+        label: rowLabelFor(file.name),
+        // A format that declares its records (BED) gets that shape.
+        kind: KIND_FOR_SHAPE[guessShape(file.text, choice.format)],
+        data: value,
+      });
+  await finishLoad(file, ref, choice.format, edit, note);
+}
+
+/**
+ * Register the file under `ref`, apply the config edit (if any), and run. An
+ * edit that could not be made leaves the file loaded and shows the snippet
+ * to paste.
+ */
+async function finishLoad(
+  file: ReadFile,
+  ref: string,
+  format: DataFormat,
+  edit: EditResult | undefined,
+  note: string
+): Promise<void> {
+  registerFile(file, ref, format);
+  if (edit !== undefined) {
+    if ('error' in edit) {
+      control.setStatus(`${note}Loaded ${file.name} as ${ref}. ${edit.error}`);
+      control.setSnippet(edit.snippet);
+      void refreshDiagnostics();
+      return;
+    }
+    editor.setText(edit.text);
+  }
+  await runWithFile(file, ref, note);
+}
 
 // Theming is now a config concern — set `theme.labelColor` in the config
 // (the component applies it as a --protvista-* token). No separate control.

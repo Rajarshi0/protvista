@@ -4,7 +4,7 @@ title: Authoring dataTooltip
 
 `dataTooltip` controls the per-datapoint tooltip shown when a user clicks a feature on a track. It has three authoring forms, listed here from least to most expressive. Pick the simplest one that works — the rendering pipeline is the same for all three.
 
-All three forms run through the same renderer: every field value is HTML-escaped at the leaf, link `href`s are routed through a scheme allowlist (`http:`, `https:`, `mailto:`, and relative URL forms; `javascript:` and `data:` are dropped), and rich / interactive tooltips are not a config concern. If you need a custom React panel, evidence badges, taxonomy lookups, or any other stateful UI, listen for the Nightingale `change` event on the element and mount your own overlay, setting the `notooltip` attribute on `<protvista-uniprot>` to suppress the built-in popover.
+All three forms run through the same renderer: every field value is HTML-escaped at the leaf, link `href`s are routed through a scheme allowlist (`http:`, `https:`, `mailto:`, and values starting with `/`, `#` or `?` (a protocol-relative `//host/…` one links to that host); `javascript:`, `data:` and bare relative paths are dropped), and rich / interactive tooltips are not a config concern. If you need a custom React panel, evidence badges, taxonomy lookups, or any other stateful UI, listen for the Nightingale `change` event on the element and mount your own overlay, setting the `notooltip` attribute on `<protvista-uniprot>` to suppress the built-in popover.
 
 When a track has no `dataTooltip` at all, the resolver falls back to a per-kind default if one exists, and otherwise synthesizes a compact Markdoc tooltip from adapted payload fields such as `type`, `description`, position, variant details, significance, score, xrefs, evidences, and remaining scalar fields. Configs that don't author a tooltip therefore still get a useful safety-net tooltip out of the box.
 
@@ -62,6 +62,46 @@ tracks:
         **Position:** {% $begin %}–{% $end %}
         {% if $score %}**Score:** {% $score %}{% /if %}
 ```
+
+## Links from a field
+
+Markdoc cannot put a variable into an ordinary link's destination, so a field that holds a URL — a `url` column in your own file, say — becomes a link with the `{% link %}` tag:
+
+```yaml
+dataTooltip:
+  kind: markdown
+  template: |
+    PMID {% $pmid %}: {% link href=$url %}read on PubMed{% /link %}
+```
+
+The self-closing form, `{% link href=$url /%}`, uses the URL itself as the link text. The URL goes through the same allowlist as every other link: only an absolute `http:` / `https:` / `mailto:` URL, or one starting with `/`, `#` or `?`, becomes a link. A value starting with `//` is protocol-relative, not root-relative: `//example.org/x` links to another site, as an `https:` URL would. Anything else — `javascript:`, a bare relative path like `docs/x.html`, or a feature whose `url` is empty or missing — renders the text alone, with no link. Links open in the same tab.
+
+## Fields from your own file
+
+Any column of your own CSV or TSV file, or any key of your JSON records, is in scope as `$column` in a template and as a `path` in a `fields` list — not only the documented feature fields. See [Style and annotate each feature from your file](/protvista/your-data#style-and-annotate-each-feature-from-your-file). Name columns like identifiers (`gene_name`, `p-value`): a template cannot reference a name with a space in it, a `fields` path cannot reach one with a dot in it, and `$ctx` always means the tooltip context, never a column called `ctx`.
+
+## When a field is missing
+
+A field a record does not have renders as nothing: in the `fields` form its row drops out, and in a template `{% $field %}` renders empty. That is expected when only some records carry the field. When **no** record on the track carries it, the name is almost certainly wrong, so the viewer says so — once per track each time the data loads, naming every such field:
+
+```
+[protvista-uniprot] Track domains/hits: dataTooltip references unknown fields: pvalue, Gene
+```
+
+A row you add on its own, outside a group, is named by its track id alone (`Track hits: …`).
+
+The same text fires a `tooltip-field-miss` [`protvista-error` event](/protvista/troubleshooting#phases) with `severity: 'warning'` and the names in `context.fields`, and the playground lists it as a warning. The track itself renders as usual: there is no `⚠` badge and no alert panel, even with `strict` on.
+
+The names to check against are the record's own: the fields a provider adapter outputs, or the column headers of your file (see [Fields from your own file](#fields-from-your-own-file)). A few details:
+
+- Every field the template names counts, including one inside `{% if $field %}`, a function such as `equals($field, "x")`, or `{% link href=$field %}`, and one in a fenced code block, which Markdoc fills in too. Inline code (single backticks) is printed literally, so a name there is not a reference.
+- A field that is present but empty (`''`, a blank cell, or `null` in a JSON key of your own) is not missing. The exceptions are a few built-in columns, which are left off a record that has no value for them, so a column with no value on any row reads as missing:
+  - In a feature file, `description`, `score`, `color`, `shape`, `fill` and `opacity`: a blank CSV or TSV cell, or `null` in JSON. In JSON, `""` is left off too for `description` and the four render fields, but not for `score`: `"score": ""` is not a number, so it fails the track.
+  - In a variation CSV or TSV file, `wildType`, `description` and `consequence`: a blank cell.
+- A variation file's records carry `start` and `end` (not `position`), plus `variant` and `consequenceType`, and `wildType`, `description` and `consequence` when they have a value; its other columns are dropped.
+- For a dotted path such as `variant.wildType`, a record where `variant` is `null` counts as having it, so it does not warn. In the `fields` form that row just drops out. A template (`{% $variant.wildType %}`) currently fails the whole track on such a record, so guard it with `{% if $variant %}` or use the `fields` form.
+- `$ctx.accession`, `$ctx.trackId` and `$ctx.kind`, and any key you supply under the template's `variables:`, are checked against those values rather than the records.
+- Only a `dataTooltip` you write is checked. A track using its kind's built-in default, or the automatic tooltip, never warns, and neither do line-graph, coloured-sequence and heatmap tracks, which have no per-feature tooltip for `dataTooltip` to template (see [Line graphs](#line-graphs)).
 
 ## When to leave `dataTooltip` off
 

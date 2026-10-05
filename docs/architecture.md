@@ -87,7 +87,7 @@ Merge rules: `sources` and `defaults.rendering` merge by key (child wins); top-l
 `validateConfig()` runs two passes:
 
 1. **Structural.** Ajv (draft 2020-12) against `src/schema/schema.json`. Catches shape problems — unknown properties, wrong types, missing required fields. A structural failure short-circuits.
-2. **Semantic.** Closed-set checks against the runtime registry: every adapter, kind, component, and theme name must resolve. Plus a handful of cross-field checks (unknown `sources` keys, `{accession}` placeholder used without an accession, version in the supported set).
+2. **Semantic.** Closed-set checks against the runtime registry: every adapter, kind, component, and theme name must resolve. Plus a handful of cross-field checks (unknown `sources` keys, `{accession}` placeholder used without an accession, version in the supported set). A config that sets `sequence:` swaps the placeholder check for the sequence-mode rules: not both `accession` and `sequence`, an inline sequence that parses, and no track that needs UniProt data (`needs-accession`). The loader adds the checks only it can make — a host accession beside `sequence:`, an `extends:` summary, and `missing-protein` for an element with neither — and fetches a FASTA `sequence:` after validation.
 
 The validator is non-throwing — it returns a `ValidationResult` with an `issues[]` array. The loader (`src/schema/load.ts`) is what turns a failed result into a thrown `ConfigValidationError`. This split keeps the validator trivially unit-testable and lets editor extensions / CI tooling consume the same data.
 
@@ -178,7 +178,7 @@ The XSS regression suite lives in `src/utils/__spec__/security.spec.ts` — quot
 The custom element. Roughly:
 
 - **Reactive properties.** `accession`, `configSrc`, `config`, `nostructure`, `notooltip`, `suspend`. Lit watches these and triggers `updated()`.
-- **`updated(changedProperties)`.** First mount → `_init()`. `accession` change after mount → re-`_init()` with cancellation of any in-flight `_loadData()`.
+- **`updated(changedProperties)`.** First mount → `_init()`. `accession` change after mount → re-`_init()` with cancellation of any in-flight `_loadData()`. On a sequence-mode element (`sequence:` config) an accession set after mount drops the config and re-`_init()`s, so the loader reports `accession-and-sequence`; `setConfig()` clearing an accession the previous config supplied is not treated as a change.
 - **`_init()`.** Resolves the effective config via `resolveViewerConfig()` (`viewerConfig` property > `configSrc` attribute > bundled default), runs `loadConfig()`, mounts the Nightingale components into the DOM, then calls `_loadData()`.
 - **`_loadData()`.** Calls `loadProtvistaData()` and writes the result onto each Nightingale component instance, scoped to this element's `_instanceId` so two viewers on the same page don't cross-talk.
 - **Public runtime API.** `setTrackData(groupId, trackId, data)` for `from: 'custom'` tracks, `setConfig(config)` for full re-render, `on(event, callback)` for subscribing to viewer events.

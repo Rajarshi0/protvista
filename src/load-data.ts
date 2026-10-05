@@ -33,6 +33,15 @@
  *      components, or the first one's data for linegraph /
  *      colored-sequence groups. The element rebuilds it from the
  *      per-track keys whenever the layout changes which tracks it draws.
+ *   5. Return each authored track's decoded coordinates and row numbers,
+ *      taken before `filter:`, as `trackCoordinates` — kept out of `data`
+ *      for the component's sequence-bounds warning.
+ *   6. Return each track's decoder warnings (feature columns dropped,
+ *      colours a browser will not paint) as `trackWarnings`, for the
+ *      component to route as `track-data` warnings.
+ *   7. Return, as `tooltipFieldMisses`, each track whose authored
+ *      `dataTooltip` names a field none of its rendered records carries,
+ *      for the component to route as `tooltip-field-miss` warnings.
  *
  * Intentionally kept side-effect-free: no `this`, no DOM, no `console`. Tracks that
  * opt into a filter UI (`filterUI: 'nightingale-filter'`) get their
@@ -50,9 +59,18 @@ import {
   type NormalizedTrack,
 } from './schema/normalize.js';
 import { DATA_FORMATS } from './schema/file-formats.js';
-import { runPipeline } from './schema/adapters/pipeline.js';
+import { runPipeline, sourceLabel } from './schema/adapters/pipeline.js';
+import type {
+  CoordinateRow,
+  TrackCoordinates,
+} from './schema/adapters/coordinates.js';
+import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import { SHAPES } from './schema/shapes.js';
-import { resolveTooltip } from './tooltips/resolve.js';
+import {
+  createTooltipFieldTracker,
+  resolveTooltip,
+  type TooltipFieldTracker,
+} from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
 import type { TooltipContext, TooltipSpec } from './tooltips/types.js';
 import { withFeatureSource, type FeatureSource } from './feature-source.js';
@@ -137,6 +155,17 @@ type LoadResult = {
    */
   trackUrls: Record<string, string[]>;
   /**
+   * What the sequence-bounds warning needs about each authored track, keyed
+   * by `${groupId}-${trackId}`: every decoded row's coordinates and row
+   * number, taken before `filter:`, plus the source label, shape, format,
+   * and fetched URL. Only file/URL sources with a `format` and `from:
+   * inline` data in the author record contract have an entry;
+   * `setTrackData()`, provider-adapter, and rendered-form inline payloads
+   * have none. Never part of `data`, so row numbers cannot leak into
+   * tooltips.
+   */
+  trackCoordinates: Record<string, TrackCoordinates>;
+  /**
    * Per-track outcomes that are not fetch failures, keyed by
    * `${groupId}-${trackId}`: a decode/validate failure (`./hits.csv (parsed
    * as CSV): row 3, column "start": expected a number, got "abc"`), an
@@ -151,13 +180,58 @@ type LoadResult = {
    */
   trackFailures: Record<string, TrackProcessingFailure>;
   /**
+   * What a feature decoder noticed about a track's data without rejecting
+   * it, keyed by `${groupId}-${trackId}`: columns it dropped because decoded
+   * data may not set them, or `shape` values naming an `Object.prototype`
+   * property (`data-field-ignored`), and `color` / `fill`
+   * values it kept but a browser will not paint (`unpaintable-color`). Only
+   * tracks with at least one warning have a key, and a track whose decode
+   * threw has none (its failure is in `trackFailures`).
+   *
+   * Returned rather than logged, for the same reason as `trackFailures`; the
+   * caller routes each as a `track-data` warning.
+   */
+  trackWarnings: Record<string, DecodeWarning[]>;
+  /**
    * One message per URL template that was not fetched because a `{token}`
    * had no value or a refused one (see `substituteTemplate`). Returned rather
    * than logged for the same reason as `trackFailures`; the caller routes
    * each as a warning.
    */
   skipWarnings: string[];
+  /**
+   * Each track whose authored `dataTooltip` references a field that none of
+   * the records it rendered against carries — `{% $score %}` on a track with
+   * no `score` anywhere — in config order. Always present (`[]` when clean);
+   * a targeted reload lists only the tracks it reran.
+   *
+   * Returned rather than logged, for the same reason as `trackFailures`; the
+   * caller routes each as a `tooltip-field-miss` warning.
+   */
+  tooltipFieldMisses: TooltipFieldMiss[];
 };
+
+/** One track's unknown tooltip fields. See `LoadResult.tooltipFieldMisses`. */
+export type TooltipFieldMiss = {
+  groupId: string;
+  trackId: string;
+  /** The referenced paths no record carried, in template order. */
+  fields: string[];
+};
+
+/**
+ * Components that draw no per-item tooltip, so `dataTooltip` does not apply
+ * to them. What `applyTooltipResolver` sees for these is the renderer's own
+ * wrapper (a line graph's `[{ name, values }]` series), not the author's
+ * records, so checking the template's fields against it would warn about
+ * fields the author's data does carry. A deny-list rather than an allow-list,
+ * so a consumer-registered component is still checked.
+ */
+const NO_ITEM_TOOLTIP_COMPONENTS: ReadonlySet<string> = new Set([
+  'nightingale-linegraph-track',
+  'nightingale-colored-sequence',
+  'nightingale-sequence-heatmap',
+]);
 
 /** One track's non-fetch outcome. See `LoadResult.trackFailures`. */
 export type TrackProcessingFailure = {
@@ -249,9 +323,10 @@ function isRenderedRepresentation(payload: unknown): boolean {
  * records arrive over the network, inline in the config, or through
  * `setTrackData()`, so the adapter that validates and wraps them runs for all
  * three. Kinds whose records need no wrapping (the feature family) and
- * provider-only kinds have no record adapter and pass through untouched —
- * running `features-json` here would strip every field outside its five
- * documented ones, including any a `dataTooltip` path references.
+ * provider-only kinds have no record adapter and pass through untouched:
+ * structured feature records are already the renderer's representation, and
+ * inline config is trusted to set the viewer fields (`tooltipContent`,
+ * `locations`) the feature decoder drops from decoded data.
  *
  * A payload already in the renderer's representation is passed through, so the
  * previously-documented `setTrackData()` contract keeps working.
@@ -260,15 +335,28 @@ function isRenderedRepresentation(payload: unknown): boolean {
  * body. Inline text is the case `format:` was introduced for — there is no
  * extension to read it off and no content sniffing — so ignoring it here would
  * make the one remedy the validator recommends a no-op.
+ *
+ * With `collectCoordinates`, the author's coordinates are returned alongside
+ * the payload for the sequence-bounds warning; `setTrackData()` payloads are
+ * not checked, so that path skips collecting them.
+ *
+ * Text decoded here (inline text, or a `setTrackData()` string, with a
+ * `format:`) reports the decoder's warnings exactly as a file does: they are
+ * returned as `warnings` when there are any.
  */
 async function adaptAuthoredRecords(
   payload: unknown,
-  track: NormalizedTrack
-): Promise<unknown> {
+  track: NormalizedTrack,
+  collectCoordinates: boolean
+): Promise<{
+  payload: unknown;
+  coordinates?: TrackCoordinates;
+  warnings?: DecodeWarning[];
+}> {
   const source = track.data[0];
   const shape = source?.shape;
   // No shape means no record contract to hold the payload to.
-  if (shape === undefined) return payload;
+  if (shape === undefined) return { payload };
 
   // A delimited format needs a string to decode. A payload that is already
   // structured (a `setTrackData()` record array on a descriptor that also
@@ -281,13 +369,59 @@ async function adaptAuthoredRecords(
       : declared;
 
   // A shape that does not wrap means JSON records *are* the representation,
-  // and running them through a validator would only strip fields a
-  // `dataTooltip` may reference. Encoded text still has to be decoded — the
-  // raw string is no one's representation.
-  if (format === 'json' && !SHAPES[shape].wraps) return payload;
-  if (isRenderedRepresentation(payload)) return payload;
+  // and trusted config may set fields the decoder keeps out of decoded data,
+  // so they are not run through it. Encoded text still has to be decoded —
+  // the raw string is no one's representation.
+  if (format === 'json' && !SHAPES[shape].wraps) {
+    if (!collectCoordinates || !Array.isArray(payload)) return { payload };
+    return {
+      payload,
+      coordinates: {
+        label: sourceLabel(undefined, 'json'),
+        shape,
+        format: 'json',
+        rows: payload.map(authoredFeatureRow),
+      },
+    };
+  }
+  if (isRenderedRepresentation(payload)) return { payload };
   // No `source`, so a parse error reads "inline data (parsed as CSV): …".
-  return runPipeline(shape, format, payload);
+  const warnings: DecodeWarning[] = [];
+  const found = () => (warnings.length > 0 ? { warnings } : {});
+  if (!collectCoordinates) {
+    const result = await runPipeline(shape, format, payload, { warnings });
+    return { payload: result, ...found() };
+  }
+  const rows: CoordinateRow[] = [];
+  const result = await runPipeline(shape, format, payload, {
+    coordinates: rows,
+    warnings,
+  });
+  return {
+    payload: result,
+    coordinates: { label: sourceLabel(undefined, format), shape, format, rows },
+    ...found(),
+  };
+}
+
+/**
+ * A feature record's coordinates as the author wrote them — `start`, with
+ * `begin` as the fallback, the way `featuresJson` reads it. Inline feature
+ * arrays skip that validator, so a value that is not a finite number is left
+ * out rather than counted: the bounds check is not a type check.
+ */
+function authoredFeatureRow(record: unknown, row: number): CoordinateRow {
+  if (!record || typeof record !== 'object') return { row, fields: [] };
+  const r = record as { start?: unknown; begin?: unknown; end?: unknown };
+  const fields: Array<readonly ['start' | 'end', number]> = [];
+  const start = r.start != null ? r.start : r.begin;
+  if (typeof start === 'number' && Number.isFinite(start)) {
+    fields.push(['start', start]);
+  }
+  if (typeof r.end === 'number' && Number.isFinite(r.end)) {
+    fields.push(['end', r.end]);
+  }
+  return { row, fields };
 }
 
 /**
@@ -319,6 +453,9 @@ async function adaptAuthoredRecords(
  * The resolver's output is the canonical source of `tooltipContent`
  * unless the adapter has already supplied a non-empty tooltip.
  *
+ * `fieldTracker` observes every item the resolver renders — not one whose
+ * adapter-supplied tooltip wins — for the caller's unknown-field check.
+ *
  * Handles the two shapes adapters emit:
  *   - an array of feature-like objects (most adapters) — returns a new
  *     array of items with `tooltipContent` spread in;
@@ -333,7 +470,8 @@ function applyTooltipResolver(
   transformedData: unknown,
   spec: TooltipSpec | undefined,
   ctx: TooltipContext,
-  source: FeatureSource
+  source: FeatureSource,
+  fieldTracker?: TooltipFieldTracker
 ): unknown {
   const annotate = (item: unknown): unknown => {
     if (!item || typeof item !== 'object') return item;
@@ -342,7 +480,7 @@ function applyTooltipResolver(
     if (existingTooltip != null && existingTooltip !== '') {
       return withFeatureSource(item, source);
     }
-    const html = resolveTooltip(item, spec, ctx);
+    const html = resolveTooltip(item, spec, ctx, fieldTracker);
     return withFeatureSource(
       html ? { ...item, tooltipContent: html } : item,
       source
@@ -423,6 +561,7 @@ export async function loadProtvistaData(
   // one warning per template naming the offending tokens.
   const templates = new Set<string>();
   const trackUrls: Record<string, string[]> = {};
+  const trackCoordinates: Record<string, TrackCoordinates> = {};
   const substituted = new Map<string, string>();
   const skipped = new Set<string>();
   const skipWarnings: string[] = [];
@@ -503,6 +642,10 @@ export async function loadProtvistaData(
 
   const data: Record<string, unknown> = {};
   const trackFailures: Record<string, TrackProcessingFailure> = {};
+  const trackWarnings: Record<string, DecodeWarning[]> = {};
+  // Keyed by `${groupId}-${trackId}`; ordered by config into
+  // `tooltipFieldMisses` once every group has loaded.
+  const fieldMisses = new Map<string, string[]>();
 
   // Resolve an adapter by name through the injected registry resolver — the
   // loader itself holds no adapter map and knows no adapter names. A
@@ -546,6 +689,42 @@ export async function loadProtvistaData(
     }
   };
 
+  // Resolve per-item tooltips for one track's filtered payload. Existing
+  // `tooltipContent` wins, then track-level `dataTooltip`, then the
+  // per-kind built-in default, then the compact auto-fallback. Shared by
+  // every source, so spec selection lives in one place.
+  //
+  // An authored `dataTooltip` is also checked for fields none of the
+  // rendered records carries: the tracker sees each item as it renders, and
+  // what it found is recorded for the caller to route, never logged. A
+  // per-kind default is library-owned and not checked — a default's field
+  // missing from your own file is not something you can fix — and neither is
+  // a component that draws no per-item tooltip.
+  const resolveTrackTooltips = (
+    filteredData: unknown,
+    groupId: string,
+    track: NormalizedTrack
+  ): unknown => {
+    const { kind, dataTooltip, id: trackId } = track;
+    const spec: TooltipSpec | undefined =
+      dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
+    const ctx: TooltipContext = { accession, trackId, kind: kind ?? '' };
+    const tracker =
+      dataTooltip && !NO_ITEM_TOOLTIP_COMPONENTS.has(track.component)
+        ? createTooltipFieldTracker(dataTooltip, ctx)
+        : undefined;
+    const annotated = applyTooltipResolver(
+      filteredData,
+      spec,
+      ctx,
+      { trackId, kind: kind ?? null },
+      tracker
+    );
+    const missing = tracker?.flush() ?? [];
+    if (missing.length > 0) fieldMisses.set(`${groupId}-${trackId}`, missing);
+    return annotated;
+  };
+
   // Shared tail for `from: custom` and `from: inline` tracks: apply
   // the track's `filter:` shortcut, resolve tooltips, and assign the
   // result. The only difference between the two sources is where
@@ -554,10 +733,10 @@ export async function loadProtvistaData(
   // skip the fetch + adapter step entirely.
   const filterResolveAndAssign = (
     transformedData: unknown,
-    trackKey: string,
+    groupId: string,
     track: NormalizedTrack
   ): unknown => {
-    const { filter, kind, dataTooltip, id: trackId } = track;
+    const { filter } = track;
     const filteredData =
       Array.isArray(transformedData) && filter
         ? (transformedData as Array<{ type?: string }>).filter(
@@ -565,15 +744,8 @@ export async function loadProtvistaData(
           )
         : transformedData;
     if (filteredData == null) return undefined;
-    const spec: TooltipSpec | undefined =
-      dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-    const annotated = applyTooltipResolver(
-      filteredData,
-      spec,
-      { accession, trackId, kind: kind ?? '' },
-      { trackId, kind: kind ?? null }
-    );
-    assignTrackData(trackKey, annotated, track);
+    const annotated = resolveTrackTooltips(filteredData, groupId, track);
+    assignTrackData(`${groupId}-${track.id}`, annotated, track);
     return annotated;
   };
 
@@ -586,13 +758,7 @@ export async function loadProtvistaData(
     }
     const groupData = await Promise.all(
       group.tracks.map(async (track) => {
-        const {
-          data: dataConfig,
-          id: trackId,
-          filter,
-          kind,
-          dataTooltip,
-        } = track;
+        const { data: dataConfig, id: trackId, filter } = track;
         const trackKey = `${groupId}-${trackId}`;
         // Sibling in a touched group that isn't itself being retried:
         // reuse its previous per-track data so the group aggregate below
@@ -629,22 +795,28 @@ export async function loadProtvistaData(
               };
               return;
             }
-            return filterResolveAndAssign(
-              await adaptAuthoredRecords(customTrackData[trackKey], track),
-              trackKey,
-              track
+            // `setTrackData()` payloads are not bounds-checked: they are
+            // documented as already in renderer form, so no coordinates
+            // are collected.
+            const { payload, warnings } = await adaptAuthoredRecords(
+              customTrackData[trackKey],
+              track,
+              false
             );
+            if (warnings) trackWarnings[trackKey] = warnings;
+            return filterResolveAndAssign(payload, groupId, track);
           }
 
           // `from: inline` — the payload lives on the descriptor itself
           // (`inlineData`, populated by the normalizer); no fetch. Filter +
           // tooltip resolution still apply, mirroring `from: custom` above.
           if (first.from === 'inline') {
-            return filterResolveAndAssign(
-              await adaptAuthoredRecords(first.inlineData, track),
-              trackKey,
-              track
-            );
+            const { payload, coordinates, warnings } =
+              await adaptAuthoredRecords(first.inlineData, track, true);
+            // Recorded before `filter:`, like the formatted branch below.
+            if (coordinates) trackCoordinates[trackKey] = coordinates;
+            if (warnings) trackWarnings[trackKey] = warnings;
+            return filterResolveAndAssign(payload, groupId, track);
           }
 
           // Every URL was skipped (an undefined or refused variable,
@@ -685,15 +857,27 @@ export async function loadProtvistaData(
             return undefined;
           }
           if (first.format !== undefined) {
+            // The author's own path, so a parse error names their file.
+            const source =
+              substituted.get(String(url ?? '')) ?? String(url ?? '');
+            const shape = first.shape ?? 'feature';
+            const rows: CoordinateRow[] = [];
+            const warnings: DecodeWarning[] = [];
             transformedData = await runPipeline(
-              first.shape ?? 'feature',
+              shape,
               first.format,
               trackData[0],
-              // The author's own path, so a parse error names their file.
-              {
-                source: substituted.get(String(url ?? '')) ?? String(url ?? ''),
-              }
+              { source, coordinates: rows, warnings }
             );
+            if (warnings.length > 0) trackWarnings[trackKey] = warnings;
+            // Every decoded row, before `filter:` below.
+            trackCoordinates[trackKey] = {
+              label: sourceLabel(source, first.format),
+              shape,
+              format: first.format,
+              rows,
+              url: source,
+            };
           } else if (adapter) {
             // Resolved outside the guard: an unregistered name is a config
             // mistake, not something a Retry could fix.
@@ -717,20 +901,8 @@ export async function loadProtvistaData(
             return;
           }
 
-          // 3. Resolve per-item tooltips. Existing `tooltipContent`
-          //    wins, then track-level `dataTooltip`, then the per-kind
-          //    built-in default, then the compact auto-fallback. Graph
-          //    tracks (linegraph, colored-sequence, heatmap) have no
-          //    per-item hover, so the resolver returns `''` and no field
-          //    is written.
-          const spec: TooltipSpec | undefined =
-            dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
-          const annotated = applyTooltipResolver(
-            filteredData,
-            spec,
-            { accession, trackId, kind: kind ?? '' },
-            { trackId, kind: kind ?? null }
-          );
+          // 3. Resolve per-item tooltips (see `resolveTrackTooltips`).
+          const annotated = resolveTrackTooltips(filteredData, groupId, track);
           // 4. Assign track data (+ a pristine baseline for filter tracks)
           assignTrackData(trackKey, annotated, track);
           return annotated;
@@ -759,5 +931,30 @@ export async function loadProtvistaData(
     data[groupId] = aggregatePayload(group, (track) => dataByTrack.get(track));
   }
 
-  return { rawData, data, hasData, trackUrls, trackFailures, skipWarnings };
+  // Config order, whatever order the tracks' loads settled in.
+  const tooltipFieldMisses: TooltipFieldMiss[] = [];
+  for (const group of config.rows) {
+    for (const track of group.tracks) {
+      const fields = fieldMisses.get(`${group.id}-${track.id}`);
+      if (fields) {
+        tooltipFieldMisses.push({
+          groupId: group.id,
+          trackId: track.id,
+          fields,
+        });
+      }
+    }
+  }
+
+  return {
+    rawData,
+    data,
+    hasData,
+    trackUrls,
+    trackCoordinates,
+    trackFailures,
+    trackWarnings,
+    skipWarnings,
+    tooltipFieldMisses,
+  };
 }

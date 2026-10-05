@@ -51,6 +51,7 @@ type ProtvistaUniprotLike = HTMLElement & {
   accession: string | undefined;
   data: Record<string, unknown>;
   customTrackData: Record<string, unknown>;
+  _configAccessionChange: boolean;
   _init(): Promise<void>;
   _loadDataInComponents(): Promise<void>;
   updated(changedProperties: Map<string, unknown>): void;
@@ -162,6 +163,40 @@ describe('<protvista-uniprot> — accession-change handling', () => {
     );
 
     expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+  it("a config's own accession change does not re-run _init()", () => {
+    // `_applyConfig` drops (or replaces) an accession the previous config
+    // supplied, inside the `_init()` that goes on to load for the new config.
+    // Lit delivers the change a microtask later, as an ordinary defined →
+    // undefined change, so `_applyConfig` flags it and this hook consumes the
+    // flag instead of starting a second `_init()`.
+    el._configAccessionChange = true;
+    el.accession = undefined;
+    el.updated(new Map<string, unknown>([['accession', 'P05067']]));
+
+    expect(initSpy).not.toHaveBeenCalled();
+    expect(el._configAccessionChange).toBe(false);
+
+    // The flag is spent: a real change afterwards re-runs `_init()`.
+    el.accession = 'P12345';
+    el.updated(new Map<string, unknown>([['accession', 'P05067']]));
+    expect(initSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('an accession set on a sequence-mode element re-resolves its config', () => {
+    // `undefined → value` is normally the mount transition, but a
+    // sequence-mode config was resolved without an accession: dropping it
+    // makes `_init()` re-resolve, which reports `accession-and-sequence`.
+    el.config = {
+      ...buildConfig(),
+      sequence: { residues: 'MKT' },
+    };
+    el.accession = 'P05067';
+    el.updated(new Map<string, unknown>([['accession', undefined]]));
+
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(el.config).toBeUndefined();
     expect(pushSpy).not.toHaveBeenCalled();
   });
 });

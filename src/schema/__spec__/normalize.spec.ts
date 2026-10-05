@@ -1562,3 +1562,20 @@ describe('normalizeConfig — hidden default', () => {
     expect(out.rows[0].tracks[0].hidden).toBeUndefined();
   });
 });
+
+describe('normalizeConfig — sequence', () => {
+  const config: ProtvistaViewerConfig = {
+    rows: [
+      { id: 'g', tracks: [{ id: 't', kind: 'features', data: './x.csv' }] },
+    ],
+  };
+
+  it('passes a resolved sequence through', () => {
+    const sequence = { residues: 'MKTAYIAKQR', header: 'my construct v2' };
+    expect(normalizeConfig(config, { sequence }).sequence).toEqual(sequence);
+  });
+
+  it('leaves the key absent when there is none', () => {
+    expect('sequence' in normalizeConfig(config)).toBe(false);
+  });
+});

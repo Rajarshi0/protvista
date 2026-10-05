@@ -225,9 +225,13 @@ describe('<protvista-uniprot> data-accession inside the element', () => {
       { 'data-species': 'human', 'data-accession': 'P05067' },
       { accession: null }
     );
+    // With no protein at all the mount reports `missing-protein`, which
+    // stands in for the `missing-accession` the `{accession}` URLs would
+    // otherwise add: one problem, one issue.
     await vi.waitFor(() =>
-      expect(errorIssues.some((i) => i.code === 'missing-accession')).toBe(true)
+      expect(errorIssues.some((i) => i.code === 'missing-protein')).toBe(true)
     );
+    expect(errorIssues.some((i) => i.code === 'missing-accession')).toBe(false);
     await settle();
     expect(el.accession).toBeFalsy();
     expect(featureUrls()).toEqual([]);
@@ -252,6 +256,39 @@ describe('<protvista-uniprot> data-* variables — reactivity', () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(load).toHaveBeenCalledWith();
     await vi.waitFor(() => expect(featureUrls()).toEqual([urlFor('mouse')]));
+  });
+
+  it('reloads a sequence-mode element too, which has no accession', async () => {
+    // The gate is "a protein to load for", not "an accession".
+    const { el, load } = await mountLoaded(
+      { 'data-species': 'human' },
+      {
+        config: {
+          sequence: 'MKTAYIAKQRMKTAYIAKQR',
+          rows: [
+            {
+              id: 'G',
+              tracks: [
+                {
+                  id: 't',
+                  kind: 'features',
+                  data: 'https://api.example.org/{species}/feed',
+                },
+              ],
+            },
+          ],
+        },
+        accession: null,
+      }
+    );
+    expect(el.accession).toBeFalsy();
+    el.setAttribute('data-species', 'mouse');
+    await settle();
+    flushFrames();
+    expect(load).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(featureUrls()).toEqual(['https://api.example.org/mouse/feed'])
+    );
   });
 
   it('coalesces a burst of attribute changes into one load', async () => {
