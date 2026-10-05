@@ -249,7 +249,7 @@ describe('scoreColumns (S3)', () => {
     expect(scoreColumns([over], ones(13))[0]).toBeNull();
   });
 
-  it('weights the gap penalty, but not the gap cutoff', () => {
+  it('measures the gap fraction both by rows and by weight', () => {
     // One C row of weight 3 and one gap row of weight 1: half the rows are
     // gaps, but only a quarter of the weight.
     const { gapFraction, weightedGapFraction } = columnDistribution(
@@ -258,6 +258,20 @@ describe('scoreColumns (S3)', () => {
     );
     expect(gapFraction).toBe(0.5);
     expect(weightedGapFraction).toBe(0.25);
+  });
+
+  it('cuts a column off by its share of gap rows, not gap weight', () => {
+    // Half the rows are gaps (over 30%), but only a quarter of the weight.
+    expect(scoreColumns([['C', 'C', GAP, GAP]], [3, 3, 1, 1])[0]).toBeNull();
+  });
+
+  it('penalises a column by its share of gap weight, not gap rows', () => {
+    // 2 of 10 rows are gaps (20%, under the cutoff) but they carry half the
+    // weight, so the score is halved; by rows it would be 0.8×.
+    const gapped = [...invariant('C', 8), GAP, GAP];
+    const weights = [...ones(8), 4, 4];
+    const [withGaps, without] = scoreColumns([gapped, invariant('C')], weights);
+    expect(withGaps).toBeCloseTo(0.5 * without, 3);
   });
 
   it('weights the residue distribution by sequence', () => {

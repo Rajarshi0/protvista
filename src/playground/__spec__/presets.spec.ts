@@ -16,7 +16,7 @@ import {
   isDevPreset,
   withServedData,
 } from '../presets.js';
-import { sequenceTargetSummary } from '../config-edit.js';
+import { sequenceTargetSummary, setSequence } from '../config-edit.js';
 import { createLocalFileStore, localDataDiagnostics } from '../local-files.js';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -277,13 +277,24 @@ describe('presets', () => {
   it('loading a FASTA over own-sequence replaces its inline block and keeps its track', async () => {
     // What the "Use as sequence" form defaults to: "This config", because
     // nothing in it needs UniProt data.
-    const parsed = await parseConfigText(getPreset('own-sequence')!.config);
+    const text = getPreset('own-sequence')!.config;
+    const parsed = await parseConfigText(text);
     expect(sequenceTargetSummary(parsed)).toEqual({
       needsUniprot: 0,
       extends: false,
       parses: true,
       replaces: { inline: true, residues: 240 },
     });
+    // What "Use" then does to the editor text.
+    const result = await setSequence(text, parsed, './construct.fasta');
+    if (!('text' in result)) throw new Error(result.error);
+    expect(result.text).not.toContain('>my construct v2');
+    const after = (await parseConfigText(result.text)) as {
+      sequence?: unknown;
+      rows?: unknown;
+    };
+    expect(after.sequence).toBe('./construct.fasta');
+    expect(after.rows).toEqual((parsed as { rows: unknown }).rows);
   });
 
   it('every served sample-data path a preset names exists on the docs site', () => {
