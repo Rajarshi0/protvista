@@ -444,8 +444,8 @@ each carry their data file beside the config for exactly this reason — see
 
 You don't have to host a file to see it render. In the
 [playground](/protvista/playground/), press **Load data file…** (or drop the
-file onto the config editor) and pick a CSV, TSV, JSON or BED file. It is read
-in your browser and never uploaded. Only its *name* goes into the config, and
+file onto the config editor) and pick a CSV, TSV, JSON or BED file (or a FASTA
+file, to set `sequence:`). It is read in your browser and never uploaded. Only its *name* goes into the config, and
 so into any link you share: the playground adds a track with
 `data: ./hits.csv`, exactly as a config next to the real file would say it.
 
@@ -460,6 +460,11 @@ so into any link you share: the playground adds a track with
 - If the config already names the file — say you pasted a Starter Kit config
   with `data: ./data/hits.csv` — just load `hits.csv`. It renders in that
   track with no edit to the config.
+- A `.fasta`, `.fa`, `.faa` or `.fas` file — or a text file whose first line
+  starts with `>` — becomes the config's `sequence:` instead of a track (see
+  [Try your FASTA in the playground](/protvista/sequence-only#try-your-fasta-in-the-playground)).
+  Raw residues with no `>` line are read as data, so give them a `.fasta`
+  name or a header line.
 - Problems with the file are listed under the editor, naming it: a parse error
   (`./hits.csv (parsed as CSV): row 3, column "start": …`) with the same advice
   a hosted viewer gives, and, once it renders, any rows that fall outside the

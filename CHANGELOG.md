@@ -103,6 +103,20 @@ diagnostics, naming your file. Dropping a file on the editor no longer pastes
 its text into the config, and dropping one elsewhere on the page no longer
 navigates away.
 
+The same button (and drop) also takes a FASTA file — `.fasta`, `.fa`, `.faa`,
+`.fas`, or any text file whose first line starts with `>` — as the config's
+`sequence:`. It is parsed as a hosted viewer would parse it before anything
+changes, so a file with two records or a stray character is refused with the
+viewer's own `invalid-sequence` message. The config again names only the file
+(`sequence: ./my-protein.fasta`), never its residues or header. If the config
+already names it, it just loads, so `examples/sequence-only/` renders from its
+own two files; otherwise you choose between setting this config's `sequence:`
+(which removes `accession:`) and a new sequence-only config, undoable with
+Ctrl/Cmd+Z. A shared link whose `sequence:` names a file you haven't loaded
+lists `local-file-missing` and shows no preview, rather than requesting the
+file from the docs site. A binary file's refusal now names every format the
+button reads.
+
 ### Added: view a protein that isn't in UniProt (`sequence:`)
 
 A config can set `sequence:` instead of `accession:` to show a predicted
