@@ -67,8 +67,10 @@ import type {
 import type { DecodeWarning } from './schema/adapters/feature-fields.js';
 import { SHAPES } from './schema/shapes.js';
 import {
+  createTooltipFallback,
   createTooltipFieldTracker,
   resolveTooltip,
+  type TooltipFallback,
   type TooltipFieldTracker,
 } from './tooltips/resolve.js';
 import { tooltipDefaults } from './tooltips/defaults.js';
@@ -460,6 +462,8 @@ function authoredFeatureRow(record: unknown, row: number): CoordinateRow {
  *
  * `fieldTracker` observes every item the resolver renders — not one whose
  * adapter-supplied tooltip wins — for the caller's unknown-field check.
+ * `fallback` swaps in the track's default for an item the authored spec
+ * has nothing to say about (see `createTooltipFallback`).
  *
  * Handles the two shapes adapters emit:
  *   - an array of feature-like objects (most adapters) — returns a new
@@ -476,7 +480,8 @@ function applyTooltipResolver(
   spec: TooltipSpec | undefined,
   ctx: TooltipContext,
   source: FeatureSource,
-  fieldTracker?: TooltipFieldTracker
+  fieldTracker?: TooltipFieldTracker,
+  fallback?: TooltipFallback
 ): unknown {
   const annotate = (item: unknown): unknown => {
     if (!item || typeof item !== 'object') return item;
@@ -485,7 +490,7 @@ function applyTooltipResolver(
     if (existingTooltip != null && existingTooltip !== '') {
       return withFeatureSource(item, source);
     }
-    const html = resolveTooltip(item, spec, ctx, fieldTracker);
+    const html = resolveTooltip(item, spec, ctx, fieldTracker, fallback);
     return withFeatureSource(
       html ? { ...item, tooltipContent: html } : item,
       source
@@ -718,6 +723,10 @@ export async function loadProtvistaData(
   // per-kind default is library-owned and not checked — a default's field
   // missing from your own file is not something you can fix — and neither is
   // a component that draws no per-item tooltip.
+  //
+  // The same authored templates get a per-record fallback: a record that
+  // has none of the template's fields, and for which it renders no text,
+  // shows the track's default instead (its kind's, or the automatic one).
   const resolveTrackTooltips = (
     filteredData: unknown,
     groupId: string,
@@ -727,16 +736,25 @@ export async function loadProtvistaData(
     const spec: TooltipSpec | undefined =
       dataTooltip ?? (kind ? tooltipDefaults[kind] : undefined);
     const ctx: TooltipContext = { accession, trackId, kind: kind ?? '' };
-    const tracker =
+    const authored =
       dataTooltip && !NO_ITEM_TOOLTIP_COMPONENTS.has(track.component)
-        ? createTooltipFieldTracker(dataTooltip, ctx)
+        ? dataTooltip
         : undefined;
+    const tracker = authored && createTooltipFieldTracker(authored, ctx);
+    const fallback =
+      authored &&
+      createTooltipFallback(
+        authored,
+        ctx,
+        kind ? tooltipDefaults[kind] : undefined
+      );
     const annotated = applyTooltipResolver(
       filteredData,
       spec,
       ctx,
       { trackId, kind: kind ?? null },
-      tracker
+      tracker,
+      fallback
     );
     const missing = tracker?.flush() ?? [];
     if (missing.length > 0) fieldMisses.set(`${groupId}-${trackId}`, missing);

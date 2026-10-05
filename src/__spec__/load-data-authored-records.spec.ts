@@ -743,3 +743,50 @@ describe('decoder warnings are returned, not logged (#283)', () => {
     expect(trackWarnings).toEqual({});
   });
 });
+
+describe('an authored tooltip with nothing to say gives way to the default', () => {
+  // The issue's template, over a CSV that has `url` on one row only and no
+  // `gene` column at all. A blank description is left off the record, so the
+  // default lists Type, Start and End.
+  const TEMPLATE = '{% $gene %} · {% link href=$url /%}';
+  const URL = 'https://x.org/a';
+  const loadInline = (kind: string, inlineData: string) =>
+    load({
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'G',
+          tracks: [
+            {
+              id: 't',
+              kind,
+              dataTooltip: { kind: 'markdown', template: TEMPLATE },
+              data: { from: 'inline', inlineData, format: 'csv' },
+            } as never,
+          ],
+        },
+      ],
+    });
+
+  it('shows the default on a record with neither field, the template on one with a field', async () => {
+    const { data } = await loadInline(
+      'features',
+      `type,start,end,description,url\nDOMAIN,1,9,,\nSITE,4,4,,${URL}\n`
+    );
+    const [bare, linked] = data['G-t'] as Array<Record<string, unknown>>;
+    expect(bare.url).toBe('');
+    expect(bare.tooltipContent).toBe(
+      '<h5>Type</h5><p>DOMAIN</p><h5>Start</h5><p>1</p><h5>End</h5><p>9</p>'
+    );
+    expect(linked.tooltipContent).toBe(`<p> · <a href="${URL}">${URL}</a></p>`);
+  });
+
+  it('leaves a line graph’s series tooltip as it was', async () => {
+    // A line graph draws no per-item tooltip, so neither the field check
+    // nor the fallback applies to it; its series still get the template.
+    const { data } = await loadInline('linegraph', 'position,value\n1,5\n');
+    const [series] = data['G-t'] as Array<Record<string, unknown>>;
+    expect(series.values).toEqual([{ position: 1, value: 5 }]);
+    expect(series.tooltipContent).toBe('<p> · </p>');
+  });
+});
