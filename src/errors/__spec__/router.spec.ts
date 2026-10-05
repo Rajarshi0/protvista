@@ -635,6 +635,43 @@ describe('failure sites report rather than route', () => {
     );
   });
 
+  it('writes the notes only where warnings are reported and cleared', () => {
+    // Notes are what the visitor notices and author mode draw from. Written
+    // anywhere else, a site would be deciding for itself what a person sees.
+    const lines = sources['src/protvista-uniprot.ts'].split('\n');
+    const writers = new Set<string>();
+    lines.forEach((line, i) => {
+      if (
+        !/this\._notes\s*(?:=[^=]|\.(?:push|splice|pop|shift|unshift)\()/.test(
+          line
+        )
+      ) {
+        return;
+      }
+      let j = i;
+      while (
+        j >= 0 &&
+        !/^ {2}(?:private |protected |async |get )*(\w+)\s*\(/.test(lines[j])
+      ) {
+        j--;
+      }
+      writers.add(lines[j].match(/(\w+)\s*\(/)![1]);
+    });
+    expect([...writers].sort()).toEqual(['_clearNotes', '_report']);
+  });
+
+  it('reads each display switch in exactly one place', () => {
+    const src = sources['src/protvista-uniprot.ts'];
+    // A read, not the constructor's default (`this.x = false`).
+    const reads = (re: RegExp) => [...src.matchAll(re)].length;
+    expect(reads(/this\.quietNotices\b(?!\s*=[^=])/g)).toBe(1);
+    expect(reads(/this\.showWarnings\b(?!\s*=[^=])/g)).toBe(1);
+    expect(reads(/config[?]?\.showWarnings\b/g)).toBe(1);
+    expect(src).toContain(
+      'return this.showWarnings || this.config?.showWarnings === true;'
+    );
+  });
+
   it('reads config.strict in exactly one place', () => {
     const reads = [
       ...sources['src/protvista-uniprot.ts'].matchAll(

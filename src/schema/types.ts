@@ -244,6 +244,16 @@ export interface ProtvistaViewerConfig {
   strict?: boolean;
 
   /**
+   * Author mode. When `true`, the viewer lists every warning on the track
+   * or the viewer it concerns — the same text the console and the
+   * `protvista-error` event carry, with the file, row and field — and
+   * expands error badges and the error panel into that author detail.
+   * Equivalent to the element's `show-warnings` attribute; either one turns
+   * it on. Off by default, so visitors never see authoring notes.
+   */
+  showWarnings?: boolean;
+
+  /**
    * Ordered list of rows displayed in the viewer — the viewer's
    * vertical lanes, top to bottom.
    *

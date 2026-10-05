@@ -1,52 +1,10 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`author mode off: errors look exactly as they did > keeps the config-failure panel as it was, after the rich upgrade 1`] = `
-"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel">
-        <div class="pv-cecb45-error-panel__head">
-          <p class="pv-cecb45-error-panel__summary">Config validation failed (1 issue):</p>
-          
-        </div>
-        <details open="" class="pv-cecb45-error-issues">
-                <summary>1 issue</summary>
-                
-                    <div class="pv-cecb45-error-issue">
-                      <div class="pv-cecb45-error-issue__path">
-                        FOO/bar
-                      </div>
-                      <div>
-                            Unknown source key: 'missingKey' in track FOO/bar. Known sources: (none registered).
-                            <span class="pv-cecb45-error-issue__code">(unknown-source-key)</span>
-                          </div>
-                    </div>
-                  
-              </details>
-      </div>"
-`;
+exports[`author mode off: errors look exactly as they did > keeps the config-failure panel as it was, after the rich upgrade 1`] = `"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel"> <div class="pv-cecb45-error-panel__head"> <p class="pv-cecb45-error-panel__summary">Config validation failed (1 issue):</p> </div> <details open="" class="pv-cecb45-error-issues"> <summary>1 issue</summary> <div class="pv-cecb45-error-issue"> <div class="pv-cecb45-error-issue__path"> FOO/bar </div> <div> Unknown source key: 'missingKey' in track FOO/bar. Known sources: (none registered). <span class="pv-cecb45-error-issue__code">(unknown-source-key)</span> </div> </div> </details> </div>"`;
 
-exports[`author mode off: errors look exactly as they did > keeps the strict track panel as it was 1`] = `
-"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel">
-        <div class="pv-cecb45-error-panel__head">
-          <p class="pv-cecb45-error-panel__summary">Track 'broken/broken' failed to load — ./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</p>
-          <div class="pv-cecb45-error-panel__actions">
-                  <button type="button" class="pv-cecb45-error-retry">
-                          Retry
-                        </button>
-                  <button type="button" aria-label="Dismiss error">
-                          Dismiss
-                        </button>
-                </div>
-        </div>
-        
-      </div>"
-`;
+exports[`author mode off: errors look exactly as they did > keeps the strict track panel as it was 1`] = `"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel"> <div class="pv-cecb45-error-panel__head"> <p class="pv-cecb45-error-panel__summary">Track 'broken/broken' failed to load — ./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</p> <div class="pv-cecb45-error-panel__actions"> <button type="button" class="pv-cecb45-error-retry"> Retry </button> <button type="button" aria-label="Dismiss error"> Dismiss </button> </div> </div> </div>"`;
 
-exports[`author mode off: errors look exactly as they did > keeps the track badge an image with its title and description 1`] = `
-"
-          <span class="pv-cecb45-label-text">Broken</span><span role="img" tabindex="0" class="pv-cecb45-error-badge" aria-label="Track failed to load" aria-describedby="pv-cecb45-err-N-broken-broken" title="./missing.csv could not be found (HTTP 404) — check the path is relative to the page.">⚠</span><span id="pv-cecb45-err-N-broken-broken" class="pv-cecb45-visually-hidden">./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</span><button type="button" class="pv-cecb45-error-retry" aria-label="Retry loading track 'broken'">
-              Retry
-            </button>
-        "
-`;
+exports[`author mode off: errors look exactly as they did > keeps the track badge an image with its title and description 1`] = `" <span class="pv-cecb45-label-text">Broken</span><span role="img" tabindex="0" class="pv-cecb45-error-badge" aria-label="Track failed to load" aria-describedby="pv-cecb45-err-N-broken-broken" title="./missing.csv could not be found (HTTP 404) — check the path is relative to the page.">⚠</span><span id="pv-cecb45-err-N-broken-broken" class="pv-cecb45-visually-hidden">./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</span><button type="button" class="pv-cecb45-error-retry" aria-label="Retry loading track 'broken'"> Retry </button> "`;
 
 exports[`the protvista-error event is unchanged > carries the same details whatever quiet-notices and show-warnings say 1`] = `
 [

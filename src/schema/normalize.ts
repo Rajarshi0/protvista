@@ -102,6 +102,8 @@ export interface NormalizedConfig {
   defaults: NormalizedDefaults;
   /** Author-set: promote warnings to a mount-level failure. See `ProtvistaViewerConfig.strict`. */
   strict?: boolean;
+  /** Author-set: author mode. See `ProtvistaViewerConfig.showWarnings`. */
+  showWarnings?: boolean;
   /** Author-set viewer-wide chrome colours. See `ProtvistaViewerConfig.theme`. */
   theme?: ThemeConfig;
   rows: NormalizedRow[];
@@ -304,6 +306,9 @@ export function normalizeConfig(
     ...(config.variables !== undefined ? { variables: config.variables } : {}),
     defaults,
     ...(config.strict !== undefined ? { strict: config.strict } : {}),
+    ...(config.showWarnings !== undefined
+      ? { showWarnings: config.showWarnings }
+      : {}),
     ...(config.theme !== undefined ? { theme: config.theme } : {}),
     rows,
   };

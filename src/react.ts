@@ -42,6 +42,10 @@ export interface ProtvistaUniprotProps extends ElementProps<ProtvistaUniprot> {
   nostructure?: boolean;
   'no-persist-layout'?: boolean;
   'config-src'?: string;
+  /** Turn visitor notices off. */
+  'quiet-notices'?: boolean;
+  /** Author mode: list every warning on the viewer. */
+  'show-warnings'?: boolean;
   /** Property only — import the element before rendering, or use a ref. */
   viewerConfig?: ProtvistaViewerConfig | string;
   /** Property only — import the element before rendering, or use a ref. */

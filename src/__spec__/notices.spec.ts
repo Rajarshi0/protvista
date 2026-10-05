@@ -186,9 +186,15 @@ const rejecting = () => ({
   },
 });
 
-/** Lit's comment markers are not content, and the instance nonce varies. */
+/**
+ * Lit's comment markers are not content, a run of whitespace renders as one
+ * space whatever the template's indentation, and the instance nonce varies.
+ */
 const normalize = (html: string) =>
-  html.replace(/<!--[^]*?-->/g, '').replace(/(-(?:g?err|note)-)\d+-/g, '$1N-');
+  html
+    .replace(/<!--[^]*?-->/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/(-(?:g?err|note)-)\d+-/g, '$1N-');
 
 afterEach(() => {
   for (const el of appended.splice(0)) el.remove();
@@ -357,6 +363,20 @@ const hasCode = (code: string) => (d: Detail) =>
   d.issues.some((i) => i.code === code);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Every author text in every note popover, in DOM order. */
+const authorTexts = (el: El) =>
+  [...el.querySelectorAll(`.${CSS_PREFIX}-note-popover__text`)].map(
+    (p) => p.textContent!
+  );
+/**
+ * What the event carries, as the playground lists it: each issue's message,
+ * or the message. Errors and warnings, never info (info has no event).
+ */
+const eventTexts = (events: Detail[]) =>
+  events.flatMap((d) =>
+    d.issues.length ? d.issues.map((i) => i.message) : [d.message]
+  );
 
 describe('visitor notices, one per routing-table row', () => {
   type Scenario = {
@@ -559,6 +579,32 @@ describe('visitor notices, one per routing-table row', () => {
     expect(!!onTop, 'viewer notice').toBe(expected === 'viewer');
     if (expected === 'none') expect(el.querySelector(NOTE)).toBeNull();
   });
+
+  // Author mode lists what the event carries: every error and warning,
+  // never info — the routing table's event column.
+  it.each(SCENARIOS)(
+    'author mode: $name',
+    async ({ config, report, fired, after }) => {
+      quiet();
+      const { el, events } = mountEl(config, { attrs: ['show-warnings'] });
+      await ready(el, events, '');
+      after?.(el);
+      await fired(events);
+      await el.updateComplete;
+
+      const rule = ruleFor({
+        ...report,
+        scope: report.scope === 'viewer' ? 'viewer' : { trackKey: 'x' },
+        message: '',
+        consoleLevel: 'warn',
+      });
+      expect(authorTexts(el).sort()).toEqual(eventTexts(events).sort());
+      // The scenario's own report is among them exactly when it has an event.
+      expect(authorTexts(el).length > 0).toBe(rule.event);
+      // Author mode replaces the visitor ⓘ: one control per anchor.
+      expect(el.querySelector(`.${CSS_PREFIX}-note--notice`)).toBeNull();
+    }
+  );
 });
 
 describe('what a visitor notice says', () => {
@@ -1000,5 +1046,344 @@ describe('the popover', () => {
     expect(cleanup).not.toHaveBeenCalled();
     el.remove();
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Author mode ─────────────────────────────────────────────────
+
+const AUTHOR = `.${CSS_PREFIX}-note--author`;
+const ERROR_NOTE = `.${CSS_PREFIX}-note--error`;
+
+describe('author mode is opt-in', () => {
+  it('is off by default', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    expect(el.querySelector(AUTHOR)).toBeNull();
+    expect(el.querySelector(ERROR_NOTE)).toBeNull();
+    expect(authorTexts(el)).toEqual([]);
+  });
+
+  it('turns on with the show-warnings attribute alone', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    expect(el.querySelector(AUTHOR)).not.toBeNull();
+  });
+
+  it('turns on with showWarnings: true in the config alone', async () => {
+    quiet();
+    const { el, events } = mountEl(everything({ showWarnings: true }));
+    await ready(el, events);
+    expect(el.querySelector(AUTHOR)).not.toBeNull();
+  });
+
+  it('turns on and off at runtime, with no reload', async () => {
+    quiet();
+    const { el, events } = mountEl(everything());
+    await ready(el, events);
+    el.setAttribute('show-warnings', '');
+    await el.updateComplete;
+    expect(el.querySelector(AUTHOR)).not.toBeNull();
+    el.removeAttribute('show-warnings');
+    await el.updateComplete;
+    expect(el.querySelector(AUTHOR)).toBeNull();
+    expect(topNote(el)).not.toBeNull();
+  });
+});
+
+describe('author mode lists every warning, as the event and playground say it', () => {
+  it('shows the same texts as the event, for every warning kind', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    el.setTrackData('nope', 'x', []);
+    el._assignComponentData(rejecting(), [], 'no-such-key');
+    await el.updateComplete;
+    const warnings = events.filter((d) => d.severity === 'warning');
+    // Seven kinds, ten texts: the fixture really raises them all.
+    expect(warnings.length).toBeGreaterThanOrEqual(9);
+    expect(authorTexts(el).sort()).toEqual(eventTexts(events).sort());
+    // No console tag reaches a person.
+    for (const t of authorTexts(el)) expect(t).not.toMatch(/^\[protvista/);
+  });
+
+  it('says what visitors see, unless notices are off', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    const lab = rowLabel(el, 'lab')!.querySelector(AUTHOR)!;
+    const text = popoverOf(lab).textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain(`Visitors see: “${TWO_OUTSIDE}”`);
+    expect(text).toContain(`Visitors see: “${COLOUR_TEXT}”`);
+    expect(text).toContain(
+      "Shown because author mode (show-warnings) is on. Visitors don't see this list."
+    );
+    // The ignored column and the tooltip miss tell visitors nothing.
+    expect(text.match(/Visitors see/g)).toHaveLength(2);
+
+    el.setAttribute('quiet-notices', '');
+    await el.updateComplete;
+    expect(
+      popoverOf(rowLabel(el, 'lab')!.querySelector(AUTHOR)!).textContent
+    ).not.toContain('Visitors see');
+  });
+
+  it('names the phase, code and path of each entry', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    const lab = rowLabel(el, 'lab')!.querySelector(AUTHOR)!;
+    expect(lab.textContent!.trim()).toBe('⚠ 4');
+    expect(lab.getAttribute('aria-label')).toBe(
+      '4 authoring notes for Lab hits'
+    );
+    const metas = [
+      ...popoverOf(lab).querySelectorAll(`.${CSS_PREFIX}-note-popover__meta`),
+    ].map((m) => m.textContent);
+    expect(metas).toContain('track-data · coordinate-out-of-range · lab');
+    expect(metas).toContain('tooltip-field-miss · lab');
+  });
+
+  it('counts three identical setTrackData() misuses as one entry ×3', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      { sequence: RESIDUES, rows: [okTrack()] },
+      { attrs: ['show-warnings'] }
+    );
+    await ready(el, events, '');
+    for (let i = 0; i < 3; i++) el.setTrackData('nope', 'x', []);
+    await el.updateComplete;
+    const top = topNote(el)!;
+    expect(linesOf(top)).toHaveLength(1);
+    expect(popoverOf(top).textContent).toContain('×3');
+  });
+
+  it('does not count a skip a targeted retry reports again', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      {
+        sequence: RESIDUES,
+        sources: {
+          here: 'https://example.org/here',
+          there: 'https://example.org/{dataset}/there',
+        },
+        rows: [
+          okTrack(),
+          {
+            id: 'two',
+            label: 'Two sources',
+            kind: 'features',
+            data: { source: ['here', 'there'] },
+          },
+        ],
+      },
+      { attrs: ['show-warnings'] }
+    );
+    // `here` answers 503: a recoverable error, so the track can be retried.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: false,
+            status: 503,
+            json: async () => ({}),
+            text: async () => '',
+          }) as unknown as Response
+      )
+    );
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.message.startsWith('Not fetching'));
+    await el._loadData(new Set(['two-two']));
+    await el.updateComplete;
+    // Reported twice, listed once.
+    expect(
+      events.filter((d) => d.message.startsWith('Not fetching'))
+    ).toHaveLength(2);
+    const skip = authorTexts(el).filter((t) => t.startsWith('Not fetching'));
+    expect(skip).toHaveLength(1);
+    expect(popoverOf(topNote(el)!).textContent).not.toContain('×2');
+  });
+
+  it('is announced once, as a count', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    await vi.waitFor(() =>
+      expect(
+        el.querySelector(`.${CSS_PREFIX}-live-region`)!.textContent!.trim()
+      ).toMatch(
+        /^\d+ authoring notes\. Use the warning buttons to read them\.$/
+      )
+    );
+  });
+});
+
+describe('author mode expands errors', () => {
+  it('turns the track badge into a button listing its text and source', async () => {
+    quiet();
+    const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
+    await ready(el, events);
+    const label = rowLabel(el, 'broken')!;
+    // The image badge is gone: the button replaces it, same glyph and red.
+    expect(label.querySelector('span[role="img"]')).toBeNull();
+    const button = label.querySelector<HTMLButtonElement>(ERROR_NOTE)!;
+    expect(button.tagName).toBe('BUTTON');
+    expect(button.classList.contains(`${CSS_PREFIX}-error-badge`)).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(button.getAttribute('aria-label')).toBe(
+      'Track failed to load — 1 authoring note'
+    );
+    const text = popoverOf(button).textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain(
+      './missing.csv could not be found (HTTP 404) — check the path is relative to the page.'
+    );
+    expect(text).toContain('Source: ./missing.csv');
+    // Retry is kept beside it.
+    expect(label.querySelector(`.${CSS_PREFIX}-error-retry`)).not.toBeNull();
+  });
+
+  it('lists the error of a track in a collapsed group on the top bar', async () => {
+    quiet();
+    const { el, events } = mountEl(
+      {
+        sequence: RESIDUES,
+        rows: [{ id: 'G', label: 'Group', tracks: [okTrack(), broken()] }],
+      },
+      { attrs: ['show-warnings'] }
+    );
+    await ready(el, events, '');
+    await eventFired(events, (d) => d.severity === 'error');
+    await el.updateComplete;
+    // The group keeps its count badge; the text goes to the top bar.
+    expect(el.querySelector(`#${CSS_PREFIX}-group_G ${BADGE}`)!.tagName).toBe(
+      'SPAN'
+    );
+    const top = el.querySelector(`${TOP_BAR} ${AUTHOR}`)!;
+    expect(popoverOf(top).textContent!.replace(/\s+/g, ' ')).toContain(
+      'Broken ./missing.csv could not be found (HTTP 404)'
+    );
+  });
+
+  it('adds the console text to the strict track panel, in author mode only', async () => {
+    quiet();
+    const config = everything({ strict: true, rows: [labHits(), broken()] });
+    const detail = `.${CSS_PREFIX}-error-panel__detail`;
+    const off = mountEl(config);
+    await vi.waitFor(() => {
+      if (!off.el.querySelector(PANEL)) throw new Error('no panel');
+    });
+    expect(off.el.querySelector(detail)).toBeNull();
+
+    const on = mountEl(config, { attrs: ['show-warnings'] });
+    await vi.waitFor(() => {
+      if (!on.el.querySelector(PANEL)) throw new Error('no panel');
+    });
+    await on.el.updateComplete;
+    expect(on.el.querySelector(detail)!.textContent!.trim()).toBe(
+      'broken/broken: ./missing.csv could not be found (HTTP 404) — check the path is relative to the page.'
+    );
+  });
+
+  it('keeps the detail on a config-failure panel through the rich upgrade', async () => {
+    quiet();
+    const { el } = mountEl(
+      {
+        sequence: RESIDUES,
+        rows: [
+          {
+            id: 'FOO',
+            tracks: [{ id: 'bar', kind: 'features', data: 'missingKey' }],
+          },
+        ],
+      },
+      { attrs: ['show-warnings'] }
+    );
+    await vi.waitFor(() => {
+      if (!el.querySelector(`.${CSS_PREFIX}-error-issues`)) {
+        throw new Error('no upgraded panel');
+      }
+    });
+    await el.updateComplete;
+    expect(
+      el
+        .querySelector(`.${CSS_PREFIX}-error-panel__detail`)!
+        .textContent!.trim()
+    ).toBe('Failed to load config.');
+  });
+});
+
+describe('every author note appears exactly once', () => {
+  const lab = () =>
+    csvTrack('lab', 'Lab hits', [
+      'DOMAIN,5,20,a,',
+      'REGION,30,60,b,',
+      'SITE,0,3,c,',
+    ]);
+  const pale = () =>
+    csvTrack('pale', 'Pale', ['DOMAIN,5,20,a,bleu'], { filter: 'NOPE' });
+  const group = (tracks: unknown[]) => ({
+    sequence: RESIDUES,
+    rows: [{ id: 'G', label: 'Group', tracks }, okTrack('other', 'Other')],
+  });
+
+  const CASES: {
+    name: string;
+    config: unknown;
+    props?: Partial<El>;
+    customize?: boolean;
+  }[] = [
+    { name: 'collapsed group', config: group([lab(), pale()]) },
+    {
+      name: 'expanded group',
+      config: group([lab(), pale()]),
+      props: { openGroups: ['G'] },
+    },
+    { name: 'group-error row', config: group([broken(), pale()]) },
+    {
+      name: 'hidden track',
+      config: group([okTrack('shown', 'Shown'), { ...lab(), hidden: true }]),
+      props: { openGroups: ['G'] },
+    },
+    {
+      name: 'customize ghost and stub',
+      config: group([
+        okTrack('shown', 'Shown'),
+        { ...lab(), hidden: true },
+        pale(),
+      ]),
+      props: { openGroups: ['G'] },
+      customize: true,
+    },
+    {
+      name: 'no results',
+      config: { sequence: RESIDUES, rows: [partner(), pale()] },
+    },
+  ];
+
+  it.each(CASES)('$name', async ({ config, props, customize }) => {
+    quiet();
+    const { el, events } = mountEl(config, {
+      attrs: ['show-warnings'],
+      ...(props ? { props } : {}),
+    });
+    await vi.waitFor(() => {
+      if (!el.querySelector(`nightingale-manager, .protvista-no-results`)) {
+        throw new Error('not rendered');
+      }
+      if (
+        !events.some(hasCode('unpaintable-color')) &&
+        !events.some(hasCode('coordinate-out-of-range'))
+      ) {
+        throw new Error('no warnings yet');
+      }
+    });
+    await sleep(20);
+    if (customize) el._customizeMode = true;
+    await el.updateComplete;
+    const expected = eventTexts(events);
+    expect(expected.length).toBeGreaterThan(0);
+    expect(authorTexts(el).sort()).toEqual([...expected].sort());
   });
 });

@@ -142,6 +142,23 @@ describe('normalizeConfig — theme pass-through', () => {
   });
 });
 
+describe('normalizeConfig — showWarnings pass-through', () => {
+  it('carries author mode through, on or off', () => {
+    for (const showWarnings of [true, false]) {
+      const out = normalizeConfig({
+        rows: [{ id: 'C', tracks: [] }],
+        showWarnings,
+      });
+      expect(out.showWarnings).toBe(showWarnings);
+    }
+  });
+
+  it('omits it when the config does not set it', () => {
+    const out = normalizeConfig({ rows: [{ id: 'C', tracks: [] }] });
+    expect('showWarnings' in out).toBe(false);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────
 // data shorthand expansion
 // ─────────────────────────────────────────────────────────────

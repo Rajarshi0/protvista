@@ -70,7 +70,11 @@ afterEach(async () => {
 });
 
 async function mountViewer(config: unknown, attrs: string[] = []) {
-  vi.stubGlobal('fetch', vi.fn());
+  // Only the author's own `./missing.csv` is ever fetched, and it 404s.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response('Not Found', { status: 404 }))
+  );
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   const el = document.createElement('protvista-uniprot') as unknown as El;
   for (const a of attrs) el.setAttribute(a, '');
@@ -110,6 +114,43 @@ describe('visitor notices in a browser', () => {
     const el = await mountViewer(CONFIG);
     await expectNoA11yViolations(el);
     await opened(el, trackNote(el));
+    await expectNoA11yViolations(el);
+    await opened(el, el.querySelector<HTMLElement>(TOP_NOTE)!);
+    await expectNoA11yViolations(el);
+  });
+
+  it('have no axe violations in author mode, the error badge open too', async () => {
+    const el = await mountViewer(
+      {
+        ...CONFIG,
+        rows: [
+          ...CONFIG.rows,
+          {
+            id: 'broken',
+            label: 'Broken',
+            kind: 'features',
+            data: './missing.csv',
+          },
+        ],
+      },
+      ['show-warnings']
+    );
+    const error = await vi.waitFor(() => {
+      const button = el.querySelector<HTMLElement>(
+        `#${CSS_PREFIX}-group_broken .${CSS_PREFIX}-note--error`
+      );
+      if (!button) throw new Error('no error control yet');
+      return button;
+    });
+    await expectNoA11yViolations(el);
+    await opened(
+      el,
+      el.querySelector<HTMLElement>(
+        `#${CSS_PREFIX}-group_lab .${CSS_PREFIX}-note--author`
+      )!
+    );
+    await expectNoA11yViolations(el);
+    await opened(el, error);
     await expectNoA11yViolations(el);
     await opened(el, el.querySelector<HTMLElement>(TOP_NOTE)!);
     await expectNoA11yViolations(el);
