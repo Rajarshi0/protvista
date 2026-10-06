@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest something ProtVista should do.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What are you trying to do?
+      description: Describe the use case, and the data or protein involved if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help
+      description: The behaviour or config you'd like. Rough ideas are fine.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today
+      description: Any workaround you use now, or alternatives you've considered.

@@ -1,5 +1,7 @@
 # Contributing to ProtVista
 
+> **Contributing to v5, or here for the hackathon?** This file describes the 4.x line on `main`. New work happens on **`next`**: follow [`next`'s CONTRIBUTING.md](https://github.com/ebi-webcomponents/protvista/blob/next/CONTRIBUTING.md), which explains how to fork with `next`, set up (pnpm, Node 24, Windows notes) and open your pull request against `next`.
+
 Thank you for your interest in contributing to ProtVista! This document provides guidelines for contributing to the project.
 
 ProtVista is maintained as open-source research software and is part of an ongoing sustainability effort supported through the Research Software Maintenance Fund (RSMF).

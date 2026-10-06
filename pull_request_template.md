@@ -12,6 +12,7 @@ add screenshots/recordings if applicable
 
 ## Checklist
 
+- [ ] The base branch is `next` for v5 work (including the hackathon); `main` only for a 4.x fix
 - [ ] My PR is scoped properly, and "does one thing only"
 - [ ] I have reviewed my own code
 - [ ] I have checked that linting checks pass and type safety is respected
