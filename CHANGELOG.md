@@ -195,6 +195,11 @@ embedder that sets the `accession` attribute only after the element has
 mounted should hold the load with `suspend` until then, which was already the
 supported path.
 
+### Fixed: the playground no longer scrolls sideways on a phone
+
+The preset picker is as wide as its longest preset name, which pushed the
+playground page about 60px sideways at 390px wide. It now shrinks to fit.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour
