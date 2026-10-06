@@ -186,7 +186,7 @@ const countVariantsForFilter = (
   return false;
 };
 
-export const colorConfig = (variant: any) => {
+export const colorConfig = (variant: VariationDatum) => {
   if (countVariantsForFilter('disease', variant)) {
     return scaleColors.UPDiseaseColor;
   } else if (countVariantsForFilter('nonDisease', variant)) {
