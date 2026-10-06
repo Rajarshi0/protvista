@@ -1,6 +1,10 @@
 # Spec: Harden the AlphaFold / AlphaMissense adapters
 
-Status: **Proposed** (follow-on work)
+Status: **Partly superseded (Oct 2026).** The adapters now live in
+`src/schema/adapters/`, and they throw on bad input on purpose: the loader's
+per-track catch turns the throw into a track error (a `⚠` badge and a
+`protvista-error` event), which meets Goal 3 by a different route and replaces
+Goal 1 ("no adapter throws"). The rest is kept as a record of the design.
 Owner: _unassigned_
 Related: `specs/generic-format-adapters.md`, `specs/config-approach.md` (Error events), the per-track loader-resilience fix in `src/load-data.ts`.
 
@@ -38,9 +42,9 @@ their internal fetch/parse failures must be observable.
 
 | File | Role |
 | --- | --- |
-| `src/adapters/alphafold-confidence-adapter.ts` | `alphafold-confidence` kind → `alphafold-prediction-json` |
-| `src/adapters/alphamissense-pathogenicity-adapter.ts` | `alphamissense-pathogenicity` kind → `alphamissense-average-csv`; also **exports the shared `rowSplitter` / `cellSplitter`** |
-| `src/adapters/alphamissense-heatmap-adapter.ts` | `alphamissense-heatmap` kind → `alphamissense-full-csv` |
+| `src/schema/adapters/alphafold-confidence-adapter.ts` | `alphafold-confidence` kind → `alphafold-prediction-json` |
+| `src/schema/adapters/alphamissense-pathogenicity-adapter.ts` | `alphamissense-pathogenicity` kind → `alphamissense-average-csv`; also **exports the shared `rowSplitter` / `cellSplitter`** |
+| `src/schema/adapters/alphamissense-heatmap-adapter.ts` | `alphamissense-heatmap` kind → `alphamissense-full-csv` |
 
 All three are **two-argument** adapters: the config feeds them via
 `data: { source: [alphafoldPrediction, proteins] }` (see `default-config.yaml`

@@ -4,7 +4,7 @@
  *
  * jsdom's CSS parser (cssom) is CSS2-era and cannot parse modern syntax
  * such as native nesting, `:has()`, `@layer`, `@container`, etc. When
- * `<protvista-uniprot>` attaches its stylesheet (see src/protvista-styles.ts),
+ * `<protvista-uniprot>` attaches its stylesheet (see src/styles/protvista-styles.ts),
  * jsdom logs `Error: Could not parse CSS stylesheet` for every rule it
  * doesn't understand. The stylesheet still attaches and the tests still
  * pass — it's pure log noise that drowns out real errors.

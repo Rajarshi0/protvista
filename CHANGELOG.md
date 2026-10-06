@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fixed: contributing from Windows, and docs that disagreed with the code
+
+Cloning and testing ProtVista on Windows now works the same as on macOS and
+Linux. Every text file checks out with LF line endings whatever Git's
+`core.autocrlf` says, `package.json` scripts run in pnpm's POSIX-style shell
+instead of `cmd.exe`, and `pnpm test` no longer fails on Windows at the lint
+step or in specs that assumed `/` path separators. A Windows CI job now checks
+lint, types and unit tests on every pull request.
+
+The Starter Kit no longer says it "does not work yet", and gives Windows users
+commands that work in Command Prompt. CONTRIBUTING.md now explains how to
+contribute through a fork (fork with `next`, and open pull requests against
+`next`, not the default `main`) and has notes for hackathon participants and
+Windows users.
+
+The docs now say that a CSV or TSV feature file needs a `description` column
+(cells may be empty). The custom-adapter example on Escape hatches now works:
+a custom adapter is handed the response parsed as JSON, never as text. The
+page also documents `setTrackData()` and the current limit on
+`registerComponent`.
+
 ### Changed: the ⚠ error badge opens a note, like the ⓘ
 
 A track or group's red `⚠` badge is now a button that behaves like the
