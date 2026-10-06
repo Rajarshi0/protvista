@@ -2,10 +2,12 @@
 
 A Web Component which uses [Nightingale](https://github.com/ebi-webcomponents/nightingale) components to display protein sequence information.
 
+> 🧪 **Joining the ProtVista hackathon (7–9 October 2026), or contributing to v5?** Work happens on the **[`next`](https://github.com/ebi-webcomponents/protvista/tree/next)** branch, not `main`. When you fork, **untick "Copy the `main` branch only"**, then follow [`next`'s CONTRIBUTING.md](https://github.com/ebi-webcomponents/protvista/blob/next/CONTRIBUTING.md#contributing-via-a-fork) and open your pull request against **`next`**. To bring your own data without writing code, use the [Starter Kit](https://github.com/ebi-webcomponents/protvista-starter-kit) or the [playground](https://ebi-webcomponents.github.io/protvista/playground/).
+
 **Branching model and v5**
 
 > - **`main` (this branch)** is the current-major **4.x** production line. Published on npm as `protvista-uniprot`; custom element `<protvista-uniprot>`. Receives non-breaking changes (security, performance, dependencies, CI). Use this for production.
-> - **[`next`](../../tree/next)** is the **v5** development line. It carries any breaking changes that come out of the [SSI RSMF](ROADMAP.md) work: a configuration-driven loader, a published JSON-Schema for viewer configurations, a declarative tooltip resolver.`v5` will rename the package and element to `protvista`. GitHub has already been renamed and the old URL auto-redirects, and `protvista-uniprot` will remain on npm as a deprecated alias once v5 ships. **Schemas and APIs on `next` are still evolving — do not depend on them in production yet.** Targeted production release: early 2027.
+> - **[`next`](https://github.com/ebi-webcomponents/protvista/tree/next)** is the **v5** development line. It carries any breaking changes that come out of the [SSI RSMF](ROADMAP.md) work: a configuration-driven loader, a published JSON-Schema for viewer configurations, a declarative tooltip resolver. v5 keeps the `protvista-uniprot` package name and the `<protvista-uniprot>` element; a rename to the generic `protvista` remains under consideration for a later cycle, not this one. (The GitHub repository has already been renamed to `protvista` and the old URL auto-redirects — that is the repo only, not the npm package.) **Schemas and APIs on `next` are still evolving — do not depend on them in production yet.** Targeted production release: early 2027.
 
 ![Image of ProtVista](protvista.png)
 

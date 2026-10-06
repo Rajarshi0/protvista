@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in ProtVista is broken or behaves differently from the docs.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. If the problem is getting your own data to load, the "My data won't load" form asks for what we need to help with that.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest config and data that show the problem. A playground link is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Error output
+      description: Messages from the browser console, or the `detail` of the `protvista-error` event (see the [troubleshooting page](https://ebi-webcomponents.github.io/protvista/troubleshooting)).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: ProtVista version
+      description: e.g. 5.0.0-beta.3 from the CDN, or `next` at a commit.
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      placeholder: e.g. Firefox 143 on macOS 26
