@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: the 3D structure viewer works when loaded from a CDN
+
+Loaded straight from jsDelivr, as the Starter Kit and any plain
+`<script type="module">` page do, the structure panel failed with
+"process is not defined" and showed no 3D view. A library inside Mol* read
+`process.env.NODE_ENV`, which only a bundler provides; the build now
+replaces it. Pages that bundle ProtVista themselves were not affected.
+
 ## 5.0.0-beta.4 — 2026-10-06
 
 ### Fixed: contributing from Windows, and docs that disagreed with the code

@@ -228,5 +228,20 @@ describe.skipIf(!pkg.module || !existsSync(resolve(root, pkg.module)))(
 
       expect(excluded).toEqual([]);
     });
+
+    it('leaves no process.env.NODE_ENV for a browser to trip on', () => {
+      // Library mode keeps `process.env.NODE_ENV` in bundled dependencies
+      // for the consumer's bundler to replace, but a page loading dist/
+      // straight from a CDN has no bundler and no `process`. immer (via
+      // Mol*) reads it unguarded, and the structure viewer failed with
+      // "process is not defined". vite.config.mjs `define`s it for builds.
+      const offending = distEntries().filter(
+        (rel) =>
+          /\.(m?js)$/.test(rel) &&
+          read(rel).includes('process.env.NODE_ENV')
+      );
+
+      expect(offending).toEqual([]);
+    });
   }
 );
