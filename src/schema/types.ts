@@ -922,6 +922,11 @@ export interface ProtvistaRuntimeAPI {
    * gets its tag defined automatically when the config references it,
    * with no consumer `customElements.define()` call. The name must not
    * collide with a built-in renderable component.
+   *
+   * Limitation: the component is defined and validated but not yet
+   * drawn. Its track renders empty and an `unrendered-component`
+   * warning is reported. A new renderer has to be added inside
+   * ProtVista (`RENDERABLE_COMPONENTS` plus a `getTrack()` case).
    */
   registerComponent(name: string, ctor: CustomElementConstructor): void;
 

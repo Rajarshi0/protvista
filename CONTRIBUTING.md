@@ -192,6 +192,10 @@ Welcome! For the ProtVista hackathon (7–9 October 2026):
   and documentation fixes are contributions too. If something in the docs
   confused you, that's worth an issue or a PR.
 - **Start with `pnpm test:unit`.** It is quick and needs no browser.
+- **Adding a new kind of track?** Add it as a built-in renderer
+  (`RENDERABLE_COMPONENTS` in `src/built-in-components.ts` plus a case in
+  `getTrack()`), not through `registerComponent`: components registered at
+  runtime are not drawn yet (see [the registry](#the-registry)).
 - **CI checks coverage.** A PR that lowers test coverage below the floor fails
   CI. If you're unsure how to test your change, ask a mentor to pair with you.
 - **Your first PR's checks may wait for approval** (see step 7 above); a mentor
@@ -252,6 +256,12 @@ so behaviour never depends on call order. The one deliberate exception is
 built-in **adapters**: because an adapter names a *data source* rather than a
 viewer behaviour, an adopter reading a different feed may register over a
 built-in adapter name (such as `uniprot-features-json`) exactly once.
+
+One limitation: a component added with `registerComponent` is defined and
+validated but **not yet drawn**. Its track stays empty and the viewer reports
+an `unrendered-component` warning, because `getTrack()` only renders the
+built-in components. To add a new kind of track renderer, add it as a built-in
+(below) rather than registering it at runtime.
 
 To add a **new built-in**, add an entry to the relevant table
 (`BUILTIN_SEMANTIC_KINDS` / `BUILTIN_THEMES` in `registry.ts`,

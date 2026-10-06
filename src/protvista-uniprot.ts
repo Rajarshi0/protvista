@@ -959,6 +959,10 @@ class ProtvistaUniprot extends LitElement {
    * Register a custom component so a semantic kind (or explicit
    * `component:`) resolving to `name` gets its tag defined by the
    * registration walk — no consumer `customElements.define()` needed.
+   *
+   * Limitation: the component is defined and validated but not yet
+   * drawn — `getTrack()` has no case for it, so its track renders empty
+   * and an `unrendered-component` warning is reported.
    */
   registerComponent(name: string, ctor: CustomElementConstructor): void {
     this.registry.registerComponent(name, ctor);
