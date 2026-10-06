@@ -563,6 +563,48 @@ describe('sequence mode — config failures reach the routed config report', () 
     });
   });
 
+  it('raises one accession-and-sequence, and no TypeError, for an accession set after setConfig({ sequence, rows: [] })', async () => {
+    stubEntry();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // A bare element, appended before any config: it reports
+    // missing-protein first. The test counts what follows.
+    const el = mountEl({});
+    const events = collect(el);
+    // Wait for that report itself, not a fixed tick: under a loaded run it
+    // can land after one, and would then be counted below.
+    await vi.waitFor(() => {
+      const codes = events.flatMap((e) =>
+        (e.detail.issues ?? []).map((i) => i.code)
+      );
+      if (!codes.includes('missing-protein')) {
+        throw new Error('no missing-protein yet');
+      }
+    });
+    await settle();
+    events.length = 0;
+    await el.setConfig({ sequence: 'MQNCSGGMDLWFHSEG', rows: [] });
+    await el.updateComplete;
+    await settle();
+
+    el.accession = 'P05067';
+    await vi.waitFor(() => {
+      if (!el.querySelector(ISSUES)) throw new Error('panel not ready');
+    });
+    await settle();
+    const config = events.filter((e) => e.detail.phase === 'config');
+    expect(config).toHaveLength(1);
+    expect(config[0].detail.issues.map((i) => i.code)).toEqual([
+      'accession-and-sequence',
+    ]);
+    expect(config[0].detail.issues[0].message).toContain(
+      "An accession ('P05067') was supplied by the host"
+    );
+    // The empty `rows` never reached code that read `.rows` off a missing
+    // config.
+    const logged = error.mock.calls.flat().map(String).join('\n');
+    expect(logged).not.toMatch(/TypeError/);
+  });
+
   it('withholds a data-accession or variables accession from the variables', async () => {
     stubEntry();
     const el = document.createElement('protvista-uniprot') as unknown as El;

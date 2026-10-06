@@ -11,7 +11,7 @@
  * the author has, and every non-`blob:` URL is recorded.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { userEvent } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 
 import exampleConfig from '../../examples/sequence-only/config.yaml?raw';
 import exampleProtein from '../../examples/sequence-only/protein.fasta?raw';
@@ -19,6 +19,9 @@ import exampleHotspots from '../../examples/sequence-only/hotspots.csv?raw';
 import playgroundPage from '../../docs/src/pages/playground.astro?raw';
 import { decodeState } from '../playground/url-state.js';
 import { PRIVACY_NOTE } from '../playground/local-files.js';
+import { sequenceTargetSummary } from '../playground/config-edit.js';
+import { getPreset } from '../playground/presets.js';
+import { parseConfigText } from '../schema/parse.js';
 import { expectNoA11yViolations } from './axe.js';
 import {
   byId,
@@ -30,7 +33,11 @@ import {
   notFoundPageRelative,
   openPlayground,
   pick,
+  pickFixture,
+  pressUndo,
+  choose,
   preview,
+  fixtureText,
   setEditorText,
 } from './playground-page.js';
 
@@ -326,7 +333,7 @@ describe('playground: load a FASTA file as the sequence', () => {
     expect(listItems()).toEqual([]);
 
     editorView().focus();
-    await userEvent.keyboard('{Control>}z{/Control}');
+    await pressUndo();
     expect(editorText()).toBe(REMOTE_CONFIG);
 
     // This config anyway: the track that needs UniProt is listed, and the
@@ -619,6 +626,21 @@ describe('playground: load a FASTA file as the sequence', () => {
       )
     );
     expect(byId('data-attach').hidden).toBe(true);
+    // Until the sequence is loaded, only it is listed as missing, and
+    // the preview is held back, saying what to load.
+    await vi.waitFor(() =>
+      expect(
+        listItems()
+          .filter((li) => li.dataset.code === 'local-file-missing')
+          .map((li) => li.textContent)
+      ).toEqual([
+        './protein.fasta isn\'t loaded in this browser — press "Load data file…" and pick protein.fasta.',
+      ])
+    );
+    expect(byId('preview-stale').hidden).toBe(false);
+    expect(byId('preview-stale').textContent).toBe(
+      "Load protein.fasta to see the preview — the config's sequence: names it."
+    );
 
     await pick('protein.fasta', exampleProtein);
     await vi.waitFor(() =>
@@ -636,5 +658,140 @@ describe('playground: load a FASTA file as the sequence', () => {
     );
     expect(listItems()).toEqual([]);
     expect(recorded.slice(from)).toEqual([]);
+  });
+
+  it('replaces a 240-residue inline block with crambin, keeping the loaded hotspots file, whose rows now fall outside it', async () => {
+    // The 240-residue construct inline, and a file track.
+    const residues = fixtureText('protein.fasta')
+      .trim()
+      .split('\n')
+      .map((line) => `  ${line}`)
+      .join('\n');
+    const tracks = `rows:
+  - id: hotspots
+    label: Hotspots on {accession}
+    kind: features
+    data: ./seq-hotspots.csv
+`;
+    setEditorText(`sequence: |\n${residues}\n${tracks}`);
+    await pickFixture('seq-hotspots.csv');
+    await vi.waitFor(() =>
+      expect(sequenceTrack()?.getAttribute('length')).toBe('240')
+    );
+    const from = recorded.length;
+
+    await pickFixture('crambin.fasta');
+    await formOpens();
+    expect(radio('this').checked).toBe(true);
+    expect(consequences('this')).toEqual([
+      'Sets sequence: ./crambin.fasta',
+      'Replaces the inline sequence (240 residues)',
+      'Keeps the tracks',
+    ]);
+    await use();
+    await vi.waitFor(() =>
+      expect(status()).toBe(LOADED('crambin.fasta', CRAMBIN_LABEL, 46))
+    );
+    // The whole | block is now one line.
+    expect(editorText()).toBe(`sequence: ./crambin.fasta\n${tracks}`);
+    await vi.waitFor(() =>
+      expect(sequenceTrack()?.getAttribute('length')).toBe('46')
+    );
+    expect(preview()?.textContent).toContain(`Hotspots on ${CRAMBIN_LABEL}`);
+    const row = await vi.waitFor(() => {
+      const li = listItems().find((l) => l.dataset.severity === 'warning');
+      if (!li) throw new Error('no warning listed');
+      return li;
+    });
+    expect(row.textContent).toContain(
+      '[track-data] ./seq-hotspots.csv (parsed as CSV): 4 of 4 rows fall ' +
+        `outside ${CRAMBIN_LABEL} (46 residues)`
+    );
+    expect(recorded.slice(from)).toEqual([]);
+  });
+
+  it('defaults the UniProt preset to a new sequence-only config, counting its UniProt tracks, and Ctrl+Z brings the preset back', async () => {
+    await choose('uniprot-default');
+    const preset = getPreset('uniprot-default')!.config;
+    expect(editorText()).toBe(preset);
+    const { needsUniprot } = sequenceTargetSummary(
+      await parseConfigText(preset)
+    );
+    expect(needsUniprot).toBeGreaterThan(1);
+
+    dropOnPane([new File([fixtureText('construct.fasta')], 'construct.fasta')]);
+    await formOpens();
+    expect(radio('new').checked).toBe(true);
+    expect(consequences('this')).toContain(
+      `${needsUniprot} tracks need UniProt data and would be listed as errors`
+    );
+    await use();
+    await vi.waitFor(() =>
+      expect(status()).toBe(
+        `${LOADED('construct.fasta', 'my construct v2', 66)} The previous ` +
+          'config was replaced — press Ctrl/Cmd+Z in the editor to undo.'
+      )
+    );
+    await vi.waitFor(() =>
+      expect(preview()?.textContent).toContain(
+        'No feature data available for my construct v2'
+      )
+    );
+
+    editorView().focus();
+    await pressUndo();
+    expect(editorText()).toBe(preset);
+  });
+
+  it('stacks the form for a 390 px phone with no sideways scroll, and works by keyboard', async () => {
+    const { innerWidth: width, innerHeight: height } = window;
+    const css = /<style is:global>([\s\S]*?)<\/style>/.exec(playgroundPage)![1];
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.append(style);
+    await page.viewport(390, 844);
+    const box = (el: Element) => el.getBoundingClientRect();
+    try {
+      setEditorText(ACCESSION_CONFIG);
+      await pickFixture('construct.fasta');
+      await formOpens();
+      const [thisRadio, newRadio] = [radio('this'), radio('new')];
+      const [thisList, newList] = [thisRadio, newRadio].map(
+        (r) => byId(r.getAttribute('aria-describedby')!)
+      );
+      // A column: each radio's list under its label, the second radio below
+      // the first one's list, both radios at the same left edge.
+      expect(box(newRadio).left).toBeCloseTo(box(thisRadio).left, 0);
+      expect(box(thisList).top).toBeGreaterThanOrEqual(
+        box(byId('sequence-target-this').nextElementSibling!).bottom - 0.5
+      );
+      expect(box(newRadio).top).toBeGreaterThanOrEqual(
+        box(thisList).bottom - 0.5
+      );
+      expect(box(newList).top).toBeGreaterThan(box(newRadio).top);
+      const form = document.querySelector('.local-files')!;
+      expect(form.scrollWidth).toBeLessThanOrEqual(form.clientWidth);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+
+      // Arrows move between the radios; Tab reaches Use and Shift+Tab
+      // comes back; Escape closes the form and returns focus.
+      expect(document.activeElement).toBe(thisRadio);
+      await userEvent.keyboard('{ArrowDown}');
+      expect(document.activeElement).toBe(newRadio);
+      expect(newRadio.checked).toBe(true);
+      await userEvent.keyboard('{ArrowUp}');
+      expect(document.activeElement).toBe(thisRadio);
+      expect(thisRadio.checked).toBe(true);
+      await userEvent.tab();
+      expect(document.activeElement?.textContent).toBe('Use');
+      await userEvent.tab({ shift: true });
+      expect(document.activeElement).toBe(thisRadio);
+      await userEvent.keyboard('{Escape}');
+      expect(sequenceForm()).toBeNull();
+      expect(document.activeElement).toBe(byId('load-data'));
+    } finally {
+      await page.viewport(width, height);
+      style.remove();
+    }
   });
 });

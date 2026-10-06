@@ -1,0 +1,5 @@
+type,start,end,description,score
+DOMAIN,18,140,Binding domain (designed),0.95
+BINDING,62,70,Predicted heparin-binding site,0.87
+REGION,150,190,Flexible linker,0.6
+MUTAGEN,214,214,Lab-observed loss-of-function point mutation,0.75

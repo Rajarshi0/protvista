@@ -9,16 +9,24 @@
  * byte-identical copies, which `presets.spec.ts` checks); any other
  * `/protvista/sample-data/` path, and any page-relative URL, answers 404, as
  * the docs host would. The Proteins API answers for P24297 with the literals
- * below; every other remote URL (the structure panel's, for one) answers 404,
- * an expected absence that the playground does not list. Every non-`blob:`
- * URL is recorded.
+ * below, for crambin (P01542) with its real sequence, and for any other
+ * accession with a 770-residue protein and no features; every other remote
+ * URL (the structure panel's, for one) answers 404, an expected absence that
+ * the playground does not list. Every non-`blob:` URL is recorded.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { userEvent } from 'vitest/browser';
 
+import defaultConfigYaml from '../default-config.yaml?raw';
+import hotspotsCsv from '../../examples/csv/hotspots.csv?raw';
+import hotspotsJson from '../../examples/json/hotspots.json?raw';
+import csvStyledHits from '../../examples/csv-styled/hits.csv?raw';
 import smallPeptideStructure from '../../examples/small-peptide/structure.csv?raw';
 import conservationCsv from '../../examples/conservation/conservation.csv?raw';
 import conservedSitesCsv from '../../examples/conservation/conserved-sites.csv?raw';
+import { CSS_PREFIX } from '../styles/css-prefix.js';
+import { PRESETS, getPreset } from '../playground/presets.js';
+import { decodeState } from '../playground/url-state.js';
 import {
   byId,
   closePlayground,
@@ -28,10 +36,14 @@ import {
   openPlayground,
   pick,
   preview,
+  setEditorText,
 } from './playground-page.js';
 
 /** The files the docs site serves under `/protvista/sample-data/`. */
 const SERVED: Record<string, string> = {
+  '/protvista/sample-data/hotspots.csv': hotspotsCsv,
+  '/protvista/sample-data/hotspots.json': hotspotsJson,
+  '/protvista/sample-data/csv-styled/hits.csv': csvStyledHits,
   '/protvista/sample-data/small-peptide/structure.csv': smallPeptideStructure,
   '/protvista/sample-data/conservation/conservation.csv': conservationCsv,
   '/protvista/sample-data/conservation/conserved-sites.csv': conservedSitesCsv,
@@ -55,6 +67,21 @@ const P24297_BINDING = [6, 9, 39, 42].map((at) => ({
   },
 }));
 
+/** Crambin P01542 (46 residues), as UniProt release 2026_03 gives it. */
+const P01542_SEQUENCE = 'TTCCPSIVARSNFNVCRLPGTPEALCATYTGCIIIPGATCPGDYAN';
+
+/** A protein's sequence for the Proteins API stub. */
+const sequenceOf = (accession: string) =>
+  accession === 'P01542' ? P01542_SEQUENCE : 'M'.repeat(770);
+
+const STUB_DOMAIN = {
+  type: 'DOMAIN',
+  category: 'DOMAINS_AND_SITES',
+  begin: '2',
+  end: '20',
+  description: 'Stub domain',
+};
+
 const NOT_FOUND = () =>
   new Response('Not Found', { status: 404, statusText: 'Not Found' });
 
@@ -72,7 +99,30 @@ function respond(url: string): Response | undefined {
       features: P24297_BINDING,
     });
   }
+  // Any other entry: its sequence and one domain, so the default viewer has
+  // a track to draw rather than its empty state.
+  const entry = /\/proteins\/api\/(proteins|features)\/(\w+)$/.exec(url);
+  if (entry) {
+    const [, endpoint, accession] = entry;
+    const sequence = sequenceOf(accession);
+    return Response.json(
+      endpoint === 'proteins'
+        ? {
+            accession,
+            sequence: { sequence, length: sequence.length },
+            features: [],
+            comments: [],
+            dbReferences: [],
+          }
+        : { accession, sequence, features: [STUB_DOMAIN] }
+    );
+  }
   if (/^https?:/.test(url)) return NOT_FOUND();
+  // The base config `extend-uniprot` extends, which the site generates from
+  // `src/default-config.yaml`.
+  if (url === '/protvista/default-config.yaml') {
+    return new Response(defaultConfigYaml);
+  }
   if (url.startsWith('/protvista/sample-data/')) {
     const body = SERVED[url];
     return body === undefined ? NOT_FOUND() : new Response(body);
@@ -89,6 +139,54 @@ const sequenceLength = () =>
 /** The records the mounted preview holds for a track. */
 const records = (key: string) =>
   preview()?.data?.[key] as unknown[] | undefined;
+
+type Feature = {
+  type: string;
+  start: number;
+  end: number;
+  tooltipContent?: string;
+};
+/** A track's records, as `type start–end`. */
+const spans = (key: string) =>
+  (records(key) as Feature[] | undefined)?.map(
+    (f) => `${f.type} ${f.start}–${f.end}`
+  );
+
+/**
+ * Click `feature` on a track, as Nightingale reports a click, and return the
+ * tooltip it opens: each `<h5>` heading paired with the text under it.
+ */
+function clickFeature(key: string, feature: Feature): [string, string][] {
+  const track = preview()!.querySelector<HTMLElement>(
+    `#${CSS_PREFIX}-track-${key}`
+  )!;
+  track.dispatchEvent(
+    new CustomEvent('change', {
+      detail: { eventType: 'click', feature },
+      bubbles: true,
+    })
+  );
+  const tooltip = preview()!.querySelector<HTMLElement>(
+    ':scope > .protvista-tooltip'
+  )!;
+  expect(tooltip.hidden).toBe(false);
+  return [...tooltip.querySelectorAll('h5')].map((h) => [
+    h.textContent ?? '',
+    h.nextElementSibling?.textContent ?? '',
+  ]);
+}
+
+/** Close an open tooltip, as Escape does. */
+async function closeTooltip(): Promise<void> {
+  await userEvent.keyboard('{Escape}');
+}
+
+/** Resolves once the preview has mounted and its ruler says `length`. */
+async function rendered(length: string): Promise<void> {
+  await vi.waitFor(() => expect(sequenceLength()).toBe(length), {
+    timeout: 5000,
+  });
+}
 
 /** Resolves once no request has been recorded for 300 ms. */
 async function settled(): Promise<void> {
@@ -251,5 +349,177 @@ describe('playground presets: conservation, your own sequence and small proteins
       '4 of 4 rows fall outside my construct v2 (66 residues)'
     );
     expect(recorded).toEqual([]);
+  });
+
+  it('small-peptide draws Trp-cage’s helices, PPII stretch and Trp6, and Trp6’s tooltip says why', async () => {
+    await choose('small-peptide');
+    await rendered('20');
+    await vi.waitFor(() =>
+      expect(spans('structure-structure')).toEqual([
+        'HELIX 2–8',
+        'HELIX 11–14',
+        'REGION 17–19',
+        'SITE 6–6',
+      ])
+    );
+    const site = (records('structure-structure') as Feature[]).find(
+      (f) => f.type === 'SITE'
+    )!;
+    expect(clickFeature('structure-structure', site)).toContainEqual([
+      'Description',
+      'Trp6, buried in the cage',
+    ]);
+    await closeTooltip();
+  });
+
+  it('conservation shows its three rows, the six most conserved residues, and the four binding sites on four of the peaks', async () => {
+    await choose('conservation');
+    await rendered('54');
+    await vi.waitFor(() =>
+      expect(records('binding_sites-binding_sites')).toHaveLength(4)
+    );
+    for (const label of [
+      'Conservation (Pfam PF00301)',
+      'Most conserved residues',
+      'UniProt binding sites',
+    ]) {
+      expect(preview()?.textContent).toContain(label);
+    }
+    // UniProt gives its coordinates as strings.
+    const starts = (key: string) =>
+      (records(key) as Feature[]).map((f) => Number(f.start));
+    expect(starts('conserved_sites-conserved_sites')).toEqual([
+      6, 9, 13, 37, 39, 42,
+    ]);
+    expect(starts('binding_sites-binding_sites')).toEqual([6, 9, 39, 42]);
+    // The line runs from residue 4 to 49 with no gaps.
+    const [line] = records('conservation-conservation') as {
+      values: { position: number }[];
+    }[];
+    expect(line.values.map((v) => v.position)).toEqual(
+      Array.from({ length: 46 }, (_, i) => i + 4)
+    );
+  });
+
+  it('a conserved residue’s tooltip gives its score and why it is shown; a binding site’s names its ligand', async () => {
+    const conserved = records('conserved_sites-conserved_sites') as Feature[];
+    const why =
+      'At or above the 90th percentile of the scored residues in Pfam PF00301';
+    for (const [at, score] of [
+      [6, '0.877'],
+      [37, '0.759'],
+    ] as const) {
+      expect(
+        clickFeature(
+          'conserved_sites-conserved_sites',
+          conserved.find((f) => f.start === at)!
+        ),
+        `residue ${at}`
+      ).toEqual([
+        ['Residue', String(at)],
+        ['Conservation score', score],
+        ['Why it is shown', why],
+      ]);
+      await closeTooltip();
+    }
+    const binding = records('binding_sites-binding_sites') as Feature[];
+    expect(
+      clickFeature(
+        'binding_sites-binding_sites',
+        binding.find((f) => Number(f.start) === 9)!
+      )
+    ).toEqual([
+      ['Residue', '9'],
+      ['Ligand', 'Fe cation'],
+    ]);
+    await closeTooltip();
+  });
+
+  it('small-protein shows the default viewer on crambin, 46 residues', async () => {
+    await choose('small-protein');
+    expect(accessionBox().value).toBe('P01542');
+    await rendered('46');
+    expect(preview()?.getAttribute('accession')).toBe('P01542');
+    expect(recorded).toContain(
+      'https://www.ebi.ac.uk/proteins/api/proteins/P01542'
+    );
+  });
+
+  it('own-sequence disables the accession box, and Basic enables it again with its own accession', async () => {
+    await choose('own-sequence');
+    await rendered('240');
+    expect(accessionBox().disabled).toBe(true);
+    expect(byId('accession-hint').textContent).toBe(
+      'Not used: this config sets sequence:'
+    );
+    await choose('basic');
+    await vi.waitFor(() =>
+      expect(preview()?.getAttribute('accession')).toBe(
+        getPreset('basic')!.accession
+      )
+    );
+    expect(accessionBox().disabled).toBe(false);
+    expect(byId('accession-hint').hidden).toBe(true);
+    expect(accessionBox().value).toBe(getPreset('basic')!.accession);
+  });
+
+  it('the UniProt preset after a sequence: config re-enables the box and loads P05067', async () => {
+    await choose('own-sequence');
+    await rendered('240');
+    await choose('uniprot-default');
+    expect(accessionBox().disabled).toBe(false);
+    expect(accessionBox().value).toBe('P05067');
+    await rendered('770');
+    expect(preview()?.getAttribute('accession')).toBe('P05067');
+  });
+
+  it('a new accession, entered in the box, reloads the viewer for it with nothing listed', async () => {
+    await settled();
+    recorded.length = 0;
+    await userEvent.fill(accessionBox(), 'P69905');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect(preview()?.getAttribute('accession')).toBe('P69905')
+    );
+    await rendered('770');
+    await settled();
+    expect(recorded).toContain(
+      'https://www.ebi.ac.uk/proteins/api/proteins/P69905'
+    );
+    expect(recorded.filter((url) => url.includes('P05067'))).toEqual([]);
+    expect(listItems().map((li) => li.textContent)).toEqual([]);
+  });
+
+  it('an edited config goes into the link with the accession', async () => {
+    const edited = `# My edit\n${editorText()}`;
+    setEditorText(edited);
+    await vi.waitFor(() =>
+      expect(decodeState(location.hash)).toEqual({
+        config: edited,
+        accession: 'P69905',
+      })
+    );
+    expect(byId<HTMLSelectElement>('preset').value).toBe('custom');
+  });
+
+  it('every preset renders with nothing listed and no console error', async () => {
+    const errors = vi.spyOn(console, 'error');
+    expect(PRESETS.map((p) => p.id)).toHaveLength(12);
+    for (const preset of PRESETS) {
+      await choose(preset.id);
+      await vi.waitFor(() => expect(preview()).not.toBeNull());
+      await settled();
+      // Give a late failure time to be listed, then check none was.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(byId('error-summary').textContent, preset.id).toBe(
+        'No problems — config is valid.'
+      );
+      expect(
+        listItems().map((li) => li.textContent),
+        preset.id
+      ).toEqual([]);
+      expect(preview()!.querySelector(`.${CSS_PREFIX}-error-badge`)).toBeNull();
+    }
+    expect(errors).not.toHaveBeenCalled();
   });
 });
