@@ -13,7 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { resolve, join, extname } from 'node:path';
+import { resolve, join, extname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseConfigText } from '../parse.js';
 
@@ -240,7 +240,9 @@ function walk(
   root: string,
   visit: (relPath: string, content: string) => void
 ): void {
-  if (path === SELF_PATH) return; // this file names the markers as data
+  // this file names the markers as data. Compared via relative() so a
+  // drive-letter case difference on Windows can't defeat the check.
+  if (relative(SELF_PATH, path) === '') return;
   const stat = statOrNull(path);
   if (!stat) return; // e.g. an optional root entry that doesn't exist
   if (stat.isDirectory()) {
@@ -251,7 +253,9 @@ function walk(
     return;
   }
   if (!SCAN_EXTENSIONS.has(extname(path))) return;
-  visit(path.replace(`${root}/`, ''), readFileSync(path, 'utf8'));
+  // Always reported with `/` separators, whatever the OS, so callers can
+  // compare against repo paths like 'starter-kit/index.html'.
+  visit(relative(root, path).split(sep).join('/'), readFileSync(path, 'utf8'));
 }
 
 function statOrNull(path: string): ReturnType<typeof statSync> | null {

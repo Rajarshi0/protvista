@@ -89,7 +89,7 @@ const DEFAULT_GROUPS = [
  *  removed. Capturing both makes a before/after where the *only* difference is
  *  the theming — using two different presets would compare different data. */
 const inlineData = readRepoFile('examples/inline-data/config.yaml');
-const unthemed = inlineData.replace(/^theme:\n(?:[ \t]+.*\n)*/m, '');
+const unthemed = inlineData.replace(/^theme:\r?\n(?:[ \t]+.*\r?\n)*/m, '');
 
 const CC_BY = 'https://creativecommons.org/licenses/by/4.0/';
 
