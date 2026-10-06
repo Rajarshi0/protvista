@@ -156,7 +156,7 @@ For feature requests:
 
 If you have questions or need help:
 
-- Check existing issues and discussions.
+- Check existing issues.
 - Open a new issue with the `question` label.
 - Reach out to the maintainers.
 - Attend our monthly office hours (details below).
@@ -194,7 +194,7 @@ https://embl-org.zoom.us/j/95322862166?pwd=czx0CdN5eEsm6WltXVIQ7YdybaFkhM.1
 
 No registration required — just join the call.
 
-If you cannot attend, post questions in advance via Issues or Discussions.
+If you cannot attend, post questions in advance as an issue.
 
 Everyone is welcome, whether you're a first-time contributor or a regular collaborator.
 
