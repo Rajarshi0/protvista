@@ -167,6 +167,11 @@ const linkTag: Schema = {
  * authors get plain Markdoc (fields via `{% $field %}`, conditionals via
  * `{% if %}`/`{% /if %}`) plus the generic `{% link %}` tag above, and
  * nothing more. No domain-specific tags.
+ *
+ * `if` and `else` are Markdoc's built-in tags, which `Markdoc.transform`
+ * adds to these. Markdoc's `if` treats only `undefined`, `null` and `false`
+ * as false, so `{% if $gene %}` holds for a blank cell (`''`); the guard
+ * `{% if and($gene, not(equals($gene, ""))) %}` excludes it too.
  */
 const markdocConfig = {
   /**
@@ -854,6 +859,19 @@ function pathExists(scope: unknown, segments: readonly string[]): boolean {
 }
 
 /**
+ * What a markdown template's paths rooted outside the item resolve against:
+ * the template's `variables`, then `ctx` (later keys shadowing earlier, as in
+ * the render scope). `undefined` for a `fields` spec, whose paths always read
+ * the item.
+ */
+function fixedScopeOf(
+  spec: TooltipSpec,
+  ctx: TooltipContext
+): Record<string, unknown> | undefined {
+  return spec.kind === 'markdown' ? { ...spec.variables, ctx } : undefined;
+}
+
+/**
  * Accumulates, over one track's items, which of its spec's field paths no
  * item carries. See `createTooltipFieldTracker`.
  */
@@ -886,8 +904,7 @@ export function createTooltipFieldTracker(
   ctx: TooltipContext
 ): TooltipFieldTracker {
   const refs = fieldRefs(spec);
-  const fixedScope =
-    spec.kind === 'markdown' ? { ...spec.variables, ctx } : undefined;
+  const fixedScope = fixedScopeOf(spec, ctx);
   const fixedMisses = new Set<string>();
   const pending = new Map<string, readonly string[]>();
   for (const { path, segments } of refs) {
@@ -936,6 +953,74 @@ export function formatTooltipFieldMiss(
 }
 
 // -----------------------------------------------------------------------------
+// Fallback for a record the authored template has nothing to say about
+// -----------------------------------------------------------------------------
+
+/**
+ * When a record gets the track's default tooltip instead of its authored
+ * one. See `createTooltipFallback`.
+ */
+export interface TooltipFallback {
+  /** The spec to render instead; `undefined` means the automatic tooltip. */
+  readonly spec: TooltipSpec | undefined;
+  /** Whether `html`, the authored spec rendered for `item`, gives way. */
+  applies(item: unknown, html: string): boolean;
+}
+
+/** A field with no value: absent, `null`, or a blank cell. */
+const hasNoValue = (value: unknown): boolean =>
+  value === undefined || value === null || value === '';
+
+/**
+ * Whether rendered tooltip HTML shows any letter or digit, once its tags and
+ * character references are gone. Punctuation and whitespace alone (the
+ * ` · ` left between two empty fields, or the `<p></p>` of a template whose
+ * `{% if %}` guards all failed) are not text.
+ */
+function hasVisibleText(html: string): boolean {
+  const text = html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi, '');
+  return /[\p{L}\p{N}]/u.test(text);
+}
+
+/**
+ * Decide, per record, when an authored `dataTooltip` gives way to the
+ * track's default (`defaultSpec`: its kind's built-in tooltip, or
+ * `undefined` for the automatic one — what the track would show with no
+ * `dataTooltip`). Both must hold:
+ *
+ *   - the template references at least one field of the record, and none of
+ *     them has a value on this record. Paths rooted at `ctx` or a key of the
+ *     template's `variables` read those, not the record, so they are left
+ *     out, as the field tracker leaves them out;
+ *   - what the template rendered for the record has no letter or digit.
+ *
+ * The first is the rule: a template with nothing to work with. The second
+ * keeps a template that has its own wording for the case — an
+ * `{% else /%}No gene recorded` branch, or fixed text such as `Lab hit` —
+ * because that is a working tooltip the author wrote, not leftover
+ * punctuation.
+ */
+export function createTooltipFallback(
+  authored: TooltipSpec,
+  ctx: TooltipContext,
+  defaultSpec: TooltipSpec | undefined
+): TooltipFallback {
+  const fixedScope = fixedScopeOf(authored, ctx);
+  const itemPaths = fieldRefs(authored)
+    .filter(({ segments }) => !(fixedScope && hasOwn(fixedScope, segments[0])))
+    .map(({ path }) => path);
+  return {
+    spec: defaultSpec,
+    applies: (item, html) =>
+      itemPaths.length > 0 &&
+      itemPaths.every((path) => hasNoValue(resolvePath(item, path))) &&
+      !hasVisibleText(html),
+  };
+}
+
+// -----------------------------------------------------------------------------
 // Entry point
 // -----------------------------------------------------------------------------
 
@@ -952,15 +1037,31 @@ export function formatTooltipFieldMiss(
  * `fieldTracker`, when given, observes every item `spec` renders against
  * (never one the auto-fallback renders), so the caller can report the
  * spec's references no item carried. It does not change the output.
+ *
+ * `fallback`, when given, can replace what `spec` rendered for the item with
+ * the track's default (see `createTooltipFallback`). The tracker has already
+ * seen the item by then, so a field-miss report is the same either way.
  */
 export function resolveTooltip(
   item: unknown,
   spec: TooltipSpec | undefined,
   ctx: TooltipContext,
-  fieldTracker?: TooltipFieldTracker
+  fieldTracker?: TooltipFieldTracker,
+  fallback?: TooltipFallback
 ): string {
   if (!spec) return renderAutoFallback(item, ctx);
   fieldTracker?.observe(item);
+  const html = renderSpec(item, spec, ctx);
+  return fallback?.applies(item, html)
+    ? resolveTooltip(item, fallback.spec, ctx)
+    : html;
+}
+
+function renderSpec(
+  item: unknown,
+  spec: TooltipSpec,
+  ctx: TooltipContext
+): string {
   switch (spec.kind) {
     case 'fields':
       return renderFieldsSpec(item, spec.fields);

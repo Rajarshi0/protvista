@@ -137,7 +137,7 @@ Prefer this once you're on React 19 — don't copy the split mount/unmount `useE
 
 ## Typing the elements in JSX
 
-`import type {} from 'protvista-uniprot/react'` (once, anywhere in your program) declares `<protvista-uniprot>` and `<protvista-uniprot-structure>` as JSX intrinsic elements. It needs React 19 and `@types/react` 19 or later. Props use the **attribute** spelling — `notooltip`, `suspend`, `no-persist-layout`, `config-src`, `no-table`, `selected-id`, `color-theme` — because React 19 sets attributes, not properties, on an element that is not defined yet, and HTML lowercases attribute names: a camel-cased `noTable` would arrive as the unobserved `notable`.
+`import type {} from 'protvista-uniprot/react'` (once, anywhere in your program) declares `<protvista-uniprot>` and `<protvista-uniprot-structure>` as JSX intrinsic elements. It needs React 19 and `@types/react` 19 or later. Props use the **attribute** spelling — `notooltip`, `suspend`, `no-persist-layout`, `config-src`, `quiet-notices`, `show-warnings`, `no-table`, `selected-id`, `color-theme` — because React 19 sets attributes, not properties, on an element that is not defined yet, and HTML lowercases attribute names: a camel-cased `noTable` would arrive as the unobserved `notable`.
 
 :::caution[React 18]
 The typings target React 19. React 18 writes every custom-element prop as an attribute, including `suspend={false}`, which leaves an attribute that still suspends the viewer. On React 18, set boolean props from a ref instead.

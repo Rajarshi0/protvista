@@ -60,21 +60,32 @@ viewer.addEventListener('protvista-error', (event) => {
 Every failure in the viewer — a config that won't validate, a sequence that
 won't load, a file that won't parse — is described by two facts and routed by
 them: how **severe** it is, and whether it is scoped to the whole **viewer** or
-to one **track**. The table below is the whole rule. It lives as data in
+to one **track**. A row may also name a **phase**, and a phase row may be
+narrowed again by a **code** saying what was found: for `track-data`, the
+`code` of the event's issue; on the viewer, a URL template left unfetched
+(`url-variable-unresolved`), a component with no renderer
+(`unrendered-component`) or a `theme:` colour that didn't resolve
+(`theme-color-ignored`). The table below is the whole rule. It lives as data in
 `src/errors/router.ts` and is drift-tested against this page, so the two cannot
 disagree.
 
-| Severity | Scope | Phase | Console | `protvista-error` | Alert panel | Row badge |
-| --- | --- | --- | --- | --- | --- | --- |
-| `error` | viewer | any | yes | yes | always | — |
-| `error` | track | any | yes | yes | under `strict` | yes |
-| `warning` | viewer | `set-track-data` | yes | yes | under `strict` | — |
-| `warning` | viewer | any | yes | yes | never | — |
-| `warning` | track | `track-data` | yes | yes | never | no |
-| `warning` | track | `tooltip-field-miss` | yes | yes | never | no |
-| `warning` | track | any | yes | yes | under `strict` | yes |
-| `info` | viewer | any | yes | no | never | — |
-| `info` | track | any | yes | no | never | no |
+| Severity | Scope | Phase | Code | Console | `protvista-error` | Alert panel | Row badge | Visitor notice | Author mode |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `error` | viewer | any | any | yes | yes | always | — | no | yes |
+| `error` | track | any | any | yes | yes | under `strict` | yes | no | yes |
+| `warning` | viewer | `set-track-data` | any | yes | yes | under `strict` | — | no | yes |
+| `warning` | viewer | `config` | `unrendered-component` | yes | yes | never | — | viewer | yes |
+| `warning` | viewer | `config` | `theme-color-ignored` | yes | yes | never | — | no | yes |
+| `warning` | viewer | `track-fetch` | `url-variable-unresolved` | yes | yes | never | — | viewer | yes |
+| `warning` | viewer | any | any | yes | yes | never | — | no | yes |
+| `warning` | track | `track-data` | `coordinate-out-of-range` | yes | yes | never | no | track | yes |
+| `warning` | track | `track-data` | `unpaintable-color` | yes | yes | never | no | track | yes |
+| `warning` | track | `track-data` | `data-field-ignored` | yes | yes | never | no | no | yes |
+| `warning` | track | `track-data` | any | yes | yes | never | no | no | yes |
+| `warning` | track | `tooltip-field-miss` | any | yes | yes | never | no | no | yes |
+| `warning` | track | any | any | yes | yes | under `strict` | yes | no | yes |
+| `info` | viewer | any | any | yes | no | never | — | no | no |
+| `info` | track | any | any | yes | no | never | no | no | no |
 
 Reading it:
 
@@ -87,6 +98,11 @@ Reading it:
   config warning, or a `theme:` field that could not be resolved. It never
   raises the panel, even under `strict`: hiding a working viewer behind a notice
   about something that worked is not a louder failure, just a less useful one.
+  Two of them change what is on screen, so they also carry a **visitor
+  notice** on the viewer: a track whose data URL was never fetched (an
+  undefined `{variable}`), and a component with no renderer. A `theme:` colour
+  that didn't resolve leaves the default colours in place and nothing missing,
+  so it has none.
 - The one exception is a rejected **`setTrackData()`** call, which `strict` does
   promote. The rows above are read most-specific-first, so a row naming a
   `phase` wins over the `any` row for the same severity and scope. A config
@@ -96,14 +112,20 @@ Reading it:
 - A **`track-data`** warning — rows whose coordinates fall outside the
   sequence, a column of your file that was ignored, a colour the canvas cannot
   paint — goes the other way for a track. The rows loaded and render as
-  written, so it takes neither the `⚠` badge nor the panel; the event and the
-  console line carry it.
+  written, so it takes neither the `⚠` badge nor the panel: a badge would mark
+  a working row as broken. Where the visitor would otherwise be misled —
+  features not drawn in full, colours not painted — the track gets a quieter
+  **visitor notice** instead. An ignored column changes nothing drawn, so it
+  has none.
 - A **`tooltip-field-miss`** warning is the same for the same reason: every
   record renders, and only the track's tooltip template names a field the data
   never has. No badge and no panel; the event and the console line carry it.
 - **`info`** is an expected absence, not a failure: a provider endpoint
   answering 404 for an entity with no data of this kind, or a `from: custom`
   track nobody injected data into. It gets a console line and no user surface.
+- **Author mode** lists everything the `protvista-error` event carries — every
+  error and every warning, never `info` — so its column is the event's. See
+  [What visitors and authors see](#what-visitors-and-authors-see).
 
 A **Retry** control appears on whichever surface carried the failure, and only
 when retrying could plausibly change the answer: a network error or a 5xx may
@@ -116,6 +138,67 @@ temporary as a 5xx. A
 malformed file, a malformed `setTrackData()` payload, an unregistered adapter
 name and a payload the track could not draw all get no Retry: they would fail
 the same way again with no action available in between.
+
+### What visitors and authors see
+
+The console and the `protvista-error` event reach you; a visitor to a page
+that embeds the viewer sees neither. So the viewer follows one rule: **tell
+visitors when what they're looking at is incomplete or misleading, and tell
+authors everything.**
+
+**Visitor notices.** A warning whose row in the table above has a visitor
+notice puts a quiet ⓘ on the affected track's label. It opens a short,
+plain-language note — "2 features extend beyond this sequence, so they aren't
+shown in full.", "Some colours in the data couldn't be shown, so some features
+may be in the wrong colour." — that never names a file, a URL, a field or a
+variable. A viewer-level notice ("“Partner data” isn't shown: its data
+couldn't be loaded.", "“Mine” can't be displayed in this viewer.") goes on an ⓘ
+in the top bar, beside **Customize**. So does a track notice whose label isn't
+on screen — a track inside a collapsed group, a track with no data to draw, a
+customize-mode placeholder, or the "No feature data available" view — prefixed
+with the track's name. A track you hid from the layout tells visitors nothing
+until Customize shows it again. The notes are announced once to screen
+readers, politely, and the ⓘ is a keyboard-reachable button: Escape, a click
+elsewhere or moving focus on closes its note. A note too long for the room
+beside its button scrolls.
+
+Visitor notices are on by default. The **`quiet-notices`** attribute turns
+them off:
+
+```html
+<protvista-uniprot accession="P05067" quiet-notices></protvista-uniprot>
+```
+
+The `protvista-error` event is unchanged either way, so an embedder that wants
+its own UI can keep listening to it.
+
+**Author mode.** The **`show-warnings`** attribute, or `showWarnings: true` in
+the config, turns author mode on; either one is enough. It is off by default,
+so visitors never see authoring notes. Each track with a warning, and the top
+bar, then carries a muted ⚠ with a count instead of the ⓘ. Its list holds
+every warning in full: the same text the console, the event and the
+playground's diagnostics show, with its phase, code and config path, the file
+or URL it came from, and the note visitors see for it (unless `quiet-notices`
+is set). A rejected `setTrackData()` call made three times is listed once,
+marked ×3.
+
+Author mode shows errors in full too. A track's red `⚠` badge becomes a
+button whose list starts with the error's whole text and its source (Retry
+stays beside it). An error on a track whose label isn't drawn — inside a
+collapsed group, which shows only the group's count badge — is listed beside
+Customize under the track's name. The alert panel adds the console's text
+under its summary. With author mode off, errors look exactly as they always
+have.
+
+Setting or removing either attribute on a live element takes effect at once,
+with no reload.
+
+In the [playground](/protvista/playground/), the preview keeps visitor notices
+on and author mode off, so it shows what your visitors will see; the
+diagnostics list beside the editor is the author view there.
+`showWarnings: true` in the config turns author mode on in the preview too,
+but it names a loaded file by the `blob:` URL the preview fetched, where the
+diagnostics list says `./name`.
 
 ### The `context` object
 
@@ -228,6 +311,15 @@ A field that is present but empty — a blank cell in a column of your own — i
 not missing; see
 [When a field is missing](/protvista/data-tooltip#when-a-field-is-missing) for
 the few columns where it is.
+
+A record that has none of the fields a template names, and for which the
+template renders only punctuation (the `·` of `{% $gene %} · {% $url %}`) or
+nothing, shows the track's default tooltip instead, with no warning of its
+own: see
+[A record with none of the fields](/protvista/data-tooltip#a-record-with-none-of-the-fields).
+To drop the text around a field only some records have, wrap it in
+`{% if %}`: see
+[Guard a field some records lack](/protvista/data-tooltip#guard-a-field-some-records-lack).
 
 ### Common coordinate mistakes
 

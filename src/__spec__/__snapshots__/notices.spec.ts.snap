@@ -1,0 +1,166 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`author mode off: errors look exactly as they did > keeps the config-failure panel as it was, after the rich upgrade 1`] = `"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel"> <div class="pv-cecb45-error-panel__head"> <p class="pv-cecb45-error-panel__summary">Config validation failed (1 issue):</p> </div> <details open="" class="pv-cecb45-error-issues"> <summary>1 issue</summary> <div class="pv-cecb45-error-issue"> <div class="pv-cecb45-error-issue__path"> FOO/bar </div> <div> Unknown source key: 'missingKey' in track FOO/bar. Known sources: (none registered). <span class="pv-cecb45-error-issue__code">(unknown-source-key)</span> </div> </div> </details> </div>"`;
+
+exports[`author mode off: errors look exactly as they did > keeps the strict track panel as it was 1`] = `"<div role="alert" tabindex="-1" class="pv-cecb45-error-panel"> <div class="pv-cecb45-error-panel__head"> <p class="pv-cecb45-error-panel__summary">Track 'broken/broken' failed to load — ./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</p> <div class="pv-cecb45-error-panel__actions"> <button type="button" class="pv-cecb45-error-retry"> Retry </button> <button type="button" aria-label="Dismiss error"> Dismiss </button> </div> </div> </div>"`;
+
+exports[`author mode off: errors look exactly as they did > keeps the track badge an image with its title and description 1`] = `" <span class="pv-cecb45-label-text">Broken</span><span role="img" tabindex="0" class="pv-cecb45-error-badge" aria-label="Track failed to load" aria-describedby="pv-cecb45-err-N-broken-broken" title="./missing.csv could not be found (HTTP 404) — check the path is relative to the page.">⚠</span><span id="pv-cecb45-err-N-broken-broken" class="pv-cecb45-visually-hidden">./missing.csv could not be found (HTTP 404) — check the path is relative to the page.</span><button type="button" class="pv-cecb45-error-retry" aria-label="Retry loading track 'broken'"> Retry </button> "`;
+
+exports[`the protvista-error event is unchanged > carries the same details whatever quiet-notices and show-warnings say 1`] = `
+[
+  {
+    "context": {
+      "accession": undefined,
+    },
+    "issues": [],
+    "message": "Ignoring theme.accentColor: "not-a-colour" is not a colour this browser accepts.",
+    "phase": "config",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+    },
+    "issues": [],
+    "message": "No renderer for component 'notice-custom-track' (row 'mine'). Custom components are defined and validated but not yet drawn — the row renders empty.",
+    "phase": "config",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+    },
+    "issues": [
+      {
+        "code": "missing-variable",
+        "message": "Track 'partner' references undefined variable '{dataset}'. Define it in top-level 'variables:' or pass it as a data-dataset attribute at runtime.",
+        "path": "partner",
+        "severity": "warning",
+      },
+    ],
+    "message": "Config loaded with 1 warning.",
+    "phase": "config",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "errorKind": "http",
+      "groupId": "broken",
+      "status": 404,
+      "trackId": "broken",
+      "url": "./missing.csv",
+    },
+    "issues": [],
+    "message": "./missing.csv could not be found (HTTP 404) — check the path is relative to the page.",
+    "phase": "track-fetch",
+    "severity": "error",
+    "source": "./missing.csv",
+  },
+  {
+    "context": {
+      "accession": undefined,
+    },
+    "issues": [],
+    "message": "Not fetching 'https://example.org/{dataset}/hits.csv' for track partner/partner: undefined variable(s) {dataset}. Define them in top-level 'variables:' or as data-* attributes.",
+    "phase": "track-fetch",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "groupId": "lab",
+      "trackId": "lab",
+    },
+    "issues": [
+      {
+        "code": "data-field-ignored",
+        "message": "inline data (parsed as CSV): ignored column(s) "tooltipContent" — these names are reserved by the viewer or by JavaScript and cannot come from a data file.",
+        "path": "lab",
+        "severity": "warning",
+      },
+    ],
+    "message": "inline data (parsed as CSV): ignored column(s) "tooltipContent" — these names are reserved by the viewer or by JavaScript and cannot come from a data file.",
+    "phase": "track-data",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "groupId": "lab",
+      "trackId": "lab",
+    },
+    "issues": [
+      {
+        "code": "unpaintable-color",
+        "message": "inline data (parsed as CSV): 2 row(s) have a colour the canvas cannot paint ("bleu", "#catFace"); those features are drawn in the previous feature's colour.",
+        "path": "lab",
+        "severity": "warning",
+      },
+    ],
+    "message": "inline data (parsed as CSV): 2 row(s) have a colour the canvas cannot paint ("bleu", "#catFace"); those features are drawn in the previous feature's colour.",
+    "phase": "track-data",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "fields": [
+        "gene",
+        "url",
+      ],
+      "groupId": "lab",
+      "trackId": "lab",
+    },
+    "issues": [
+      {
+        "code": "tooltip-field-miss",
+        "message": "Track lab: dataTooltip references unknown fields: gene, url",
+        "path": "lab",
+        "severity": "warning",
+      },
+    ],
+    "message": "Track lab: dataTooltip references unknown fields: gene, url",
+    "phase": "tooltip-field-miss",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "groupId": "lab",
+      "trackId": "lab",
+    },
+    "issues": [
+      {
+        "code": "coordinate-out-of-range",
+        "message": "inline data (parsed as CSV): 2 of 3 rows fall outside your sequence (40 residues); first: row 3, end 60. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.",
+        "path": "lab",
+        "severity": "warning",
+      },
+    ],
+    "message": "inline data (parsed as CSV): 2 of 3 rows fall outside your sequence (40 residues); first: row 3, end 60. Coordinates must be 1-based positions on this protein's canonical sequence — check for 0-based coordinates (start 0) or isoform numbering.",
+    "phase": "track-data",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+      "groupId": "nope",
+      "trackId": "x",
+    },
+    "issues": [],
+    "message": "setTrackData: track 'nope/x' not found in config.",
+    "phase": "set-track-data",
+    "severity": "warning",
+  },
+  {
+    "context": {
+      "accession": undefined,
+    },
+    "issues": [],
+    "message": "track 'no-such-key' could not render the data it was given (cannot read this payload). The other tracks are unaffected. If this track's data came from setTrackData(), check it matches the record shape documented for its kind.",
+    "phase": "track-fetch",
+    "severity": "warning",
+  },
+]
+`;

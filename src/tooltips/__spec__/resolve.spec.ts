@@ -5,10 +5,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Tag } from '@markdoc/markdoc';
 import {
+  createTooltipFallback,
   createTooltipFieldTracker,
   formatTooltipFieldMiss,
   resolveTooltip,
 } from '../resolve.js';
+import { tooltipDefaults } from '../defaults.js';
 import type { TooltipContext, TooltipSpec } from '../types.js';
 
 const ctx: TooltipContext = {
@@ -781,5 +783,231 @@ describe('resolveTooltip — unknown-field tracker (#135)', () => {
         resolveTooltip(item, spec, ctx)
       );
     }
+  });
+});
+
+describe('resolveTooltip — fallback to the default tooltip', () => {
+  const md = (
+    template: string,
+    variables?: Record<string, unknown>
+  ): TooltipSpec => ({ kind: 'markdown', template, variables });
+  const DEFAULT = tooltipDefaults.features;
+  // The issue's template: neither field on the record leaves only ` · `.
+  const ISSUE = '{% $gene %} · {% link href=$url /%}';
+  const feature = { type: 'DOMAIN', description: 'Kinase', start: 5, end: 20 };
+
+  /**
+   * The authored spec's own output, then what the resolver returns with the
+   * fallback. Every fixture asserts the first, so a case can't pass because
+   * the template happened to render something else.
+   */
+  const render = (
+    item: object,
+    spec: TooltipSpec,
+    defaultSpec: TooltipSpec | undefined = DEFAULT
+  ) => ({
+    authored: resolveTooltip(item, spec, ctx),
+    shown: resolveTooltip(
+      item,
+      spec,
+      ctx,
+      undefined,
+      createTooltipFallback(spec, ctx, defaultSpec)
+    ),
+  });
+
+  it('shows the default when no field has a value and only punctuation is left', () => {
+    const { authored, shown } = render(feature, md(ISSUE));
+    expect(authored).toBe('<p> · </p>');
+    expect(shown).toBe(resolveTooltip(feature, DEFAULT, ctx));
+    expect(shown).toBe(
+      '<h5>Type</h5><p>DOMAIN</p><h5>Description</h5><p>Kinase</p>' +
+        '<h5>Start</h5><p>5</p><h5>End</h5><p>20</p>'
+    );
+  });
+
+  it('keeps the template when one field has a value, even with no letter in it', () => {
+    const { authored, shown } = render(
+      { gene: '-' },
+      md('{% $gene %} · {% $score %}')
+    );
+    expect(authored).toBe('<p>- · </p>');
+    expect(shown).toBe(authored);
+  });
+
+  it('counts a blank cell as no value', () => {
+    const { authored, shown } = render(
+      { ...feature, gene: '' },
+      md('{% $gene %} ·')
+    );
+    expect(authored).toBe('<p> ·</p>');
+    expect(shown).toBe(resolveTooltip(feature, DEFAULT, ctx));
+  });
+
+  it('counts null as no value', () => {
+    const { authored, shown } = render(
+      { ...feature, gene: null },
+      md('{% $gene %} ·')
+    );
+    expect(authored).toBe('<p> ·</p>');
+    expect(shown).toBe(resolveTooltip(feature, DEFAULT, ctx));
+  });
+
+  it('ignores paths that read variables: or $ctx, not the record', () => {
+    for (const spec of [
+      md('{% $sep %}', { sep: '·' }),
+      md('{% $ctx.nope %}·'),
+    ]) {
+      const { authored, shown } = render({}, spec);
+      expect(authored).toBe('<p>·</p>');
+      expect(shown).toBe(authored);
+    }
+  });
+
+  it('keeps a template that references no field', () => {
+    const { authored, shown } = render({}, md('·'));
+    expect(authored).toBe('<p>·</p>');
+    expect(shown).toBe(authored);
+  });
+
+  it('keeps a template that has its own words for the missing field', () => {
+    const { authored, shown } = render(
+      {},
+      md('{% if $gene %}{% $gene %}{% else /%}No gene recorded{% /if %}')
+    );
+    expect(authored).toBe('<p>No gene recorded</p>');
+    expect(shown).toBe(authored);
+  });
+
+  it('keeps fixed wording, digits included', () => {
+    for (const [template, html] of [
+      ['Lab hit {% $gene %}', '<p>Lab hit </p>'],
+      ['#1 {% $gene %}', '<p>#1 </p>'],
+    ]) {
+      const { authored, shown } = render({}, md(template));
+      expect(authored).toBe(html);
+      expect(shown).toBe(authored);
+    }
+  });
+
+  it('does not read an escaped character as text', () => {
+    // `&` renders as `&amp;`, whose letters are not on screen.
+    const { authored, shown } = render(feature, md('{% $gene %} & {% $url %}'));
+    expect(authored).toBe('<p> &amp; </p>');
+    expect(shown).toBe(resolveTooltip(feature, DEFAULT, ctx));
+  });
+
+  it('applies to a fields spec, which renders nothing for such a record', () => {
+    const spec: TooltipSpec = {
+      kind: 'fields',
+      fields: [{ path: 'gene', label: 'Gene' }],
+    };
+    const { authored, shown } = render(feature, spec);
+    expect(authored).toBe('');
+    expect(shown).toBe(resolveTooltip(feature, DEFAULT, ctx));
+  });
+
+  it('falls back to the automatic tooltip on a track with no default', () => {
+    const { authored, shown } = render(feature, md(ISSUE), undefined);
+    expect(authored).toBe('<p> · </p>');
+    expect(shown).toBe(resolveTooltip(feature, undefined, ctx));
+    expect(shown).toContain('DOMAIN');
+  });
+
+  it('uses the track’s own default, not the automatic tooltip', () => {
+    const own: TooltipSpec = {
+      kind: 'fields',
+      fields: [{ path: 'type', label: 'Feature' }],
+    };
+    expect(render(feature, md(ISSUE), own).shown).toBe(
+      '<h5>Feature</h5><p>DOMAIN</p>'
+    );
+  });
+
+  it('lets the field tracker see the record either way', () => {
+    const spec = md(ISSUE);
+    const tracker = createTooltipFieldTracker(spec, ctx);
+    resolveTooltip(
+      feature,
+      spec,
+      ctx,
+      tracker,
+      createTooltipFallback(spec, ctx, DEFAULT)
+    );
+    expect(tracker.flush()).toEqual(['gene', 'url']);
+  });
+});
+
+describe('resolveTooltip — the {% if %} pattern for a field some records lack', () => {
+  // The pattern data-tooltip.md documents. Markdoc's `if` and `else` are
+  // built in, not tags of ours; these pin that they work in this renderer.
+  const PATTERN = '{% if $gene %}{% $gene %} · {% /if %}{% link href=$url /%}';
+  const spec: TooltipSpec = { kind: 'markdown', template: PATTERN };
+  const URL = 'https://x.org/a';
+
+  it('renders the guarded part only when the field is there', () => {
+    expect(resolveTooltip({ gene: 'HBA1', url: URL }, spec, ctx)).toBe(
+      `<p>HBA1 · <a href="${URL}">${URL}</a></p>`
+    );
+    expect(resolveTooltip({ url: URL }, spec, ctx)).toBe(
+      `<p><a href="${URL}">${URL}</a></p>`
+    );
+  });
+
+  it('leaves an empty paragraph when neither is there, which falls back', () => {
+    const item = { type: 'DOMAIN', start: 5, end: 20 };
+    expect(resolveTooltip(item, spec, ctx)).toBe('<p></p>');
+    expect(
+      resolveTooltip(
+        item,
+        spec,
+        ctx,
+        undefined,
+        createTooltipFallback(spec, ctx, tooltipDefaults.features)
+      )
+    ).toBe(resolveTooltip(item, tooltipDefaults.features, ctx));
+  });
+
+  it('treats a blank cell as true, unless the guard excludes it', () => {
+    const plain: TooltipSpec = {
+      kind: 'markdown',
+      template: '{% if $gene %}G{% else /%}none{% /if %}',
+    };
+    const guarded: TooltipSpec = {
+      kind: 'markdown',
+      template:
+        '{% if and($gene, not(equals($gene, ""))) %}G{% else /%}none{% /if %}',
+    };
+    expect(resolveTooltip({ gene: '' }, plain, ctx)).toBe('<p>G</p>');
+    for (const item of [{ gene: null }, { gene: false }, {}]) {
+      expect(resolveTooltip(item, plain, ctx)).toBe('<p>none</p>');
+    }
+    expect(resolveTooltip({ gene: '' }, guarded, ctx)).toBe('<p>none</p>');
+    expect(resolveTooltip({ gene: 'HBA1' }, guarded, ctx)).toBe('<p>G</p>');
+  });
+
+  it('renders the documented templates, written as YAML block scalars', () => {
+    // data-tooltip.md writes both under `template: |`, which keeps a final
+    // newline.
+    const block = (template: string): TooltipSpec => ({
+      kind: 'markdown',
+      template: `${template}\n`,
+    });
+    const guarded = block(
+      '{% if and($gene, not(equals($gene, ""))) %}{% $gene %} · {% /if %}{% link href=$url /%}'
+    );
+    const link = `<a href="${URL}">${URL}</a>`;
+    expect(
+      resolveTooltip({ gene: 'HBA1', url: URL }, block(PATTERN), ctx)
+    ).toBe(`<p>HBA1 · ${link}</p>`);
+    expect(resolveTooltip({ gene: '', url: URL }, block(PATTERN), ctx)).toBe(
+      `<p> · ${link}</p>`
+    );
+    expect(resolveTooltip({ gene: '', url: URL }, guarded, ctx)).toBe(
+      `<p>${link}</p>`
+    );
+    expect(resolveTooltip({ gene: 'HBA1', url: URL }, guarded, ctx)).toBe(
+      `<p>HBA1 · ${link}</p>`
+    );
   });
 });
