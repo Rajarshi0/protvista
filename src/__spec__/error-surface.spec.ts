@@ -692,9 +692,14 @@ describe('per-track error badge', () => {
     const badges = target.querySelectorAll(BADGE);
     expect(badges.length).toBe(1);
     const badge = badges[0];
-    expect(badge.getAttribute('tabindex')).toBe('0');
-    expect(badge.getAttribute('role')).toBe('img');
+    // A button like the visitor ⓘ: its popover holds the detail…
+    expect(badge.tagName).toBe('BUTTON');
+    expect(badge.getAttribute('aria-expanded')).toBe('false');
+    const popId = badge.getAttribute('aria-controls')!;
+    const popover = target.querySelector(`[id="${popId}"]`)!;
+    expect(popover.textContent).toMatch(/HTTP 500/);
 
+    // …and a screen reader hears it on focus without opening it.
     const descId = badge.getAttribute('aria-describedby')!;
     const desc = target.querySelector(`[id="${descId}"]`)!;
     expect(desc.textContent).toMatch(/HTTP 500/);
@@ -777,6 +782,39 @@ describe('per-track error badge', () => {
     expect(descId).not.toMatch(/\s/); // no whitespace → valid HTML id / token
     // The referenced description element actually exists under that id.
     expect(target.querySelector(`[id="${descId}"]`)).not.toBeNull();
+  });
+
+  it('keeps ids apart that differ only in characters an id cannot hold', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+    const el = buildLoaded(
+      normConfig([
+        customTrack('ok'),
+        urlTrack('a.b', 'https://example.org/bad-dot.json'),
+        urlTrack('a b', 'https://example.org/bad-space.json'),
+      ]),
+      {
+        customTrackData: { 'g-ok': [{ type: 'DOMAIN', start: 1, end: 10 }] },
+        hasData: true,
+        openGroups: ['g'],
+      }
+    );
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    // Each badge is described by its own track's error, under an id nothing
+    // else on the page has.
+    const described = [...target.querySelectorAll(BADGE)].map((badge) => {
+      const ids = target.querySelectorAll(
+        `[id="${badge.getAttribute('aria-describedby')}"]`
+      );
+      expect(ids).toHaveLength(1);
+      return ids[0].textContent;
+    });
+    expect(described).toHaveLength(2);
+    expect(described.some((t) => t!.includes('bad-dot'))).toBe(true);
+    expect(described.some((t) => t!.includes('bad-space'))).toBe(true);
   });
 });
 
@@ -1075,7 +1113,7 @@ describe('standalone row error badge', () => {
     expect(target.querySelector(`#${CSS_PREFIX}-group_solo`)).not.toBeNull();
     const badge = target.querySelector(BADGE)!;
     expect(badge).not.toBeNull();
-    expect(badge.getAttribute('role')).toBe('img');
+    expect(badge.tagName).toBe('BUTTON');
     const descId = badge.getAttribute('aria-describedby')!;
     expect(target.querySelector(`[id="${descId}"]`)!.textContent).toMatch(
       /HTTP 500/
@@ -1909,7 +1947,7 @@ describe('aggregate data hygiene', () => {
 // ── per-instance id uniqueness ────────────────────────────────────
 
 describe('badge id uniqueness across instances', () => {
-  it('gives two viewers distinct aria-describedby ids for the same track', async () => {
+  it('gives two viewers distinct badge and popover ids for the same group', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     stubFetch([['/bad', { ok: false, status: 500 }]]);
 
@@ -1919,12 +1957,16 @@ describe('badge id uniqueness across instances', () => {
         { openGroups: [] }
       );
       await el._loadData();
-      const target = renderTarget(el);
-      return target.querySelector(BADGE)!.getAttribute('aria-describedby')!;
+      const badge = renderTarget(el).querySelector(BADGE)!;
+      return [badge.id, badge.getAttribute('aria-controls')!];
     };
 
-    const [id1, id2] = [await describedById(), await describedById()];
+    const [[id1, pop1], [id2, pop2]] = [
+      await describedById(),
+      await describedById(),
+    ];
     expect(id1).not.toBe(id2);
+    expect(pop1).not.toBe(pop2);
     expect(id1).not.toMatch(/\s/);
   });
 });
@@ -2074,9 +2116,16 @@ describe('a component rejecting its payload', () => {
 
     const badge = target.querySelector(BADGE)!;
     expect(badge).not.toBeNull();
-    const descId = badge.getAttribute('aria-describedby')!;
-    // The aggregate's own message, not the generic "Some tracks…" count.
-    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toContain(
+    // The aggregate's own message, not the generic "Some tracks…" count. It
+    // is the badge's name, so it is not repeated as its description.
+    expect(badge.getAttribute('aria-label')).toContain(
+      'could not render the data it was given'
+    );
+    expect(badge.hasAttribute('aria-describedby')).toBe(false);
+    const popover = target.querySelector(
+      `[id="${badge.getAttribute('aria-controls')}"]`
+    )!;
+    expect(popover.textContent).toContain(
       'could not render the data it was given'
     );
   });
