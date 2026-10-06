@@ -267,6 +267,18 @@ export const records = (key: string) =>
 export const sequenceLength = () =>
   preview()?.querySelector('nightingale-sequence')?.getAttribute('length');
 
+/**
+ * Press undo in the focused editor. CodeMirror binds undo to `Mod-z`, which
+ * is Cmd+Z where the browser reports a Mac platform and Ctrl+Z elsewhere.
+ */
+export async function pressUndo(): Promise<void> {
+  await userEvent.keyboard(
+    /Mac|iPhone|iPad/.test(navigator.platform)
+      ? '{Meta>}z{/Meta}'
+      : '{Control>}z{/Control}'
+  );
+}
+
 /** Pick a preset in the picker, as a visitor would. */
 export async function choose(id: string): Promise<void> {
   await userEvent.selectOptions(byId<HTMLSelectElement>('preset'), id);

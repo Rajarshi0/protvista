@@ -34,6 +34,7 @@ import {
   openPlayground,
   pick,
   pickFixture,
+  pressUndo,
   choose,
   preview,
   fixtureText,
@@ -332,7 +333,7 @@ describe('playground: load a FASTA file as the sequence', () => {
     expect(listItems()).toEqual([]);
 
     editorView().focus();
-    await userEvent.keyboard('{Control>}z{/Control}');
+    await pressUndo();
     expect(editorText()).toBe(REMOTE_CONFIG);
 
     // This config anyway: the track that needs UniProt is listed, and the
@@ -738,7 +739,7 @@ describe('playground: load a FASTA file as the sequence', () => {
     );
 
     editorView().focus();
-    await userEvent.keyboard('{Control>}z{/Control}');
+    await pressUndo();
     expect(editorText()).toBe(preset);
   });
 
