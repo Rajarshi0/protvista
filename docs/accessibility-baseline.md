@@ -51,16 +51,21 @@ runs `test:browser` and `test:coverage` on every push/PR.
   error group.
 - **Alert panel:** `role="alert"`; focus is moved into the panel when it
   appears; Retry re-fetches and tears the panel down on recovery.
-- **Per-track badge:** `role="img"`, `tabindex="0"`, described by a
-  visually-hidden detail via `aria-describedby`; its Retry recovers the
-  track under a real click.
+- **Per-track badge:** a `<button>` like the visitor ⓘ (`aria-expanded`,
+  `aria-controls` its popover). When the error's text says more than the
+  button's name, it is also the button's `aria-describedby`, so it is heard
+  on focus without opening the note. It shares a line with its Retry, so the
+  note, which opens below it, never covers Retry;
+  its Retry recovers the track under a real click.
 
 ### Group expand/collapse — `<protvista-uniprot>` (`src/__browser__/group-toggle.browser.spec.ts`)
 
 - **Fixed in this work:** the toggle was a bare `<div @click>` — operable
   by mouse only. It now exposes `role="button"`, `tabindex="0"`, and a
   live `aria-expanded`, and activates on **Enter/Space** as well as click.
-- **axe:** no violations over the group.
+- **axe:** no violations over a group with nothing nested in its label. A
+  label carrying a `⚠` badge (and Retry) fails `nested-interactive`: see
+  known gap 3.
 
 ### "Customize layout" mode (`src/__browser__/customize-mode.browser.spec.ts`)
 
@@ -110,12 +115,16 @@ These are documented, not yet remediated:
    association would be stronger.
 2. **"No results" is not a live region.** When a filter empties the table,
    the empty-state cell is not announced (`aria-live`) to screen readers.
-3. **Group label / inline-link nesting.** A group label may contain an
-   inline `<a>` (Markdoc). The toggle wraps it as `role="button"`, which is
-   imperfect nesting of interactive content. Activating the link never
-   toggles the group (the shared handler bails when the event target is an
-   `<a>`, and the link stays independently focusable), but a cleaner DOM
-   would separate the collapse affordance from the link. The #199 Track
+3. **Group label / nested controls.** A group label may contain an inline
+   `<a>` (Markdoc), and a group with a failed track carries its `⚠` badge,
+   the badge's popover and a Retry. The toggle wraps them all as
+   `role="button"`, which axe reports as `nested-interactive`; while a
+   badge's popover is open, its text also joins the group's accessible
+   name. Each control still works on its own — a click on one never
+   toggles the group, and the toggle's keydown handler acts only on keys
+   pressed on the label itself, so Enter on a link or Enter/Space on the
+   badge or Retry activates that control — but a cleaner DOM would separate
+   the collapse affordance from the label's contents. The #199 Track
    Manager controls deliberately avoid this pattern (real, separate
    `<button>`s with no nested interactive content); the legacy collapse
    toggle is left as-is for now since it is functionally correct, and a DOM

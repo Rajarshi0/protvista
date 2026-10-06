@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: the ⚠ error badge opens a note, like the ⓘ
+
+A track or group's red `⚠` badge is now a button that behaves like the
+visitor ⓘ: it has the same hover, and selecting it opens a note, titled with
+the track or group, with the same text as before: what failed and, for your
+own file, how to fix it. Before, that text was only in a hover tooltip, which
+touch screens never show. Escape, a click elsewhere or moving focus closes the
+note. Screen readers still hear the error when the badge is focused. Retry is
+unchanged, and stays on the same line as its badge.
+
+Every note — ⓘ, ⚠ and author mode — shows a single message as plain text and
+uses a bulleted list only for two or more.
+
+Inside a group's label, Enter on a link, or Enter or Space on a badge or
+Retry, now activates that control instead of collapsing the group.
+
 ### Added: tell visitors when the view is incomplete
 
 A warning that changes what is on screen now tells the person looking at the

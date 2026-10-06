@@ -2,6 +2,7 @@ import { LitElement, html, svg } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import { frame } from 'timing-functions';
 
 // Nightingale — type-only imports for the components this file
@@ -5248,38 +5249,46 @@ class ProtvistaUniprot extends LitElement {
   }
 
   /**
-   * A keyboard-focusable `⚠` badge with its detail exposed both via
-   * `aria-describedby` (screen readers) and `title` (pointer hover).
-   *
-   * `rawId` carries a per-instance nonce (`_instanceId`) so ids stay
-   * unique across multiple `<protvista-uniprot>` elements in the same
-   * (light) DOM, and is sanitised to a valid HTML id: the schema allows
-   * any non-empty string for group/track ids, so an id containing
-   * whitespace would otherwise produce an invalid `id` and split the
-   * `aria-describedby` token list, breaking the association.
+   * A `⚠` badge that works like the ⓘ: a button whose popover gives the
+   * detail, titled with the track or group it belongs to. A detail that
+   * says more than the button's name is also its description, so a screen
+   * reader hears it on focus without opening anything.
    */
-  private _renderErrorBadge(
-    ariaLabel: string,
-    rawId: string,
-    detail: string,
-    retryLabel: string,
-    retryKeys: string[]
-  ) {
-    const descId = rawId.replace(/[^A-Za-z0-9_-]/g, '-');
+  private _renderErrorBadge(badge: {
+    anchor: string;
+    kind: 'err' | 'gerr';
+    label: string;
+    heading: string;
+    detail: string;
+    retryLabel: string;
+    retryKeys: string[];
+  }) {
     // Retry is only offered when at least one of the failures is
     // *recoverable* — retrying a 4xx (e.g. a 404 "no data for this
     // accession") or an unparseable body just returns the same result.
-    return html`<span
-        class="${CSS_PREFIX}-error-badge"
-        role="img"
-        tabindex="0"
-        aria-label="${ariaLabel}"
-        aria-describedby="${descId}"
-        title="${detail}"
-        >⚠</span
-      ><span id="${descId}" class="${CSS_PREFIX}-visually-hidden"
-        >${detail}</span
-      >${this._renderRetryButton(retryLabel, retryKeys)}`;
+    return this._renderErrorControls(
+      this._renderNoteControl({
+        anchor: badge.anchor,
+        kind: badge.kind,
+        tone: 'error',
+        label: badge.label,
+        heading: badge.heading,
+        glyph: '⚠',
+        ...(badge.detail !== badge.label ? { description: badge.detail } : {}),
+        entries: [badge.detail],
+      }),
+      this._renderRetryButton(badge.retryLabel, badge.retryKeys)
+    );
+  }
+
+  /**
+   * A ⚠ control and its Retry, kept on one line. Its popover opens below
+   * the ⚠, so a Retry wrapped onto the next line would sit under it.
+   */
+  private _renderErrorControls(badge: unknown, retry: unknown) {
+    return html`<span class="${CSS_PREFIX}-error-controls"
+      >${badge}${retry}</span
+    >`;
   }
 
   /** A badge's Retry, when there is anything retrying could fix. */
@@ -5369,7 +5378,7 @@ class ProtvistaUniprot extends LitElement {
     where?: string;
   }) {
     const meta = `${CSS_PREFIX}-note-popover__meta`;
-    return html`<li>
+    return html`
       ${entry.where ? html`<p class="${meta}">${entry.where}</p>` : ''}
       ${entry.texts.map(
         (text) => html`<p class="${CSS_PREFIX}-note-popover__text">${text}</p>`
@@ -5382,7 +5391,7 @@ class ProtvistaUniprot extends LitElement {
           : ''
       }
       ${entry.visitor ? html`<p class="${meta}">${NOTE_UI.visitorsSee(entry.visitor)}</p>` : ''}
-    </li>`;
+    `;
   }
 
   /** A warning note as an author entry. */
@@ -5430,7 +5439,7 @@ class ProtvistaUniprot extends LitElement {
       if (!count) return '';
       const label = this._trackLabelText(key);
       this._renderedAuthorEntries += count;
-      return html`${this._renderNoteControl({
+      const control = this._renderNoteControl({
         anchor: key,
         tone: err ? 'error' : 'author',
         label: err
@@ -5443,14 +5452,16 @@ class ProtvistaUniprot extends LitElement {
           ...notes.map((n) => this._noteEntry(n)),
         ],
         footer: NOTE_UI.authorFooter,
-      })}${
-        err
-          ? this._renderRetryButton(
+      });
+      return err
+        ? this._renderErrorControls(
+            control,
+            this._renderRetryButton(
               `Retry loading track '${err.trackId}'`,
               this._isRecoverable(err) ? [key] : []
             )
-          : ''
-      }`;
+          )
+        : control;
     }
     if (!this._noticesOn) return '';
     const lines = this._visitorLines(notes);
@@ -5463,7 +5474,7 @@ class ProtvistaUniprot extends LitElement {
       tone: 'notice',
       label: NOTE_UI.trackLabel(lines.length, label),
       heading: label,
-      entries: lines.map((text) => html`<li>${text}</li>`),
+      entries: lines,
     });
   }
 
@@ -5528,7 +5539,7 @@ class ProtvistaUniprot extends LitElement {
       tone: 'notice',
       label: NOTE_UI.viewerLabel(lines.length),
       heading: NOTE_UI.viewerHeading,
-      entries: lines.map((text) => html`<li>${text}</li>`),
+      entries: lines,
     });
   }
 
@@ -5544,9 +5555,20 @@ class ProtvistaUniprot extends LitElement {
     tone: 'notice' | 'author' | 'error';
     label: string;
     heading: string;
+    /**
+     * What the popover says. One entry is shown as it is; two or more as a
+     * bulleted list.
+     */
     entries: unknown[];
     glyph?: string;
     footer?: string;
+    /**
+     * Keeps a visitor error badge's ids apart from the notes: a track can
+     * carry both its badge and its ⓘ, and a group id can equal a track key.
+     */
+    kind?: 'err' | 'gerr';
+    /** Read on focus, without opening the popover. */
+    description?: string;
   }) {
     // Spelled out, never flattened: ids such as 'α' and 'β', or 'a b' and
     // 'a.b', must stay two ids, since the id is what opens and places a
@@ -5556,17 +5578,24 @@ class ProtvistaUniprot extends LitElement {
       /[^A-Za-z0-9-]/gu,
       (c) => `_${c.codePointAt(0)!.toString(16)}_`
     );
-    const id = `${CSS_PREFIX}-note-${this._instanceId}-${anchor}`;
+    // `_instanceId` is a number, so `note-err-…` never meets `note-<n>-…`.
+    const kind = control.kind ? `${control.kind}-` : '';
+    const id = `${CSS_PREFIX}-note-${kind}${this._instanceId}-${anchor}`;
     const popoverId = `${id}-pop`;
+    const descId = `${id}-desc`;
     const open = this._openNote === id;
+    const entryClass = `${CSS_PREFIX}-note-popover__entry`;
     return html`<button
         type="button"
         id="${id}"
         class="${CSS_PREFIX}-note ${CSS_PREFIX}-note--${control.tone}${
-          // The author-mode error control is the badge, become a button.
+          // An error control is the ⚠ badge, in either mode.
           control.tone === 'error' ? ` ${CSS_PREFIX}-error-badge` : ''
         }"
         aria-label="${control.label}"
+        aria-describedby="${ifDefined(
+          control.description !== undefined ? descId : undefined
+        )}"
         aria-expanded="${open ? 'true' : 'false'}"
         aria-controls="${popoverId}"
         @click="${(e: Event) => this._toggleNote(e, id)}"
@@ -5581,9 +5610,15 @@ class ProtvistaUniprot extends LitElement {
         @click="${(e: Event) => e.stopPropagation()}"
       >
         <p class="${CSS_PREFIX}-note-popover__title">${control.heading}</p>
-        <ul class="${CSS_PREFIX}-note-popover__list">
-          ${control.entries}
-        </ul>
+        ${
+          control.entries.length === 1
+            ? html`<div class="${entryClass}">${control.entries[0]}</div>`
+            : html`<ul class="${CSS_PREFIX}-note-popover__list">
+                ${control.entries.map(
+                  (entry) => html`<li class="${entryClass}">${entry}</li>`
+                )}
+              </ul>`
+        }
         ${
           control.footer
             ? html`<p class="${CSS_PREFIX}-note-popover__footer">
@@ -5591,7 +5626,13 @@ class ProtvistaUniprot extends LitElement {
               </p>`
             : ''
         }
-      </div>`;
+      </div>${
+        control.description !== undefined
+          ? html`<span id="${descId}" class="${CSS_PREFIX}-visually-hidden"
+              >${control.description}</span
+            >`
+          : ''
+      }`;
   }
 
   /** Open a note's popover, or close it if it is the one open. */
@@ -5809,13 +5850,15 @@ class ProtvistaUniprot extends LitElement {
     // In author mode the badge becomes the track's note control, which lists
     // the error's author text first (`_renderTrackNotes`).
     if (this._authorMode) return '';
-    return this._renderErrorBadge(
-      'Track failed to load',
-      `${CSS_PREFIX}-err-${this._instanceId}-${key}`,
-      this._describeFetchError(err),
-      `Retry loading track '${err.trackId}'`,
-      this._isRecoverable(err) ? [key] : []
-    );
+    return this._renderErrorBadge({
+      anchor: key,
+      kind: 'err',
+      label: 'Track failed to load',
+      heading: this._trackLabelText(key),
+      detail: this._describeFetchError(err),
+      retryLabel: `Retry loading track '${err.trackId}'`,
+      retryKeys: this._isRecoverable(err) ? [key] : [],
+    });
   }
 
   /**
@@ -5839,13 +5882,15 @@ class ProtvistaUniprot extends LitElement {
         : this._groupErrors.has(groupId)
           ? 'All tracks in this group failed to load'
           : 'Some tracks in this group failed to load';
-    return this._renderErrorBadge(
+    return this._renderErrorBadge({
+      anchor: groupId,
+      kind: 'gerr',
+      label: detail,
+      heading: this._trackLabelText(groupId),
       detail,
-      `${CSS_PREFIX}-gerr-${this._instanceId}-${groupId}`,
-      detail,
-      `Retry loading group '${groupId}'`,
-      this._groupRecoverableKeys(groupId)
-    );
+      retryLabel: `Retry loading group '${groupId}'`,
+      retryKeys: this._groupRecoverableKeys(groupId),
+    });
   }
 
   /**
@@ -5887,12 +5932,14 @@ class ProtvistaUniprot extends LitElement {
    * Space like a native button. Space is `preventDefault`ed to stop the
    * page scrolling; Enter for consistency.
    *
-   * A label may nest an inline `<a>` (Markdoc). Tabbing to that link and
-   * pressing Enter activates the link — its keydown `target` is the `<a>`,
-   * so `_toggleGroupFromEvent` bails and the group does not toggle.
+   * A label may nest an inline `<a>` (Markdoc), a `⚠` badge and its
+   * popover, or a Retry. A key pressed on any of those is theirs: only the
+   * label itself toggles, and the event is left unprevented so a nested
+   * button or link still activates.
    */
   handleGroupKeydown(e: KeyboardEvent) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    if (e.target !== e.currentTarget) return;
     e.preventDefault();
     this._toggleGroupFromEvent(e);
   }

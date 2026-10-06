@@ -125,3 +125,31 @@ describe('group toggle — pointer parity', () => {
     expect(el.querySelector(TOGGLE)!.getAttribute('aria-expanded')).toBe('true');
   });
 });
+
+describe('group toggle — controls inside the label', () => {
+  afterEach(() => history.replaceState(null, '', location.pathname));
+
+  it('lets Enter on a link in the label follow it, without toggling', async () => {
+    stubFetch();
+    const el = mount<El>('protvista-uniprot', {
+      viewerConfig: {
+        rows: [{ ...CONFIG.rows[0], label: 'Domains, see [the guide](#pv-guide)' }],
+      },
+      accession: 'P05067',
+    });
+    const link = await vi.waitFor(() => {
+      const a = el.querySelector<HTMLAnchorElement>(`${TOGGLE} a`);
+      if (!a) throw new Error('link not ready');
+      return a;
+    });
+    const toggle = el.querySelector<HTMLElement>(TOGGLE)!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    link.focus();
+    await userEvent.keyboard('{Enter}');
+
+    await vi.waitFor(() => expect(location.hash).toBe('#pv-guide'));
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(el.openGroups).not.toContain('g');
+  });
+});

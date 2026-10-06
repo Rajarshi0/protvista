@@ -256,15 +256,21 @@ describe('the protvista-error event is unchanged', () => {
   });
 });
 
-describe('author mode off: errors look exactly as they did', () => {
-  it('keeps the track badge an image with its title and description', async () => {
+describe('author mode off: errors are not expanded', () => {
+  it('makes the track badge a note button that opens the error text', async () => {
     quiet();
     const { el, events } = mountEl(everything());
     await ready(el, events);
     const badge = el.querySelector(`#${CSS_PREFIX}-group_broken ${BADGE}`)!;
-    expect(badge.tagName).toBe('SPAN');
-    expect(badge.getAttribute('role')).toBe('img');
-    const label = badge.parentElement!;
+    expect(badge.tagName).toBe('BUTTON');
+    expect(badge.getAttribute('aria-expanded')).toBe('false');
+    expect(popoverOf(badge).textContent).toContain('Broken');
+    expect(linesOf(badge)).toEqual([
+      './missing.csv could not be found (HTTP 404) — check the path is relative to the page.',
+    ]);
+    // A lone entry is not a one-item bulleted list.
+    expect(popoverOf(badge).querySelector('ul')).toBeNull();
+    const label = rowLabel(el, 'broken')!;
     expect(normalize(label.innerHTML)).toMatchSnapshot();
   });
 
@@ -319,15 +325,30 @@ const topNote = (el: El) =>
 const noResultsNote = (el: El) =>
   el.querySelector<HTMLButtonElement>(`.protvista-no-results ${NOTE}`);
 
+/** One entry of a note: the lone one, or an item of its list. */
+const ENTRY = `.${CSS_PREFIX}-note-popover__entry`;
 const popoverOf = (button: Element) =>
   document.getElementById(button.getAttribute('aria-controls')!)!;
 const linesOf = (button: Element) =>
-  [...popoverOf(button).querySelectorAll('li')].map((li) =>
+  [...popoverOf(button).querySelectorAll(ENTRY)].map((li) =>
     li.textContent!.replace(/\s+/g, ' ').trim()
   );
-/** Every line in every note popover the element draws. */
+/**
+ * Every line in every visitor ⓘ the element draws. An error badge's note is
+ * not one: it carries the error's own text, file and URL included.
+ */
 const allLines = (el: El) =>
-  [...el.querySelectorAll(NOTE)].flatMap((b) => linesOf(b));
+  [...el.querySelectorAll(`${NOTE}--notice`)].flatMap((b) => linesOf(b));
+/** Every note on the element: a lone entry is plain text, a list needs two. */
+const expectListOnlyForMany = (el: El) => {
+  for (const button of el.querySelectorAll(NOTE)) {
+    const popover = popoverOf(button);
+    const entries = popover.querySelectorAll(ENTRY).length;
+    const name = button.getAttribute('aria-label')!;
+    expect(entries, name).toBeGreaterThan(0);
+    expect(!!popover.querySelector('ul'), name).toBe(entries > 1);
+  }
+};
 
 const csvTrack = (
   id: string,
@@ -581,7 +602,10 @@ describe('visitor notices, one per routing-table row', () => {
     const onTop = el.querySelector(`${TOP_BAR} ${VISITOR}`);
     expect(!!onRow, 'track notice').toBe(expected === 'track');
     expect(!!onTop, 'viewer notice').toBe(expected === 'viewer');
-    if (expected === 'none') expect(el.querySelector(NOTE)).toBeNull();
+    if (expected === 'none') {
+      expect(el.querySelector(`${NOTE}--notice`)).toBeNull();
+    }
+    expectListOnlyForMany(el);
   });
 
   // Author mode lists what the event carries: every error and warning,
@@ -607,6 +631,7 @@ describe('visitor notices, one per routing-table row', () => {
       expect(authorTexts(el).length > 0).toBe(rule.event);
       // Author mode replaces the visitor ⓘ: one control per anchor.
       expect(el.querySelector(`.${CSS_PREFIX}-note--notice`)).toBeNull();
+      expectListOnlyForMany(el);
     }
   );
 });
@@ -673,6 +698,8 @@ describe('what a visitor notice says', () => {
       "“Mine” can't be displayed in this viewer.",
       "“Partner data” isn't shown: its data couldn't be loaded.",
     ]);
+    // Two entries are a bulleted list.
+    expect(popoverOf(top).querySelectorAll('ul > li')).toHaveLength(2);
     // Lab hits carries its own two lines.
     expect(linesOf(rowLabel(el, 'lab')!.querySelector(NOTE)!)).toEqual([
       COLOUR_TEXT,
@@ -716,7 +743,9 @@ describe('quiet-notices', () => {
     quiet();
     const { el, events } = mountEl(everything(), { attrs: ['quiet-notices'] });
     await ready(el, events);
-    expect(el.querySelector(NOTE)).toBeNull();
+    expect(el.querySelector(`${NOTE}--notice`)).toBeNull();
+    // An error is not a notice: its badge stays.
+    expect(el.querySelector(BADGE)).not.toBeNull();
 
     el.removeAttribute('quiet-notices');
     await el.updateComplete;
@@ -725,7 +754,7 @@ describe('quiet-notices', () => {
 
     el.setAttribute('quiet-notices', '');
     await el.updateComplete;
-    expect(el.querySelector(NOTE)).toBeNull();
+    expect(el.querySelector(`${NOTE}--notice`)).toBeNull();
   });
 });
 
@@ -1194,7 +1223,11 @@ describe('author mode is opt-in', () => {
     const { el, events } = mountEl(everything());
     await ready(el, events);
     expect(el.querySelector(AUTHOR)).toBeNull();
-    expect(el.querySelector(ERROR_NOTE)).toBeNull();
+    // The error badge is the visitor's, not author mode's expanded one.
+    expect(el.querySelector(ERROR_NOTE)!.getAttribute('aria-label')).toBe(
+      'Track failed to load'
+    );
+    expect(el.querySelector(`.${CSS_PREFIX}-note-popover__footer`)).toBeNull();
     expect(authorTexts(el)).toEqual([]);
   });
 
@@ -1421,7 +1454,7 @@ describe('author mode lists every warning, as the event and playground say it', 
     /** Every entry on every author control: what the count must say. */
     const authorEntries = (el: El) =>
       [...el.querySelectorAll(`${AUTHOR}, ${ERROR_NOTE}`)].reduce(
-        (n, b) => n + popoverOf(b).querySelectorAll('li').length,
+        (n, b) => n + popoverOf(b).querySelectorAll(ENTRY).length,
         0
       );
 
@@ -1476,8 +1509,9 @@ describe('author mode expands errors', () => {
     const { el, events } = mountEl(everything(), { attrs: ['show-warnings'] });
     await ready(el, events);
     const label = rowLabel(el, 'broken')!;
-    // The image badge is gone: the button replaces it, same glyph and red.
-    expect(label.querySelector('span[role="img"]')).toBeNull();
+    // The visitor badge is gone: the author control replaces it, same glyph
+    // and red.
+    expect(label.querySelectorAll(BADGE)).toHaveLength(1);
     const button = label.querySelector<HTMLButtonElement>(ERROR_NOTE)!;
     expect(button.tagName).toBe('BUTTON');
     expect(button.classList.contains(`${CSS_PREFIX}-error-badge`)).toBe(true);
@@ -1508,7 +1542,7 @@ describe('author mode expands errors', () => {
     await el.updateComplete;
     // The group keeps its count badge; the text goes to the top bar.
     expect(el.querySelector(`#${CSS_PREFIX}-group_G ${BADGE}`)!.tagName).toBe(
-      'SPAN'
+      'BUTTON'
     );
     const top = el.querySelector(`${TOP_BAR} ${AUTHOR}`)!;
     expect(popoverOf(top).textContent!.replace(/\s+/g, ' ')).toContain(

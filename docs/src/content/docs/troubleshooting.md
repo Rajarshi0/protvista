@@ -182,13 +182,17 @@ or URL it came from, and the note visitors see for it (unless `quiet-notices`
 is set). A rejected `setTrackData()` call made three times is listed once,
 marked ×3.
 
-Author mode shows errors in full too. A track's red `⚠` badge becomes a
-button whose list starts with the error's whole text and its source (Retry
-stays beside it). An error on a track whose label isn't drawn — inside a
+A red `⚠` badge works like the ⓘ: select it and a note opens with what went
+wrong — the same text the console and the event carry, such as
+"./hits.csv could not be found (HTTP 404) — check the path is relative to the
+page." Unlike a notice, an error says which file or URL failed, because the
+person reading it is often the one who can fix it. Retry stays beside it.
+
+Author mode shows errors in full too. A track's red `⚠` badge lists the
+error's whole text and its source, then the track's warnings. An error on a track whose label isn't drawn — inside a
 collapsed group, which shows only the group's count badge — is listed beside
 Customize under the track's name. The alert panel adds the console's text
-under its summary. With author mode off, errors look exactly as they always
-have.
+under its summary.
 
 Setting or removing either attribute on a live element takes effect at once,
 with no reload.
