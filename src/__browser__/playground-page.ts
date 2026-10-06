@@ -16,11 +16,24 @@ import { EditorView } from 'codemirror';
 
 import { encodeState, type PlaygroundState } from '../playground/url-state.js';
 
-/** Every id `index.ts` and the local-data control look up. */
+/**
+ * Every id `index.ts` and the local-data control look up. The header keeps
+ * the page's `header.bar` and `.field` wrappers so a spec that loads the
+ * page's CSS gets its layout too: the preset <select> is as wide as its
+ * longest option, and only the page's `.field { min-width: 0 }` lets it
+ * shrink at phone width. Without them it overflowed 390 px with wider fonts
+ * (as on the CI runner).
+ */
 export const SKELETON = `
-  <header>
-    <select id="preset" aria-label="Configuration preset"></select>
-    <input id="accession" aria-label="Accession" value="P05067" />
+  <header class="bar">
+    <div class="field">
+      <label for="preset">Preset</label>
+      <select id="preset" aria-label="Configuration preset"></select>
+    </div>
+    <div class="field">
+      <label for="accession">Accession</label>
+      <input id="accession" aria-label="Accession" value="P05067" />
+    </div>
     <div class="local-data">
       <button id="load-data" type="button" aria-describedby="local-note">Load data file…</button>
       <input id="data-file" type="file" hidden />
