@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.0.0-beta.5 — 2026-10-06
 
 ### Fixed: the 3D structure viewer works when loaded from a CDN
 
