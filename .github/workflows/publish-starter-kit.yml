@@ -113,22 +113,26 @@ jobs:
           # visible (beta.3 did, and shipped the banner on a working kit).
           PINNED="$(node -p "require('./package.json').version")"
           published() {
-            curl --fail --silent --show-error \
+            curl --fail --silent --show-error --max-time 20 \
               "https://registry.npmjs.org/protvista-uniprot/${PINNED}" \
               -o /dev/null 2>/dev/null
           }
-          for attempt in $(seq 1 30); do
-            published && break
-            echo "protvista-uniprot@${PINNED} not on npm yet (attempt ${attempt}/30); retrying in 30s."
-            sleep 30
-          done
-          if published; then
-            echo "protvista-uniprot@${PINNED} is published — removing the unpublished notice."
-            for f in target/index.html target/README.md; do
-              sed -i '/protvista:unpublished:start/,/protvista:unpublished:end/d' "$f"
-            done
+          if ! grep -q 'protvista:unpublished:start' target/index.html target/README.md; then
+            echo "The kit carries no unpublished notice; nothing to strip."
           else
-            echo "::warning::protvista-uniprot@${PINNED} is not on npm yet — publishing the kit with its 'does not work yet' notice intact."
+            for attempt in $(seq 1 30); do
+              published && break
+              echo "protvista-uniprot@${PINNED} not on npm yet (attempt ${attempt}/30); retrying in 30s."
+              sleep 30
+            done
+            if published; then
+              echo "protvista-uniprot@${PINNED} is published — removing the unpublished notice."
+              for f in target/index.html target/README.md; do
+                sed -i '/protvista:unpublished:start/,/protvista:unpublished:end/d' "$f"
+              done
+            else
+              echo "::warning::protvista-uniprot@${PINNED} is not on npm yet — publishing the kit with its 'does not work yet' notice intact."
+            fi
           fi
 
           cd target

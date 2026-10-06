@@ -82,8 +82,9 @@ The config validator and the loader consult the same registry, so a track that
 names `adapter: my-hits` both validates and runs only because you registered it.
 
 **A custom adapter receives the response parsed as JSON**, whatever the file is
-called: naming an `adapter:` takes the place of `format:`, so the body is never
-handed over as text. That makes a custom adapter the tool for JSON in your own
+called: naming an `adapter:` takes the place of `format:`, so the body isn't
+handed over as text. (The one exception: if another track reads the same URL
+with a text `format:`, the shared response is fetched as text.) That makes a custom adapter the tool for JSON in your own
 shape. For a CSV or TSV whose columns differ from ProtVista's, it is usually
 simpler to rename the header row to `type,start,end,description` (any other
 columns are kept for tooltips) than to write a parser; see
@@ -140,9 +141,10 @@ viewer.setTrackData('MY_LAB', 'hits', [
 
 You can call it before or after the element mounts. A call after mount reloads
 the view with the new records. Only a `from: custom` track accepts data this
-way; a call naming any other track, or passing records of the wrong shape, is
-rejected and reported as a `set-track-data` error (see
-[Troubleshoot errors](/protvista/troubleshooting)).
+way. A call naming a track that isn't in the config or isn't `from: custom`, or
+passing something other than an array or object, is ignored and reported as a
+`set-track-data` warning. Records that don't fit the track's kind are reported
+on the track itself (see [Troubleshoot errors](/protvista/troubleshooting)).
 
 ## A custom kind and a custom theme
 
@@ -162,6 +164,12 @@ const myRamp = [
 viewer.registerSemanticKind('my-features', myFeatures);
 viewer.registerTheme('my-ramp', myRamp);
 ```
+
+A kind registered like this has no record `shape`, so it can't pick a parser
+from a file extension: `kind: my-features` with a bare `data: ./my-hits.json`
+is rejected (`kind-format-mismatch`). Repeat the adapter on the data
+descriptor instead, `data: { from: 'file', url: './my-hits.json', adapter: 'my-hits' }`,
+or use a URL without a file extension.
 
 Only adapters have a property you can set before the element is defined. If you
 can't call these methods before the element mounts (for example, it is already

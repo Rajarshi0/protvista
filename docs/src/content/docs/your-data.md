@@ -114,8 +114,9 @@ rows:
 ProtVista reads commas (`.csv`) and tabs (`.tsv`) only, and the format alone
 decides which — it never guesses from the content. Excel's "CSV" export in many
 European locales writes semicolons instead, so save the sheet as **Text (Tab
-delimited)** and read it as TSV. Excel names that file `.txt`, so say the
-encoding outright with `format:`, which works whatever the name:
+delimited)** and read it as TSV (if your text has accented letters, see the
+encoding note below). Excel names that file `.txt`, so say the encoding
+outright with `format:`, which works whatever the name:
 
 ```yaml
 data:
@@ -123,23 +124,26 @@ data:
   format: tsv
 ```
 
+Renaming the file to `.tsv` works too.
+
 A few more things to check when the file comes from Excel or was edited on
 Windows:
 
-- **Save as UTF-8.** In Excel choose **CSV UTF-8 (Comma delimited)**. Plain
-  "CSV" and "Text (Tab delimited)" are saved in the computer's legacy encoding,
-  so accented letters and symbols in `description` come out garbled, and
-  "Unicode Text" (UTF-16) can't be read at all: it fails as if the header were
-  missing.
-- **Decimal points, not commas.** A `score` of `0,95` fails with
-  `expected a number`; use `0.95`.
+- **Accented text.** Excel's plain "CSV" and "Text (Tab delimited)" exports
+  use the computer's legacy encoding, so accented letters and symbols in
+  `description` come out garbled. Choose **CSV UTF-8 (Comma delimited)**
+  instead. If your Excel writes semicolons even then (common where the decimal
+  separator is a comma), export the sheet as CSV or TSV from Google Sheets or
+  LibreOffice instead. "Unicode Text" (UTF-16) can't be read at all: it fails
+  as if the header were missing.
+- **Decimal points, not commas.** In a CSV, `0,95` splits into two cells and
+  the row fails as ragged (`expected 5 columns, got 6`); in a TSV it fails with
+  `expected a number`. Use `0.95`.
 - **Check the real file name.** Windows hides extensions by default, so a file
   saved from Notepad as `hotspots.csv` may really be `hotspots.csv.txt`. Turn
   on **View → File name extensions** in File Explorer.
 - **Match the case of the name exactly.** Windows treats `Hotspots.csv` and
   `hotspots.csv` as the same file; a web server such as GitHub Pages does not.
-
-Renaming the file to `.tsv` works too.
 
 If a file's header looks like it uses a different separator from the one its
 format implies, the missing-column error also names the separator the header

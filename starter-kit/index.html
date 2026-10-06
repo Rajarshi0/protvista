@@ -104,7 +104,8 @@
           'Browsers block pages opened from a file:// address from reading ' +
             'other local files, so the viewer can never load its config or ' +
             'your data this way.',
-          'Windows: in this folder, run  py -m http.server 8000 --bind 127.0.0.1',
+          'Windows: in this folder, run  py -m http.server 8000 --bind 127.0.0.1' +
+            '  (or  python -m http.server 8000 --bind 127.0.0.1  if py is not found)',
           'macOS or Linux: in this folder, run  python3 -m http.server 8000 --bind 127.0.0.1',
           'Then open http://localhost:8000/ instead of double-clicking ' +
             'index.html. The README has step-by-step instructions.'

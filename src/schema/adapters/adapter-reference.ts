@@ -120,7 +120,7 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
     type: 'string',
     required: false,
     notes:
-      'Free text shown in the default tooltip. **CSV/TSV: the `description` header column is required** (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty.',
+      'Free text shown in the default tooltip. CSV/TSV: the `description` header column is required (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty.',
   },
   {
     name: 'score',

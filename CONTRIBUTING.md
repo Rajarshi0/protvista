@@ -61,11 +61,14 @@ Windows-specific notes:
 - **Line endings are handled for you.** `.gitattributes` checks every text file
   out with LF endings, whatever your Git `core.autocrlf` setting, so the tests
   that compare files byte for byte pass on Windows too. If your editor asks,
-  keep LF (`.editorconfig` tells most editors to).
+  keep LF (`.editorconfig` tells most editors to). **Cloned before
+  7 October 2026?** Your files may still have Windows line endings: delete the
+  clone and clone again.
 - **package.json scripts run the same as on macOS and Linux:** pnpm runs them
   in its own POSIX-style shell (`shellEmulator` in `pnpm-workspace.yaml`). The
   exceptions are the maintainer-only `./scripts/*.sh` tools (`pnpm validate`,
-  `pnpm release:next`, `pnpm cdn:clear`), which need Git Bash or WSL.
+  `pnpm release:next`, `pnpm cdn:clear`): run them from Git Bash or WSL as
+  `bash scripts/<name>.sh`.
 - WSL2 also works. Clone inside the Linux file system (`~/…`), not under
   `/mnt/c`, and follow the Linux instructions.
 
@@ -90,10 +93,12 @@ open a pull request back.
    ```
 
    If the clone fails with `Remote branch next not found`, your fork only has
-   `main`. Clone it without `--branch next`, then run these to create `next`
-   from the original repository and push it to your fork:
+   `main`. Run these instead, which create `next` from the original repository
+   and push it to your fork:
 
    ```bash
+   git clone https://github.com/YOUR-USERNAME/protvista.git
+   cd protvista
    git remote add upstream https://github.com/ebi-webcomponents/protvista.git
    git fetch upstream
    git switch -c next upstream/next
@@ -131,10 +136,10 @@ open a pull request back.
    `main`, so check this every time. Fill in the template, link the issue
    (`Fixes #305`), and leave **Allow edits by maintainers** ticked.
 
-7. **Expect "Approval required" on your first PR.** GitHub doesn't run a
-   first-time contributor's workflows until a maintainer approves them, so the
-   checks wait until one of us clicks approve. Run the tests locally in the
-   meantime.
+7. **Your first PR may show "Approval required".** GitHub can hold a
+   first-time contributor's workflows until a maintainer approves them; if
+   yours are held, the checks start once one of us approves. Run the tests
+   locally in the meantime.
 
 8. **Keep the PR up to date** when `next` moves on:
 
@@ -189,8 +194,8 @@ Welcome! For the ProtVista hackathon (7–9 October 2026):
 - **Start with `pnpm test:unit`.** It is quick and needs no browser.
 - **CI checks coverage.** A PR that lowers test coverage below the floor fails
   CI. If you're unsure how to test your change, ask a mentor to pair with you.
-- **Your first PR's checks wait for approval** (see step 7 above); a mentor will
-  approve them.
+- **Your first PR's checks may wait for approval** (see step 7 above); a mentor
+  will approve them.
 - **Getting help:** ask in the hackathon's chat or help-desk channel. After the
   event, use [office hours](#office-hours) or open an issue.
 - The [Code of Conduct](./CODE_OF_CONDUCT.md) applies to the event and to the
@@ -342,8 +347,8 @@ drift. If you change the source, regenerate and commit the result:
 | If you changed… | Run | Which regenerates |
 | --- | --- | --- |
 | `src/schema/schema.json` | `pnpm schema:sync` | `public/schema/v1/config.schema.json` |
-| `src/schema/adapters/adapter-reference.ts` or a built-in adapter | `pnpm adapters:sync` | `docs/src/content/docs/adapter-reference.md` and `public/schema/v1/feature-record.schema.json` |
-| The feature type or shape vocabulary (`src/schema/feature-vocabulary.ts`, or a Nightingale upgrade) | `pnpm vocabulary:sync` | `docs/src/content/docs/type-and-shape-vocabulary.md` |
+| `src/schema/adapters/adapter-reference.ts`, `src/schema/adapters/render-adapter-reference.ts` or a built-in adapter | `pnpm adapters:sync` | `docs/src/content/docs/adapter-reference.md` and `public/schema/v1/feature-record.schema.json` |
+| The feature type or shape vocabulary (`src/schema/feature-vocabulary.ts`, `src/schema/render-feature-vocabulary.ts`, or a Nightingale upgrade) | `pnpm vocabulary:sync` | `docs/src/content/docs/type-and-shape-vocabulary.md` |
 
 The failing spec names the command to run.
 
@@ -404,7 +409,7 @@ component tests). Vitest globals are off — import `describe`, `it`, `expect`,
 | `pnpm test:coverage` | Both test projects, with coverage written to `./coverage/`; this is the gate CI enforces |
 
 To run one spec file, pass its path:
-`pnpm exec vitest run src/schema/__spec__/validate.spec.ts`.
+`pnpm exec vitest run --project unit src/schema/__spec__/validate.spec.ts`.
 
 ### Browser tests need a Playwright browser
 
@@ -467,7 +472,7 @@ When reporting bugs, please include:
 - Screenshots or recordings if applicable
 
 Use the [GitHub issue tracker](https://github.com/ebi-webcomponents/protvista/issues/new/choose);
-the issue forms ask for these details. Maintainers add the labels.
+the issue forms ask for these details and add a label for you.
 
 ## Requesting Features
 

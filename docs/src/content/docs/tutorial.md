@@ -223,8 +223,8 @@ carries a `theme:` block — edit the colours and press **Run**.
 :::
 
 **From your page's CSS.** For full control, `<protvista-uniprot>` exposes
-`--protvista-*` design tokens (and its datatable, `::part` hooks) — set them in
-ordinary CSS on the page:
+`--protvista-*` design tokens, and its datatable exposes `::part` hooks — set
+them in ordinary CSS on the page:
 
 ```css
 protvista-uniprot {

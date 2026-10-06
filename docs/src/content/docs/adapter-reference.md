@@ -40,7 +40,7 @@ Readable as: `csv`, `tsv`, `json`, `bed` — by file extension, or with an expli
 | `type` | string | Yes | Feature category label (e.g. DOMAIN, BINDING). Drives `filter:` and colour grouping. |
 | `start` | integer | Yes | 1-based start position (inclusive). |
 | `end` | integer | Yes | 1-based end position (inclusive). Must not be less than `start`. |
-| `description` | string | No | Free text shown in the default tooltip. **CSV/TSV: the `description` header column is required** (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty. |
+| `description` | string | No | Free text shown in the default tooltip. CSV/TSV: the `description` header column is required (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty. |
 | `score` | number | No | Optional numeric score. Omitted when empty. |
 | `color` | string | No | Per-feature colour (any CSS colour) for the outline, and the fill unless `fill` is set; wins over the track's `rendering.color`. CSV/TSV/JSON only — BED never sets it. Omitted when empty. |
 | `shape` | string | No | Per-feature glyph (see the type and shape vocabulary); wins over the track's `rendering.shape`. CSV/TSV/JSON only. Omitted when empty, and dropped with a warning when it names an Object.prototype property (`valueOf`, `constructor`, …). |

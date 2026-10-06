@@ -253,7 +253,7 @@ types from the Windows registry, which on some machines maps `.mjs` or `.js` to
 `text/plain`. The browser then refuses to run the module, and the console says
 it was blocked because of a disallowed MIME type. Load the component from the
 CDN instead (see [Embed the viewer](/protvista/embed)), or use a different
-static server such as `pnpm dlx serve`.
+static server such as `npx serve`.
 
 ### A track shows up empty
 
