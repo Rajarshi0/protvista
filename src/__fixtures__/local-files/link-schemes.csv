@@ -1,0 +1,7 @@
+type,start,end,description,url
+DOMAIN,18,60,https link,https://www.uniprot.org/
+DOMAIN,70,110,mailto link,mailto:lab@example.org
+DOMAIN,120,160,javascript scheme,javascript:alert(1)
+DOMAIN,170,210,protocol-relative,//example.org/x
+DOMAIN,220,260,no url,
+DOMAIN,270,310,<img src=x onerror=alert(1)> html in description,https://www.uniprot.org/

@@ -1612,6 +1612,51 @@ describe('validateConfig — sequence mode', () => {
     expect(result.issues[0].message).toContain('contains 2 records');
   });
 
+  describe('a headed inline FASTA construct', () => {
+    /** A 240-residue construct under a header, as a YAML block reads. */
+    const CONSTRUCT = [
+      '>my construct v2',
+      'MQNCSGGMDLWFHSEGPMAGTKSYGQGVWNLECKWRQTQPHEPVKFRFASWGIFVVQCQR',
+      'IPTLDVRATYEPSAMMEGFMIPCSDQAIPTVDEVGVTQTNWPTRISDACCRNGNGTSPFC',
+      'HPNTNSQAPEQLSSHESVFDLCFNEPAHLWAQGHKCPFWAQTIKTMLGSVTIMKDWEGES',
+      'HGIRAGFYNIWFGFNDNKTYYWETSDQQCVKNYEFRRGEWHQCDAEDLAYRHVVCQRILG',
+      '',
+    ].join('\n');
+    const issuesFor = (sequence: string) =>
+      validateConfig(seqConfig([track({ id: 't' })], { sequence }), freshRegistry())
+        .issues;
+
+    it('names a bad residue in headed inline FASTA, in full', () => {
+      expect(issuesFor(CONSTRUCT.replace('MQNCSGG', 'MQNC1SGG'))).toEqual([
+        {
+          path: '/sequence',
+          code: 'invalid-sequence',
+          message:
+            "inline sequence (parsed as FASTA): invalid character '1' at residue 5. A protein sequence uses the one-letter codes A–Z, optionally ending in '*'.",
+        },
+      ]);
+    });
+
+    it('rejects a second record, in full', () => {
+      expect(issuesFor(`${CONSTRUCT}>second\nMKTAYIAKQR\n`)).toEqual([
+        {
+          path: '/sequence',
+          code: 'invalid-sequence',
+          message:
+            "inline sequence (parsed as FASTA): contains 2 records; the viewer shows one protein. Keep a single '>' record.",
+        },
+      ]);
+    });
+
+    it('reads a bare file name as a missing ./', () => {
+      const issues = issuesFor('protein.txt');
+      expect(codes(issues)).toEqual(['invalid-sequence']);
+      expect(issues[0].message).toContain(
+        "'protein.txt' looks like a file path; write it as './protein.txt'."
+      );
+    });
+  });
+
   it('leaves a file reference to the loader', () => {
     const result = validateConfig(
       seqConfig([track({ id: 't' })], { sequence: './protein.fasta' }),

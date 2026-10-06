@@ -12,6 +12,8 @@ import {
 } from '../resolve.js';
 import { tooltipDefaults } from '../defaults.js';
 import type { TooltipContext, TooltipSpec } from '../types.js';
+import { runPipeline } from '../../schema/adapters/pipeline.js';
+import { fixtureText } from '../../__spec__/fixture-text.js';
 
 const ctx: TooltipContext = {
   accession: 'P05067',
@@ -458,6 +460,57 @@ describe('resolveTooltip — the {% link %} tag (#283)', () => {
     expect(
       md('{% link href=$url %}**Pub**Med{% /link %}', { url: '/a' })
     ).toBe('<p><a href="/a"><strong>Pub</strong>Med</a></p>');
+  });
+
+  it('shows the URL as a mailto link in the self-closing form, after a field', () => {
+    expect(
+      md('{% $gene %} · {% link href=$url /%}', {
+        gene: 'APP',
+        url: 'mailto:lab@example.org',
+      })
+    ).toBe(
+      '<p>APP · <a href="mailto:lab@example.org">mailto:lab@example.org</a></p>'
+    );
+  });
+
+  describe('each URL scheme a data file might hold', () => {
+    const records = runPipeline('feature', 'csv', fixtureText('link-schemes.csv'), {
+      source: './link-schemes.csv',
+    }) as Array<Record<string, unknown>>;
+    const TEMPLATE = '{% $description %} · {% link href=$url %}open{% /link %}';
+    const row = (description: string) =>
+      records.find((r) => String(r.description).includes(description))!;
+
+    it.each([
+      ['https link', 'https://www.uniprot.org/'],
+      ['mailto link', 'mailto:lab@example.org'],
+      // Protocol-relative: off-site, and documented so.
+      ['protocol-relative', '//example.org/x'],
+    ])('links "open" for the %s row', (description, href) => {
+      expect(md(TEMPLATE, row(description))).toBe(
+        `<p>${description} · <a href="${href}">open</a></p>`
+      );
+    });
+
+    it.each(['javascript scheme', 'no url'])(
+      'shows "open" as plain text for the %s row',
+      (description) => {
+        expect(md(TEMPLATE, row(description))).toBe(
+          `<p>${description} · open</p>`
+        );
+      }
+    );
+
+    it('escapes HTML in a field as literal text, with no tag', () => {
+      const out = md(TEMPLATE, row('html in description'));
+      expect(out).toBe(
+        '<p>&lt;img src=x onerror=alert(1)&gt; html in description · ' +
+          '<a href="https://www.uniprot.org/">open</a></p>'
+      );
+      const html = htmlFragment(out);
+      expect(html.querySelector('img')).toBeNull();
+      expect(html.textContent).toContain('<img src=x onerror=alert(1)>');
+    });
   });
 
   it('reads a CSV-shaped record: plain extras as variables and fields paths', () => {
