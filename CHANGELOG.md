@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.0.0-beta.4 — 2026-10-06
 
 ### Fixed: contributing from Windows, and docs that disagreed with the code
 
