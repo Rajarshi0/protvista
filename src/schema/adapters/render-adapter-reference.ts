@@ -217,8 +217,8 @@ export function renderReferenceMarkdown(
       `[config JSON Schema](${PAGES_BASE}/schema/v1/config.schema.json); *track payloads* — the shapes ` +
       'adapters consume — are not. This page fills that gap: the expected input shape for every ' +
       'built-in adapter. For the config-vs-payload boundary see ' +
-      '[Configuration vs data](/protvista/configuration-vs-data); for the normative generic-format ' +
-      `contract see [specs/generic-format-adapters.md](${GITHUB_BLOB}/specs/generic-format-adapters.md).`
+      '[Configuration vs data](/protvista/configuration-vs-data); for the normative shape-and-format ' +
+      `contract see [specs/config-approach.md](${GITHUB_BLOB}/specs/config-approach.md#shape-and-format-normative).`
   );
   lines.push('');
   lines.push(
@@ -290,7 +290,7 @@ export function renderReferenceMarkdown(
     `- [specs/config-approach.md](${GITHUB_BLOB}/specs/config-approach.md) — normative Intent/Representation split.`
   );
   lines.push(
-    `- [specs/generic-format-adapters.md](${GITHUB_BLOB}/specs/generic-format-adapters.md) — normative generic-format contract.`
+    `- [specs/config-approach.md — Shape and format](${GITHUB_BLOB}/specs/config-approach.md#shape-and-format-normative) — normative shape-and-format contract.`
   );
   lines.push(
     `- [examples/](${GITHUB_TREE}/examples) — runnable, CI-validated config + data pairs.`

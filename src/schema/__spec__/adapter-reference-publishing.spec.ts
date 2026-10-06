@@ -41,8 +41,10 @@ describe('adapter reference — generated outputs', () => {
     return;
   }
 
+  // Line endings are normalised so a CRLF checkout (Git for Windows without
+  // .gitattributes) doesn't read as drift; everything else is byte-for-byte.
   it('docs/adapter-reference.md is byte-identical to the renderer', () => {
-    const onDisk = readFileSync(mdPath, 'utf8');
+    const onDisk = readFileSync(mdPath, 'utf8').replace(/\r\n/g, '\n');
     expect(
       onDisk,
       'docs/adapter-reference.md drifted from the source table — run `pnpm adapters:sync`'
@@ -50,7 +52,7 @@ describe('adapter reference — generated outputs', () => {
   });
 
   it('public/schema/v1/feature-record.schema.json is byte-identical to the renderer', () => {
-    const onDisk = readFileSync(schemaPath, 'utf8');
+    const onDisk = readFileSync(schemaPath, 'utf8').replace(/\r\n/g, '\n');
     expect(
       onDisk,
       'public/schema/v1/feature-record.schema.json drifted — run `pnpm adapters:sync`'

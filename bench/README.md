@@ -1,14 +1,14 @@
 # Performance benchmarks
 
 1. **Library bundle size** — raw + gzipped bytes from `pnpm build`'s `dist/` output. Catches accidental dependency bloat in shippable code.
-2. **Lighthouse CI** — runs the site build (`pnpm site:build`, served by `vite preview`) against a fixed list of UniProt accessions. Captures LCP, TBT, CLS, Speed Index, and the overall Performance score.
+2. **Lighthouse CI** — runs the bench build (`pnpm bench:build`, served by `vite preview`) against a fixed list of UniProt accessions. Captures LCP, TBT, CLS, Speed Index, and the overall Performance score.
 3. **Custom milestones** — `<protvista-uniprot>` emits three `performance.mark()` calls at lifecycle transitions (`script-start` in `connectedCallback`, `data-loaded` after fetch resolves, `first-render` after Lit commits the manager to the DOM) plus three `performance.measure()` calls between them. Lighthouse's user-timings audit captures these automatically, so they appear next to the headline metrics in `summary.md`.
 
 `fetch-and-parse` (script-start → data-loaded), `render` (data-loaded → first-render), and `total` (script-start → first-render) are the durations surfaced in the report.
 
 ## Stability contract
 
-The four mark/measure names — `protvista:script-start`, `protvista:data-loaded`, `protvista:first-render`, plus the three measures derived from them — are part of the component's public observable surface. **Renaming them, moving them to a different lifecycle point, or removing them is a breaking change for performance comparison.** A refactor that changes the conceptual meaning of any mark must update the corresponding baseline.
+The three marks — `protvista:script-start`, `protvista:data-loaded`, `protvista:first-render` — and the three measures derived from them are part of the component's public observable surface. **Renaming them, moving them to a different lifecycle point, or removing them is a breaking change for performance comparison.** A refactor that changes the conceptual meaning of any mark must update the corresponding baseline.
 
 The marks fire unconditionally (every demo run, every consumer page) — they're cheap (~150 bytes shipped, no work when nobody is observing) and useful for any consumer that wants to profile.
 

@@ -44,8 +44,11 @@ beta with nothing to install:
 Pin the exact version, as above: `@beta` and `@5` would move under you as the
 beta develops.
 
-To host the file yourself instead, run `pnpm install && pnpm build` in a clone of
-the [repository](https://github.com/ebi-webcomponents/protvista), copy the
+To host the file yourself instead, clone the `next` branch of the
+[repository](https://github.com/ebi-webcomponents/protvista)
+(`git clone --branch next https://github.com/ebi-webcomponents/protvista`; the
+default branch, `main`, is the 4.x line), run `pnpm install`, then
+`pnpm build`, copy the
 **contents** of `dist/` next to your page, and point the tag at your own copy
 (`src="./protvista-uniprot.mjs"`). Copy the whole folder: the build is split up,
 so the `.mjs` loads sibling files from the same directory and will not run
@@ -66,7 +69,7 @@ import 'protvista-uniprot';
 ```
 
 :::caution
-A plain `npm install protvista-uniprot` gives you `4.9.3` — the current stable
+A plain `npm install protvista-uniprot` gives you `4.9.x` — the current stable
 release, which predates the config surface these docs describe (`rows:`,
 `kind:`, `extends:`) and will not read the configs in this guide. That stays
 true for as long as v5 is in beta, because the beta publishes under the `beta`

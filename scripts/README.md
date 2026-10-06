@@ -1,4 +1,23 @@
-# ProtVista metrics & adoption tooling
+# ProtVista scripts
+
+## Index
+
+Everything in this directory, and how to run it. The `pnpm` aliases are defined
+in `package.json`. The `.sh` scripts are maintainer tools: on Windows run them
+from Git Bash or WSL.
+
+| Script | What it does | Run |
+| --- | --- | --- |
+| `sync-schema.mjs` | Copy `src/schema/schema.json` to the served `public/schema/v1/config.schema.json` | `pnpm schema:sync` |
+| `screenshots/` | Capture the documentation screenshots, or check them for drift ([README](./screenshots/README.md)) | `pnpm screenshots`, `pnpm screenshots:check` |
+| `conservation/` | Generate the data for `examples/conservation/` from a Pfam alignment | see `examples/conservation/PROVENANCE.md` |
+| `release-next.sh` | Cut a v5 beta from `next` ([RELEASING.md](../RELEASING.md)) | `pnpm release:next` |
+| `validate-package.sh` | The CI packaging checks plus extra tarball and ESM checks | `pnpm validate` |
+| `clearCDNcaches.sh` | Purge jsDelivr's cache for the package | `pnpm cdn:clear` |
+| `sync-from-main.sh` | Bring the safe subset of `main` into `next` ([policy](../docs/sync-from-main.md)) | `bash scripts/sync-from-main.sh` |
+| `update_metrics.sh` and the `.py` files | Adoption metrics, described below | see below |
+
+# Metrics & adoption tooling
 
 Small, dependency-light tools that maintain ProtVista's **adoption / usage metrics**.
 Three deliberately independent artifacts — a curated *entity table*, an auto
@@ -106,8 +125,8 @@ a regression.
 
 ## Notes
 
-- Hardcoded to `protvista-uniprot` (renamed to `protvista` in v5; the series will
-  eventually split across both names).
+- Hardcoded to `protvista-uniprot`. v5 keeps that name; if a later major renames
+  the package to `protvista`, the series will split across both names.
 - Out of scope: consumers of the underlying `@nightingale-elements/*` track
   components rather than ProtVista itself (e.g. InterPro).
 - The two GA4 page-view scripts live in `protvista/documents/`, not here: they need
