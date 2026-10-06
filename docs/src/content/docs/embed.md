@@ -66,7 +66,7 @@ import 'protvista-uniprot';
 ```
 
 :::caution
-A plain `npm install protvista-uniprot` gives you `4.9.3` — the current stable
+A plain `npm install protvista-uniprot` gives you `4.9.x` — the current stable
 release, which predates the config surface these docs describe (`rows:`,
 `kind:`, `extends:`) and will not read the configs in this guide. That stays
 true for as long as v5 is in beta, because the beta publishes under the `beta`

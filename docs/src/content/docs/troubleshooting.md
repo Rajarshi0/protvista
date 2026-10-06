@@ -239,6 +239,22 @@ While the first load is in flight you see a spinner, and screen readers hear
 "Loading protein data…" — so a region that stays *blank* is not a slow load.
 Check that `suspend` is not still on the element.
 
+**Opened the page by double-clicking it?** A page opened from disk (a
+`file://` address) can't load its config or any data file: browsers block it
+from reading other local files. Serve the folder with a local web server
+instead and open `http://localhost:8000/`. On Windows run
+`py -m http.server 8000 --bind 127.0.0.1` in that folder (or `python` if `py`
+isn't found); on macOS or Linux, `python3 -m http.server 8000 --bind 127.0.0.1`.
+The [Starter Kit](https://github.com/ebi-webcomponents/protvista-starter-kit)
+detects this case and says so on the page.
+
+**Self-hosting `dist/` with Python on Windows?** Python's server takes file
+types from the Windows registry, which on some machines maps `.mjs` or `.js` to
+`text/plain`. The browser then refuses to run the module, and the console says
+it was blocked because of a disallowed MIME type. Load the component from the
+CDN instead (see [Embed the viewer](/protvista/embed)), or use a different
+static server such as `pnpm dlx serve`.
+
 ### A track shows up empty
 
 Almost always a **path** issue with a file-backed track. `data: ./hotspots.csv`

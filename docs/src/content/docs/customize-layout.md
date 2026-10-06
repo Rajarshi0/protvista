@@ -129,10 +129,10 @@ const viewer = document.querySelector('protvista-uniprot');
 
 // Reorder the rows by id. Unknown ids are ignored; rows the list omits keep
 // their authored position, appended after.
-viewer.setRowOrder(['VARIATION', 'DOMAINS_AND_SITES', 'MOLECULE_PROCESSING']);
+viewer.setRowOrder(['VARIATION', 'DOMAINS', 'MOLECULE_PROCESSING']);
 
 // Reorder the tracks within one row (row id, then track ids).
-viewer.setTrackOrder('DOMAINS_AND_SITES', ['region', 'domain']);
+viewer.setTrackOrder('DOMAINS', ['region', 'domain']);
 
 // Show or hide a whole lane (a group or a standalone track).
 // Showing a group also clears any per-track hides inside it.
@@ -197,7 +197,7 @@ is the right choice for an embedder that manages layout itself:
 
 ## Next steps
 
-- [Author a config](/protvista/configure) — where `hidden:` and the rest of the config structure live.
+- [Author a config](/protvista/configure) — the rest of the config structure `hidden:` sits in.
 - [Escape hatches](/protvista/escape-hatches) — the other runtime registration methods (`registerAdapter`, `setTrackData`) the layout API sits beside.
 - [Configuration vs data](/protvista/configuration-vs-data) — why an arranged view exports as a config rather than a parallel overlay.
 

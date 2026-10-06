@@ -40,7 +40,7 @@ A kind's name tells you whether you can bring your own data to it:
 | `alphamissense-heatmap` | AlphaMissense pathogenicity as a full heatmap (every substitution × position). | — | AlphaMissense full matrix |
 
 Three record shapes cover every "your own data" cell above — features
-(`type,start,end`), points (`position,value`), and residue changes
+(`type,start,end`, plus a `description` column in CSV/TSV), points (`position,value`), and residue changes
 (`position,variant`). Which one a kind reads follows from what it draws, so
 `variants` and `rna-editing` share one, and every feature kind shares another.
 

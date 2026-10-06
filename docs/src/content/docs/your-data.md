@@ -35,7 +35,7 @@ A `features` track draws a list of **feature records**. Each record has:
 | `type` | yes | A label/category for the feature (e.g. `DOMAIN`, `BINDING`). Also what `filter:` matches on. |
 | `start` | yes | 1-based start position (inclusive), a whole number. |
 | `end` | yes | 1-based end position (inclusive), a whole number no less than `start`. |
-| `description` | no | Free text shown on hover/click. |
+| `description` | CSV/TSV: yes | Free text shown on hover/click. A CSV or TSV file must have a `description` **column** in its header row, though its cells may be empty; a file whose header is only `type,start,end` is rejected. Optional in JSON. |
 | `score` | no | A number, typically 0–1, for quality or confidence. |
 | `color` | no | This feature's colour — any CSS colour (`#1f77b4`, `steelblue`, `rgb(…)`). Wins over the track's `rendering.color`. |
 | `shape` | no | This feature's glyph, one of the [shape names](/protvista/type-and-shape-vocabulary). Wins over the track's `rendering.shape`. A value that names a JavaScript built-in (`valueOf`, `constructor`, …) is dropped with a `track-data` warning, so the feature takes the track's or type's shape. |
@@ -68,10 +68,10 @@ nothing left to configure.
 The extension always chooses a parser your track's `kind` can use: `.csv` on a
 `kind: features` track reads feature records, `.csv` on a `kind: linegraph`
 track reads `position,value` points. The `kind` says what the track *is*; the
-extension says what your file *looks like*. Pair a kind with a format it has no
-parser for — `kind: variants` at a `./x.csv` — and the config is rejected with a
-message naming the kinds that do read that format, rather than the track
-quietly coming up empty.
+extension says what your file *looks like*. Pair a kind with a format that
+can't carry its records — `kind: variants` at a `./x.bed`, since BED only holds
+feature records — and the config is rejected with a message naming both sides,
+rather than the track quietly coming up empty.
 
 ### CSV
 
@@ -122,6 +122,22 @@ data:
   url: ./hotspots.txt
   format: tsv
 ```
+
+A few more things to check when the file comes from Excel or was edited on
+Windows:
+
+- **Save as UTF-8.** In Excel choose **CSV UTF-8 (Comma delimited)**. Plain
+  "CSV" and "Text (Tab delimited)" are saved in the computer's legacy encoding,
+  so accented letters and symbols in `description` come out garbled, and
+  "Unicode Text" (UTF-16) can't be read at all: it fails as if the header were
+  missing.
+- **Decimal points, not commas.** A `score` of `0,95` fails with
+  `expected a number`; use `0.95`.
+- **Check the real file name.** Windows hides extensions by default, so a file
+  saved from Notepad as `hotspots.csv` may really be `hotspots.csv.txt`. Turn
+  on **View → File name extensions** in File Explorer.
+- **Match the case of the name exactly.** Windows treats `Hotspots.csv` and
+  `hotspots.csv` as the same file; a web server such as GitHub Pages does not.
 
 Renaming the file to `.tsv` works too.
 
@@ -369,7 +385,7 @@ position,value
 60,905
 ```
 
-Columns may be in either order, extra columns are ignored (graph points have no per-point tooltip to show them in, unlike feature records), and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind` — a bare `data: ./x.csv` on a track with no `kind` means feature records instead.
+Columns may be in either order, extra columns are ignored (graph points have no per-point tooltip to show them in, unlike feature records), and a malformed cell fails naming your file, the reading, the row and the column (`./depth.csv (parsed as CSV): row 3, column "value": expected a number, got "abc"`). Note the records come from the `kind`: the same `./x.csv` on a `kind: features` track is read as feature records instead. (A track needs a `kind` or a `component`; one with neither is rejected as `missing-track-renderer`.)
 
 `kind: variant-counts` and `kind: rna-editing-counts` read the same
 `position,value` records, so a count you computed yourself renders on the same

@@ -26,27 +26,38 @@ These are methods on the `<protvista-uniprot>` element, not package exports:
 | `registerTheme(name, stops)` | Add a colour scale for score/heatmap tracks. |
 | `registerComponent(name, ctor)` | Register a custom element so a config can reference it. |
 
+:::caution[Custom components are not drawn yet]
+`registerComponent` defines your element and lets a config name it, and the
+config validates, but the viewer doesn't render it yet: the track stays empty
+and an `unrendered-component` warning is reported. Custom **adapters**, kinds
+and themes work today; a custom **renderer** needs a change in ProtVista
+itself. If you need one, open an issue so we can work on it with you.
+:::
+
 ## Example: a custom data adapter
 
-Suppose your file has columns we don't parse out of the box. Register a function
-that returns feature records, then name it on the track's `data`:
+Suppose your pipeline writes JSON in its own shape, with field names ProtVista
+doesn't know. Register a function that turns it into feature records, then name
+it on the track's `data`:
+
+```json
+{ "hits": [{ "from": 18, "to": 289, "label": "Extracellular domain" }] }
+```
 
 ```js
 // Defined once, at module scope (see "Rules to know").
-const parseMyCsv = (csvText) =>
-  csvText
-    .trim()
-    .split('\n')
-    .slice(1) // drop header
-    .map((line) => {
-      const [start, end, type] = line.split(',');
-      return { type, start: Number(start), end: Number(end) };
-    });
+const parseMyHits = (response) =>
+  response.hits.map((hit) => ({
+    type: 'REGION',
+    start: hit.from,
+    end: hit.to,
+    description: hit.label,
+  }));
 
 const viewer = document.createElement('protvista-uniprot');
 
 // Register BEFORE mounting.
-viewer.registerAdapter('my-csv', parseMyCsv);
+viewer.registerAdapter('my-hits', parseMyHits);
 
 viewer.viewerConfig = {
   accession: 'P05067',
@@ -55,9 +66,9 @@ viewer.viewerConfig = {
       id: 'MY_LAB',
       tracks: [
         {
-          id: 'hotspots',
+          id: 'hits',
           kind: 'features',
-          data: { from: 'file', url: './hotspots.csv', adapter: 'my-csv' },
+          data: { from: 'file', url: './my-hits.json', adapter: 'my-hits' },
         },
       ],
     },
@@ -68,7 +79,17 @@ document.body.append(viewer); // mounts now, with the adapter available
 ```
 
 The config validator and the loader consult the same registry, so a track that
-names `adapter: my-csv` both validates and runs only because you registered it.
+names `adapter: my-hits` both validates and runs only because you registered it.
+
+**A custom adapter receives the response parsed as JSON**, whatever the file is
+called: naming an `adapter:` takes the place of `format:`, so the body is never
+handed over as text. That makes a custom adapter the tool for JSON in your own
+shape. For a CSV or TSV whose columns differ from ProtVista's, it is usually
+simpler to rename the header row to `type,start,end,description` (any other
+columns are kept for tooltips) than to write a parser; see
+[Load your own data](/protvista/your-data). If you must parse something else
+yourself, fetch and parse it in your own code and hand the records over with
+[`setTrackData()`](#hand-over-data-you-loaded-yourself-settrackdata).
 
 ### Or set `adapters`
 
@@ -76,7 +97,7 @@ The `adapters` property is the declarative form of `registerAdapter`: a map of
 name to function, registered as soon as it is set.
 
 ```js
-viewer.adapters = { 'my-csv': parseMyCsv };
+viewer.adapters = { 'my-hits': parseMyHits };
 ```
 
 Unlike the method, it can be set before the element is even defined — from a
@@ -93,13 +114,43 @@ not bound by the unique-names rule below. A name registered some other way,
 such as with `registerAdapter`, still throws `RegistryCollisionError`, and the
 element keeps its previous adapters.
 
+## Hand over data you loaded yourself: `setTrackData()`
+
+When your data doesn't live at a URL the viewer can fetch (it comes from your
+app's own API client, needs an auth header, or is computed in the page), mark
+the track `from: custom` and pass the records in yourself:
+
+```js
+viewer.viewerConfig = {
+  accession: 'P05067',
+  rows: [
+    {
+      id: 'MY_LAB',
+      tracks: [{ id: 'hits', kind: 'features', data: { from: 'custom' } }],
+    },
+  ],
+};
+
+// Group id, track id, then records already in the track's shape —
+// feature records for `kind: features`.
+viewer.setTrackData('MY_LAB', 'hits', [
+  { type: 'REGION', start: 18, end: 289, description: 'Extracellular domain' },
+]);
+```
+
+You can call it before or after the element mounts. A call after mount reloads
+the view with the new records. Only a `from: custom` track accepts data this
+way; a call naming any other track, or passing records of the wrong shape, is
+rejected and reported as a `set-track-data` error (see
+[Troubleshoot errors](/protvista/troubleshooting)).
+
 ## A custom kind and a custom theme
 
 ```js
 // A reusable shorthand: `kind: my-features`
 const myFeatures = {
   component: 'nightingale-track-canvas',
-  adapter: 'my-csv',
+  adapter: 'my-hits',
 };
 
 // A colour scale for a score/heatmap track (at least two stops)
