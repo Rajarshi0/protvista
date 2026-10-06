@@ -2,22 +2,15 @@
 
 A template repository for putting your own protein annotations on screen next to UniProt's — no build step, no npm, no JavaScript.
 
-<!-- protvista:unpublished:start -->
-**Read this first: this template does not work yet**
+The page loads the viewer, `protvista-uniprot@5.0.0-beta.3`, from the jsDelivr CDN. You don't install anything.
 
-> ProtVista 5.0.0-beta.3 has not been published to npm. `index.html` pins `protvista-uniprot@5.0.0-beta.3` on jsDelivr, that address returns "not found" today, and the page shows a "Could not load the viewer" box instead of a protein.
->
-> Everything else in the kit is real and final — the config, the sample data, the validation, the layout. Nothing here needs to change when 5.0.0-beta.3 ships; the same files simply start working. Watch [the releases page](https://github.com/ebi-webcomponents/protvista/releases), then reload.
->
-> To see the same configuration working right now, open the [ProtVista playground](https://ebi-webcomponents.github.io/protvista/playground/).
-<!-- protvista:unpublished:end -->
 
 ## Use it
 
 1. Click **Use this template** at the top of this page, and give your copy a name.
 2. Get the files onto your computer: **Code → Download ZIP**, then unpack it. (If you use Git, cloning works too.)
 3. Serve the folder — see below.
-4. Open the address the server prints, usually <http://localhost:8000/>.
+4. Open <http://localhost:8000/> in your browser.
 5. Edit `config.yaml`, save, reload the page.
 
 **Why step 3 matters.** Browsers refuse to let a page opened straight from disk (a `file://` address) read other local files, so double-clicking `index.html` shows an orange box telling you to use a web server instead. The viewer cannot read its own config any other way.
@@ -26,14 +19,29 @@ There are two ways to do it. **Neither requires you to write any code.**
 
 **Without a terminal — publish it.** In your new repository go to **Settings → Pages** and set the source to your default branch. GitHub serves the kit as a real website in a minute or two, and you can edit `config.yaml` straight in the GitHub web editor. This is the simplest route if you have never used a terminal, and it is covered again under [Publish your viewer](#publish-your-viewer).
 
-**With a terminal — run it locally.** Open **Terminal** on macOS or Linux, or **Command Prompt** on Windows, move into the unpacked folder (`cd` followed by the folder's path), and run one of:
+**With a terminal — run it locally.** You need Python 3, which provides a small built-in web server.
 
-```sh
-python3 -m http.server 8000    # macOS / Linux
-py -m http.server 8000         # Windows
+On **Windows**, open the unpacked folder in File Explorer, click the address bar, type `cmd` and press Enter. A Command Prompt opens in that folder. Run:
+
+```bat
+py -m http.server 8000 --bind 127.0.0.1
 ```
 
-Leave that window open while you use the viewer; closing it stops the server. If the command is not found, you do not have Python installed — use the GitHub Pages route above instead, or any other static file server you already have.
+If Windows says `'py' is not recognized`, your Python came from the Microsoft Store rather than python.org. Run this instead:
+
+```bat
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+On **macOS or Linux**, open Terminal, `cd` into the unpacked folder, and run:
+
+```sh
+python3 -m http.server 8000 --bind 127.0.0.1
+```
+
+Then open <http://localhost:8000/> in your browser. Type that address yourself rather than copying the one the server prints (it may show `[::]` or `0.0.0.0`, which doesn't open on every system).
+
+Leave that window open while you use the viewer; closing it stops the server. If neither command is found, you do not have Python installed. Either [install it from python.org](https://www.python.org/downloads/), use the GitHub Pages route above, or use any other static file server you already have.
 
 ## What's in here
 
@@ -100,11 +108,14 @@ If your protein isn't in UniProt — or the page must not reach the internet —
 
 | What you see | Usual cause |
 | --- | --- |
-| An orange box saying the viewer could not load | The component itself did not download — see the note at the top of this file, or check your connection. |
+| An orange box saying the viewer could not load | The component itself did not download. Check your connection, or whether your network blocks `cdn.jsdelivr.net`. |
 | An orange box saying "Open this page through a web server" | You opened `index.html` directly instead of serving the folder. See step 3. |
 | It still says "Loading the viewer…" | Usually a very old browser. Try a current Firefox, Chrome, Edge or Safari. |
 | The viewer draws, but your track is empty | The path in `data:` does not resolve. Remember it starts from the folder holding `index.html`, not from `config.yaml`. |
 | "No feature data available" | A wrong `accession:`, coordinates past the end of the protein, or a data file that could not be parsed. |
+| Your track is empty and you edited the file on Windows | Windows hides file extensions by default, so Notepad may have saved `my-features.csv.txt`. In File Explorer turn on **View → File name extensions** and rename the file. |
+| It works on your computer but not on GitHub Pages | Windows ignores the case of file names; GitHub Pages does not. `./data/Hotspots.csv` and `hotspots.csv` are different files once published, so make `data:` match the file name exactly. |
+| Garbled text, or "missing required header column" for a file that has the columns | The file isn't UTF-8. In Excel use **Save As → CSV UTF-8 (Comma delimited)**, not "Unicode Text" or plain "CSV". |
 | You suspect your file is malformed | Open the browser's developer console (F12) — a file that fails to parse reports the reason there, naming the row and column. |
 
 More at [Troubleshooting](https://ebi-webcomponents.github.io/protvista/troubleshooting).
