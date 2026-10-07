@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `rendering.height` and `rendering.layout` take effect
+
+The config schema accepted `rendering.height` and `rendering.layout`, but the
+viewer ignored both: every track kept a fixed height, and feature tracks always
+stacked overlapping features in rows. `height` now sets a track's height in
+pixels on every built-in track; set on a group, it also sizes the group's
+collapsed row. `layout: default` draws a feature track's overlapping features
+on one row. Configs that leave these fields out look the same as before; a
+config that already set them will now render the way it asked to.
+
+### Added: a warning for rendering settings that have no effect
+
+Some `rendering` settings only work on certain tracks: `colorScale` on coloured
+sequence tracks (`alphafold-confidence`, `alphamissense-pathogenicity`), and
+`layout`, `color` and `shape` on feature tracks. Setting one where it can't
+take effect now gives a `rendering-field-ignored` validation warning instead of
+being silently ignored. The config still loads. The Configure page's
+`rendering` section lists each field, where it works, and the order in which a
+track, its kind, its group and `defaults:` take precedence.
+
+### Added: an "Edit page" link on every docs page
+
+Each page of the documentation site now links to its source on GitHub's `next`
+branch, so a reader who spots a mistake can propose a fix in a couple of
+clicks. The adapter reference and the feature type and shape vocabulary pages
+have no link, because they are generated from code.
+
 ## 5.0.0-beta.5 — 2026-10-06
 
 ### Fixed: the 3D structure viewer works when loaded from a CDN
