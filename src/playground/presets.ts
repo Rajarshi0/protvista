@@ -330,8 +330,56 @@ export const DEV_PRESETS: readonly Preset[] = [
   },
 ];
 
+/**
+ * Community views, discovered from every `examples/<dir>/` folder that has a
+ * `preset.json` beside its `config.yaml`: adding one is adding a folder (plus
+ * the served copy of its data under `docs/public/sample-data/<dir>/`), with
+ * no edit to this file or to any test.
+ */
+export interface CommunityManifest {
+  label: string;
+  description?: string;
+  /** Length of the config's accession (canonical UniProt sequence). */
+  length?: number;
+}
+
+const communityManifests = import.meta.glob<CommunityManifest>(
+  '../../examples/*/preset.json',
+  { eager: true, import: 'default' }
+);
+const exampleConfigs = import.meta.glob<string>(
+  '../../examples/*/config.yaml',
+  { eager: true, query: '?raw', import: 'default' }
+);
+
+export const COMMUNITY_PRESETS: readonly (Preset & { length?: number })[] =
+  Object.entries(communityManifests)
+    .map(([path, manifest]) => {
+      const parts = path.split('/');
+      const dir = parts[parts.length - 2];
+      const raw = exampleConfigs[path.replace(/preset\.json$/, 'config.yaml')];
+      if (raw === undefined) {
+        throw new Error(`examples/${dir}: preset.json but no config.yaml`);
+      }
+      return {
+        id: `community-${dir}`,
+        label: manifest.label,
+        description: manifest.description,
+        config: withServedData(raw, dir),
+        accession:
+          /^accession:\s*["']?([A-Za-z0-9_-]+)/m.exec(raw)?.[1] ??
+          DEFAULT_ACCESSION,
+        length: manifest.length,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+
 /** Consumer presets plus the dev edge cases (the dev playground's full set). */
-export const ALL_PRESETS: readonly Preset[] = [...PRESETS, ...DEV_PRESETS];
+export const ALL_PRESETS: readonly Preset[] = [
+  ...PRESETS,
+  ...COMMUNITY_PRESETS,
+  ...DEV_PRESETS,
+];
 
 export const DEFAULT_PRESET_ID = 'uniprot-default';
 

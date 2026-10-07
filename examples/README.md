@@ -63,6 +63,22 @@ The full config schema is documented in
 [`specs/config-approach.md`](../specs/config-approach.md), which is
 the normative source these examples are drawn from.
 
+## Community views in the playground
+
+An example folder that also has a `preset.json` beside its `config.yaml`
+appears in the playground under **Community views**, with no edit to
+`src/playground/presets.ts` or to any test:
+
+```json
+{ "label": "Clinical variants (PTEN)", "description": "…", "length": 403 }
+```
+
+`length` is the canonical length of the config's `accession` (the tests use
+it in place of a live sequence fetch); leave it out for a `sequence:` config.
+Copy the folder's data files to `docs/public/sample-data/<folder>/` so the
+docs site can serve them. Community views are not snapshotted by
+`golden-resolution.spec.ts`, so adding or editing one changes no shared file.
+
 ## Why the examples declare `accession: P05067`
 
 `<protvista-uniprot>` needs a protein: an `accession` for a UniProt entry,

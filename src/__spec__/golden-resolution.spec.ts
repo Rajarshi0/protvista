@@ -94,13 +94,13 @@ function discoverCases(): Case[] {
       configPath: join(EXAMPLES_ROOT, e.name, 'config.yaml'),
       root: join(EXAMPLES_ROOT, e.name),
     }))
-    .filter((c) => existsSync(c.configPath));
+    .filter((c) => existsSync(c.configPath))
+    // Community views (a `preset.json` beside the config) are checked by
+    // examples.spec.ts and the preset tests; a snapshot here would make every
+    // edit to one a shared-file change.
+    .filter((c) => !existsSync(join(c.root, 'preset.json')));
 
-  const kit = [
-    'config.yaml',
-    'recipes/tsv.yaml',
-    'recipes/extend-uniprot.yaml',
-  ]
+  const kit = ['config.yaml', 'recipes/tsv.yaml', 'recipes/extend-uniprot.yaml']
     .map((rel) => ({
       name: `starter-kit/${rel}`,
       configPath: join(KIT_ROOT, rel),
@@ -260,12 +260,12 @@ describe.each(CASES)('golden: $name', ({ configPath, root }) => {
  */
 describe('golden: kind × source resolution matrix', () => {
   const SOURCES: Array<[string, string]> = [
-      ['file .csv', './x.csv'],
-      ['file .tsv', './x.tsv'],
-      ['file .json', './x.json'],
-      ['file .bed', './x.bed'],
-      ['hosted .csv', 'https://lab.test/x.csv'],
-      ['hosted .json', 'https://lab.test/x.json'],
+    ['file .csv', './x.csv'],
+    ['file .tsv', './x.tsv'],
+    ['file .json', './x.json'],
+    ['file .bed', './x.bed'],
+    ['hosted .csv', 'https://lab.test/x.csv'],
+    ['hosted .json', 'https://lab.test/x.json'],
     ['extensionless URL', 'https://lab.test/api/x'],
   ];
 
