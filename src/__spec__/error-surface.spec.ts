@@ -1173,6 +1173,43 @@ describe('file-source 404s on screen', () => {
     expect(detail).not.toMatch(PATH_HINT);
     expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).not.toBeNull();
   });
+
+  it('fails loudly under strict for a mistyped data: shorthand path', async () => {
+    // The beginner's config as written, through the real normalizer rather
+    // than a hand-built descriptor: a mistyped `data: ./…csv` beside a
+    // provider URL with no data for this protein. Only the file is an error.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    stubFetch([
+      ['/hotspts.csv', { ok: false, status: 404 }],
+      ['/api/ptm', { ok: false, status: 404 }],
+    ]);
+    const events: ErrorEvent[] = [];
+    const el = mountEl({
+      viewerConfig: {
+        sequence: 'MKTAYIAKQR'.repeat(10),
+        strict: true,
+        rows: [
+          { id: 'hotspots', kind: 'features', data: './data/hotspts.csv' },
+          { id: 'ptm', kind: 'features', data: 'https://example.org/api/ptm' },
+        ],
+      },
+    });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await vi.waitFor(() => {
+      if (!el.querySelector(PANEL)) throw new Error('panel not ready');
+    });
+
+    expect(el.querySelector(PANEL)!.textContent).toContain(
+      './data/hotspts.csv'
+    );
+    expect(
+      events
+        .filter((e) => e.detail.phase === 'track-fetch')
+        .map((e) => [e.detail.context.trackId, e.detail.message])
+    ).toEqual([['hotspots', expect.stringMatching(PATH_HINT)]]);
+  });
 });
 
 // ── standalone rows ───────────────────────────────────────────────
