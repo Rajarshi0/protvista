@@ -1148,6 +1148,35 @@ describe('standalone row error badge', () => {
     expect(target.querySelector(ALL_HIDDEN)).toBeNull();
   });
 
+  it('does not claim "All tracks are hidden" when one row is hidden and another failed', async () => {
+    // With something hidden and `hasData` set, a dropped broken row left the
+    // canvas empty and the notice claimed the failure was a hidden track.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+    const hidden = standaloneConfig(customTrack('kept'));
+    hidden.rows[0].hidden = true;
+    hidden.rows[0].tracks[0].hidden = true;
+    const broken = standaloneConfig(
+      urlTrack('solo', 'https://example.org/bad.json')
+    );
+    const el = buildLoaded(
+      { ...hidden, rows: [...hidden.rows, ...broken.rows] },
+      {
+        customTrackData: {
+          'kept-kept': [{ type: 'DOMAIN', start: 1, end: 10 }],
+        },
+        hasData: true,
+      }
+    );
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    expect(target.querySelector(ALL_HIDDEN)).toBeNull();
+    expect(target.querySelector(`#${CSS_PREFIX}-group_solo`)).not.toBeNull();
+    expect(target.querySelector(BADGE)).not.toBeNull();
+  });
+
   it('still shows the hidden notice when the row is genuinely hidden', async () => {
     const config = standaloneConfig(customTrack('solo'));
     config.rows[0].hidden = true;
