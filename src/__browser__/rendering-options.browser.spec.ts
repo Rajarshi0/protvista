@@ -127,3 +127,68 @@ describe('rendering.layout on a features track', () => {
     expect(rows(canvas)).toBe(1);
   });
 });
+
+describe('rendering.height on a group', () => {
+  const CSV = 'type,start,end,description\nDOMAIN,5,30,a\nDOMAIN,10,40,b';
+  const inline = { from: 'inline', format: 'csv', inlineData: CSV };
+
+  /** Mount a two-track group with `rendering`, measure, expand, measure. */
+  async function expandGroup(rendering: RenderingOptions) {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const el = document.createElement('protvista-uniprot') as unknown as El;
+    el.viewerConfig = {
+      sequence: 'M'.repeat(60),
+      rows: [
+        {
+          id: 'g',
+          label: 'Group',
+          rendering,
+          tracks: [
+            { id: 't1', kind: 'features', data: inline },
+            { id: 't2', kind: 'features', data: inline },
+          ],
+        },
+      ],
+    };
+    track(el);
+    const toggle = await vi.waitFor(
+      () => {
+        const t = el.querySelector<HTMLElement>('[data-group-toggle="g"]');
+        if (!t || !el.querySelector(`#${CSS_PREFIX}-track-g`)) {
+          throw new Error('group not drawn yet');
+        }
+        return t;
+      },
+      { timeout: 10000 }
+    );
+    await el.updateComplete;
+    await new Promise((r) => requestAnimationFrame(r));
+    const height = (selector: string) =>
+      el.querySelector<HTMLElement>(selector)!.getBoundingClientRect().height;
+    const collapsed = height(`#${CSS_PREFIX}-group_g`);
+    toggle.click();
+    await vi.waitFor(
+      () => {
+        if (!el.querySelector(`#${CSS_PREFIX}-track-g-t1`)) {
+          throw new Error('group not expanded yet');
+        }
+      },
+      { timeout: 10000 }
+    );
+    await el.updateComplete;
+    await new Promise((r) => requestAnimationFrame(r));
+    return {
+      collapsed,
+      header: height(`#${CSS_PREFIX}-group_g`),
+      row: height(`#${CSS_PREFIX}-track_t1`),
+    };
+  }
+
+  it('sizes the collapsed row, then the tracks but not the hidden aggregate', async () => {
+    const { collapsed, header, row } = await expandGroup({ height: 150 });
+    expect(collapsed).toBeGreaterThanOrEqual(150);
+    expect(row).toBeGreaterThanOrEqual(150);
+    // The aggregate is invisible while expanded: no 150 px blank band.
+    expect(header).toBeLessThan(60);
+  });
+});
