@@ -814,9 +814,20 @@ const SINGLE_COMPONENT_FIELDS = [
   {
     field: 'colorScale',
     component: 'nightingale-colored-sequence',
-    does: "draws a colour scale. To colour single features, give them a 'color' column.",
+    does: 'draws a colour scale.',
   },
 ] as const;
+
+/**
+ * Extra advice for a canvas feature track that ignores `colorScale`: its
+ * features can carry their own colour. Other components have no such column.
+ */
+function featureColorHint(field: string, components: string[]): string {
+  return field === 'colorScale' &&
+    components.includes('nightingale-track-canvas')
+    ? " To colour single features, give them a 'color' column."
+    : '';
+}
 
 /**
  * The component a track renders with, resolved as `normalizeTrack` does.
@@ -870,7 +881,7 @@ function checkTrackRenderingFields(
     issues.push({
       path: trackPath,
       severity: 'warning',
-      message: `Track ${trackPath}: rendering.${entry.field} has no effect on ${component}; only ${entry.component} ${entry.does}`,
+      message: `Track ${trackPath}: rendering.${entry.field} has no effect on ${component}; only ${entry.component} ${entry.does}${featureColorHint(entry.field, [component])}`,
       code: 'rendering-field-ignored',
     });
   }
@@ -905,7 +916,7 @@ function checkGroupRenderingFields(
     issues.push({
       path: group.id,
       severity: 'warning',
-      message: `Group ${group.id}: rendering.${entry.field} has no effect on any of its tracks; only ${entry.component} ${entry.does}`,
+      message: `Group ${group.id}: rendering.${entry.field} has no effect on any of its tracks; only ${entry.component} ${entry.does}${featureColorHint(entry.field, components)}`,
       code: 'rendering-field-ignored',
     });
   }

@@ -886,6 +886,25 @@ describe('validateConfig — rendering fields with no effect', () => {
     expect(ignored(result.issues)).toEqual([]);
   });
 
+  it('does not tell a heatmap to add a feature color column', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'am',
+            kind: 'alphamissense-heatmap',
+            data: 'https://example.org/x',
+            rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.message)).toEqual([
+      'Track am: rendering.colorScale has no effect on nightingale-sequence-heatmap; only nightingale-colored-sequence draws a colour scale.',
+    ]);
+  });
+
   it('warns once, on the group, when no track of a group can use its colorScale', () => {
     const result = validateConfig(
       {
