@@ -957,6 +957,84 @@ describe('validateConfig — rendering fields with no effect', () => {
     expect(ignored(result.issues)).toEqual([]);
   });
 
+  it('warns on the group when its only coloured-sequence track sets its own colorScale', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            component: 'nightingale-track-canvas',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              {
+                id: 'af',
+                kind: 'features',
+                component: 'nightingale-colored-sequence',
+                data: 'https://example.org/x',
+                rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+              },
+              { id: 'f', kind: 'features', data: 'https://example.org/y' },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.path)).toEqual(['G']);
+  });
+
+  it('warns on the group when its only coloured-sequence track has a kind preset colorScale', () => {
+    // The kind preset beats the group's colorScale in the cascade.
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            component: 'nightingale-track-canvas',
+            rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+            tracks: [
+              {
+                id: 'af',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/x',
+              },
+              { id: 'f', kind: 'features', data: 'https://example.org/y' },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.path)).toEqual(['G']);
+  });
+
+  it('does not warn when the inferred aggregate is a coloured sequence', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              {
+                id: 'a',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/a',
+              },
+              {
+                id: 'b',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/b',
+              },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+
   it('warns that layout does nothing on a line graph', () => {
     const result = validateConfig(
       {
