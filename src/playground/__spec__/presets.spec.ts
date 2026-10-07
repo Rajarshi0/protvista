@@ -9,6 +9,7 @@ import { parseConfigText } from '../../schema/parse.js';
 import { createRegistry } from '../../schema/registry.js';
 import {
   ALL_PRESETS,
+  COMMUNITY_PRESETS,
   DEFAULT_PRESET_ID,
   DEV_PRESETS,
   PRESETS,
@@ -260,6 +261,23 @@ describe('presets', () => {
     ]);
   });
 
+  it.each(COMMUNITY_PRESETS.map((p) => [p.id, p] as const))(
+    'community view "%s" names its label, protein and its length',
+    async (_id, preset) => {
+      expect(preset.label.trim()).not.toBe('');
+      const parsed = (await parseConfigText(preset.config)) as {
+        accession?: string;
+        sequence?: unknown;
+      };
+      if (parsed.sequence === undefined) {
+        expect(parsed.accession, 'give the config an accession:').toBe(
+          preset.accession
+        );
+        expect(preset.length, 'give preset.json a length').toBeGreaterThan(0);
+      }
+    }
+  );
+
   it('small-protein is the shipped default viewer on crambin', () => {
     const preset = getPreset('small-protein')!;
     expect(preset.config).toBe(defaultConfigYaml);
@@ -387,9 +405,9 @@ describe('presets', () => {
     // extends has to speak this build's vocabulary. Asserted against the
     // registry rather than a name list so a future rename fails here first.
     const registry = createRegistry();
-    const kinds = [
-      ...defaultConfigYaml.matchAll(/^\s*kind:\s*([\w-]+)/gm),
-    ].map(([, k]) => k);
+    const kinds = [...defaultConfigYaml.matchAll(/^\s*kind:\s*([\w-]+)/gm)].map(
+      ([, k]) => k
+    );
     expect(kinds.length).toBeGreaterThan(5);
     expect(
       [...new Set(kinds)].filter((k) => !registry.hasSemanticKind(k))

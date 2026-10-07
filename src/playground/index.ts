@@ -70,6 +70,7 @@ import {
 } from './local-data-control.js';
 import type { DataFormat } from '../schema/types.js';
 import {
+  COMMUNITY_PRESETS,
   PRESETS,
   DEV_PRESETS,
   DEFAULT_PRESET_ID,
@@ -199,6 +200,16 @@ if (isDev) {
   document.title = `${document.title} — dev examples`;
 } else {
   addPresetOptions(presetSelect, PRESETS);
+}
+if (COMMUNITY_PRESETS.length > 0) {
+  const community = document.createElement('optgroup');
+  community.label = 'Community views';
+  addPresetOptions(community, COMMUNITY_PRESETS);
+  // In dev mode, keep the edge cases last.
+  presetSelect.insertBefore(
+    community,
+    isDev ? presetSelect.lastElementChild : null
+  );
 }
 
 const customOption = document.createElement('option');

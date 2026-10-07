@@ -39,7 +39,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +86,21 @@ const EXAMPLES_ROOT = resolve(
   '../../examples'
 );
 const REPO_ROOT = resolve(EXAMPLES_ROOT, '..');
+
+// A community view states its protein's length in its own `preset.json`, so
+// adding one edits no list here.
+for (const entry of readdirSync(EXAMPLES_ROOT, { withFileTypes: true })) {
+  const manifest = join(EXAMPLES_ROOT, entry.name, 'preset.json');
+  const config = join(EXAMPLES_ROOT, entry.name, 'config.yaml');
+  if (!entry.isDirectory() || !existsSync(manifest) || !existsSync(config))
+    continue;
+  const { length } = JSON.parse(readFileSync(manifest, 'utf8'));
+  const accession = /^accession:\s*["']?([A-Za-z0-9_-]+)/m.exec(
+    readFileSync(config, 'utf8')
+  )?.[1];
+  if (accession && typeof length === 'number')
+    PROTEIN_LENGTHS[accession] = length;
+}
 
 interface DiscoveredExample {
   name: string;
@@ -144,7 +159,9 @@ it('discovers the expected example directories', () => {
  * `filter: DOMAIN`, so the track survives the filter pass too.
  */
 const CANNED_FEATURES_RESPONSE = {
-  features: [{ type: 'DOMAIN', begin: 1, end: 770, description: 'Fixture domain' }],
+  features: [
+    { type: 'DOMAIN', begin: 1, end: 770, description: 'Fixture domain' },
+  ],
 };
 
 /**
@@ -205,8 +222,13 @@ function buildInstance(overrides: Record<string, unknown>) {
  */
 function findLocalTracks(
   config: NormalizedConfig
-): { groupId: string; trackId: string; key: string }[] {
-  const found: { groupId: string; trackId: string; key: string }[] = [];
+): { groupId: string; trackId: string; key: string; hidden: boolean }[] {
+  const found: {
+    groupId: string;
+    trackId: string;
+    key: string;
+    hidden: boolean;
+  }[] = [];
   for (const group of config.rows) {
     for (const track of group.tracks) {
       const from = track.data[0]?.from;
@@ -215,6 +237,7 @@ function findLocalTracks(
           groupId: group.id,
           trackId: track.id,
           key: `${group.id}-${track.id}`,
+          hidden: !!(group.hidden || track.hidden),
         });
       }
     }
@@ -333,11 +356,16 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
     // rendered its own row. Match on `data-id` (present on the content
     // lane of both grouped and standalone tracks; the `id=` form is
     // grouped-only).
-    for (const { trackId, key } of findLocalTracks(config)) {
+    for (const { trackId, key, hidden } of findLocalTracks(config)) {
+      // Authored `hidden: true` (row or track): drawn only in Customize mode.
+      if (hidden) continue;
       const node = target.querySelector(
         `[data-id="${CSS_PREFIX}-track_${trackId}"]`
       );
-      expect(node, `${CSS_PREFIX}-track_${trackId} (${key}) should render`).not.toBeNull();
+      expect(
+        node,
+        `${CSS_PREFIX}-track_${trackId} (${key}) should render`
+      ).not.toBeNull();
     }
   });
 });
