@@ -73,11 +73,21 @@ appears in the playground under **Community views**, with no edit to
 { "label": "Clinical variants (PTEN)", "description": "…", "length": 403 }
 ```
 
-`length` is the canonical length of the config's `accession` (the tests use
-it in place of a live sequence fetch); leave it out for a `sequence:` config.
-Copy the folder's data files to `docs/public/sample-data/<folder>/` so the
-docs site can serve them. Community views are not snapshotted by
-`golden-resolution.spec.ts`, so adding or editing one changes no shared file.
+- Name the folder with letters, digits, `-` and `_` only: it becomes the
+  view's link (`#preset=community-<folder>`).
+- `length` is the length of the config's `accession`, from its UniProt
+  entry; the tests use it in place of a live sequence fetch. Leave it out for
+  a `sequence:` config, and write that sequence inline (a `sequence: |`
+  block, as in `sequence-inline/`), since a FASTA file is not served.
+- Keep each data file beside `config.yaml` and point at it as
+  `data: ./<file>` (`.csv`, `.tsv`, `.json` or `.bed`), then copy it to
+  `docs/public/sample-data/<folder>/` so the docs site can serve it. A file
+  in a subfolder or a `data: { url: ./… }` reference is not served.
+- To add tracks to the full UniProt viewer, use
+  `extends: /src/default-config.yaml`, as `extend-default/` does.
+
+Community views are not snapshotted by `golden-resolution.spec.ts`, so adding
+or editing one changes no shared file.
 
 ## Why the examples declare `accession: P05067`
 

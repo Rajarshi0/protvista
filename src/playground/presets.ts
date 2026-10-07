@@ -130,9 +130,11 @@ const withServedExtendsData = (config: string): string =>
  */
 const SERVED_BASE_CONFIG = '/protvista/default-config.yaml';
 
+// Also the dev-only `/src/default-config.yaml` that examples/extend-default
+// names, so a community view copied from it resolves on the docs site.
 const withServedExtends = (config: string): string =>
   config.replace(
-    /extends:\s*(["']?)[^\s"']*\/protvista-uniprot@[^/\s"']+\/dist\/default-config\.yaml\1/,
+    /extends:\s*(["']?)(?:[^\s"']*\/protvista-uniprot@[^/\s"']+\/dist|\/src)\/default-config\.yaml\1/,
     `extends: ${SERVED_BASE_CONFIG}`
   );
 
@@ -343,36 +345,94 @@ export interface CommunityManifest {
   length?: number;
 }
 
-const communityManifests = import.meta.glob<CommunityManifest>(
+/**
+ * One community view from its folder name and the text of its `preset.json`
+ * and `config.yaml`. Every mistake throws an error naming the file, since a
+ * bare TypeError at module load would take down every preset test (and the
+ * playground) without saying which folder caused it.
+ */
+export function communityPreset(
+  dir: string,
+  manifestText: string,
+  raw: string | undefined
+): Preset & { length?: number } {
+  const where = `examples/${dir}`;
+  // The served path and the `#preset=` link both carry the folder name.
+  if (!/^[\w-]+$/.test(dir)) {
+    throw new Error(`${where}: use only letters, digits, - and _ in its name`);
+  }
+  if (raw === undefined) {
+    throw new Error(`${where}: preset.json but no config.yaml`);
+  }
+  let manifest: Record<string, unknown> | null = null;
+  let invalid: string | undefined;
+  try {
+    manifest = JSON.parse(manifestText) as Record<string, unknown> | null;
+  } catch (error) {
+    invalid = (error as Error).message;
+  }
+  if (invalid !== undefined) {
+    throw new Error(`${where}/preset.json: ${invalid}`);
+  }
+  const { label, description, length } = manifest ?? {};
+  if (typeof label !== 'string' || label.trim() === '') {
+    throw new Error(`${where}/preset.json: "label" must be a non-empty string`);
+  }
+  if (description !== undefined && typeof description !== 'string') {
+    throw new Error(`${where}/preset.json: "description" must be a string`);
+  }
+  if (
+    length !== undefined &&
+    !(typeof length === 'number' && Number.isInteger(length) && length > 0)
+  ) {
+    throw new Error(
+      `${where}/preset.json: "length" must be a positive integer`
+    );
+  }
+  const accession = /^accession:\s*["']?([A-Za-z0-9_-]+)/m.exec(raw)?.[1];
+  return {
+    id: `community-${dir}`,
+    label,
+    description: description as string | undefined,
+    config: withServedExtends(withServedData(raw, dir)),
+    accession: accession ?? DEFAULT_ACCESSION,
+    // A `sequence:` view has no accession of its own: a length here would be
+    // filed under the default accession's and change every preset on it.
+    length:
+      accession === undefined ? undefined : (length as number | undefined),
+  };
+}
+
+const communityManifests = import.meta.glob<string>(
   '../../examples/*/preset.json',
-  { eager: true, import: 'default' }
+  { eager: true, query: '?raw', import: 'default' }
 );
 const exampleConfigs = import.meta.glob<string>(
   '../../examples/*/config.yaml',
   { eager: true, query: '?raw', import: 'default' }
 );
 
-export const COMMUNITY_PRESETS: readonly (Preset & { length?: number })[] =
-  Object.entries(communityManifests)
+/**
+ * The community views for `examples/<dir>/preset.json` and `config.yaml`
+ * texts keyed by path (as `import.meta.glob` gives them), sorted by label.
+ */
+export const communityPresetsFrom = (
+  manifests: Record<string, string>,
+  configs: Record<string, string>
+): (Preset & { length?: number })[] =>
+  Object.entries(manifests)
     .map(([path, manifest]) => {
       const parts = path.split('/');
-      const dir = parts[parts.length - 2];
-      const raw = exampleConfigs[path.replace(/preset\.json$/, 'config.yaml')];
-      if (raw === undefined) {
-        throw new Error(`examples/${dir}: preset.json but no config.yaml`);
-      }
-      return {
-        id: `community-${dir}`,
-        label: manifest.label,
-        description: manifest.description,
-        config: withServedData(raw, dir),
-        accession:
-          /^accession:\s*["']?([A-Za-z0-9_-]+)/m.exec(raw)?.[1] ??
-          DEFAULT_ACCESSION,
-        length: manifest.length,
-      };
+      return communityPreset(
+        parts[parts.length - 2],
+        manifest,
+        configs[path.replace(/preset\.json$/, 'config.yaml')]
+      );
     })
     .sort((a, b) => a.label.localeCompare(b.label));
+
+export const COMMUNITY_PRESETS: readonly (Preset & { length?: number })[] =
+  communityPresetsFrom(communityManifests, exampleConfigs);
 
 /** Consumer presets plus the dev edge cases (the dev playground's full set). */
 export const ALL_PRESETS: readonly Preset[] = [

@@ -88,19 +88,41 @@ const EXAMPLES_ROOT = resolve(
 const REPO_ROOT = resolve(EXAMPLES_ROOT, '..');
 
 // A community view states its protein's length in its own `preset.json`, so
-// adding one edits no list here.
+// adding one edits no list here. A preset.json may add a length but never
+// change a known one: that would hide out-of-range data in other examples.
+const LENGTH_CONFLICTS: string[] = [];
+const LENGTH_SOURCES: Record<string, string> = {};
 for (const entry of readdirSync(EXAMPLES_ROOT, { withFileTypes: true })) {
   const manifest = join(EXAMPLES_ROOT, entry.name, 'preset.json');
   const config = join(EXAMPLES_ROOT, entry.name, 'config.yaml');
   if (!entry.isDirectory() || !existsSync(manifest) || !existsSync(config))
     continue;
-  const { length } = JSON.parse(readFileSync(manifest, 'utf8'));
+  let length: unknown;
+  try {
+    ({ length } = JSON.parse(readFileSync(manifest, 'utf8')) ?? {});
+  } catch {
+    continue; // presets.spec.ts names the broken preset.json
+  }
   const accession = /^accession:\s*["']?([A-Za-z0-9_-]+)/m.exec(
     readFileSync(config, 'utf8')
   )?.[1];
-  if (accession && typeof length === 'number')
+  if (!accession || typeof length !== 'number') continue;
+  const here = `examples/${entry.name}/preset.json`;
+  const known = PROTEIN_LENGTHS[accession];
+  if (known === undefined) {
     PROTEIN_LENGTHS[accession] = length;
+    LENGTH_SOURCES[accession] = here;
+  } else if (known !== length) {
+    LENGTH_CONFLICTS.push(
+      `${here}: length ${length}, but ${accession} is ${known} residues ` +
+        `(${LENGTH_SOURCES[accession] ?? 'PROTEIN_LENGTHS'})`
+    );
+  }
 }
+
+it('community views agree on the length of each protein', () => {
+  expect(LENGTH_CONFLICTS).toEqual([]);
+});
 
 interface DiscoveredExample {
   name: string;
@@ -314,7 +336,8 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
       : PROTEIN_LENGTHS[accession];
     expect(
       length,
-      `add the length of ${accession} to PROTEIN_LENGTHS`
+      `give the length of ${accession}: a community view in its ` +
+        'preset.json, any other example in PROTEIN_LENGTHS'
     ).toBeDefined();
     for (const [key, coords] of Object.entries(result.trackCoordinates)) {
       expect(findOutOfRange(coords.rows, length), key).toBeNull();
