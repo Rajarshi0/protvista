@@ -4090,13 +4090,14 @@ class ProtvistaUniprot extends LitElement {
               >
                 ${this.getTrack(
                   track.component,
-                  'non-overlapping',
+                  attrs.layout ?? 'non-overlapping',
                   attrs.color,
                   attrs.shape,
                   key,
                   attrs.scale,
                   attrs.colorRange,
-                  showsSeriesLabel([track])
+                  showsSeriesLabel([track]),
+                  attrs.height
                 )}
               </div>`
             : ''
@@ -4284,7 +4285,7 @@ class ProtvistaUniprot extends LitElement {
             groupHasData
               ? this.getTrack(
                   group.component,
-                  'non-overlapping',
+                  groupAttrs.layout ?? 'non-overlapping',
                   groupAttrs.color,
                   groupAttrs.shape,
                   group.id,
@@ -4296,7 +4297,8 @@ class ProtvistaUniprot extends LitElement {
                   // the current order), not merely the first visible one.
                   showsSeriesLabel(
                     drawnAggregateTracks(group.tracks).slice(0, 1)
-                  )
+                  ),
+                  groupAttrs.height
                 )
               : ''
           }
@@ -4426,13 +4428,14 @@ class ProtvistaUniprot extends LitElement {
               >
                 ${this.getTrack(
                   track.component,
-                  'non-overlapping',
+                  attrs.layout ?? 'non-overlapping',
                   attrs.color,
                   attrs.shape,
                   key,
                   attrs.scale,
                   attrs.colorRange,
-                  showsSeriesLabel([track])
+                  showsSeriesLabel([track]),
+                  attrs.height
                 )}
               </div>`
             : ''
@@ -6066,16 +6069,18 @@ class ProtvistaUniprot extends LitElement {
     id = '',
     scale = '',
     colorRange = '',
-    showSeriesLabel = true
+    showSeriesLabel = true,
+    height = ''
   ) {
     // lit-html doesn't allow to have dynamic tag names, hence the switch/case
-    // with repeated code
+    // with repeated code. `height` is the track's `rendering.height`; each
+    // component keeps its own default when it is unset.
     switch (component) {
       case 'nightingale-track-canvas':
         return html`
           <nightingale-track-canvas
             length="${this.sequence?.length}"
-            height="40"
+            height="${height || 40}"
             layout="${layout}"
             color="${color}"
             shape="${shape}"
@@ -6091,7 +6096,7 @@ class ProtvistaUniprot extends LitElement {
         return html`
           <nightingale-variation-canvas
             length="${this.sequence?.length}"
-            height="500"
+            height="${height || 500}"
             display-start="${this.displayCoordinates?.start}"
             display-end="${this.displayCoordinates?.end}"
             id="${CSS_PREFIX}-track-${id}"
@@ -6104,7 +6109,7 @@ class ProtvistaUniprot extends LitElement {
         return html`
           <nightingale-linegraph-track
             length="${this.sequence?.length}"
-            height="50"
+            height="${height || 50}"
             display-start="${this.displayCoordinates?.start}"
             display-end="${this.displayCoordinates?.end}"
             id="${CSS_PREFIX}-track-${id}"
@@ -6123,7 +6128,7 @@ class ProtvistaUniprot extends LitElement {
             id="${CSS_PREFIX}-track-${id}"
             scale="${scale}"
             color-range="${colorRange}"
-            height="13"
+            height="${height || 13}"
             highlight-event="onclick"
             use-ctrl-to-zoom
           >
@@ -6140,7 +6145,7 @@ class ProtvistaUniprot extends LitElement {
             display-end="${this.displayCoordinates?.end}"
             highlight-event="onclick"
             highlight-color="#EB3BFF66"
-            height="300"
+            height="${height || 300}"
             use-ctrl-to-zoom
           >
           </nightingale-sequence-heatmap>

@@ -4,8 +4,8 @@
  * web components consume.
  *
  * The normalize pipeline (`src/schema/normalize.ts`) carries rendering
- * as a structured `RenderingOptions` object — `color`, `shape`, and an
- * optional `colorScale: { theme | stops }`. Nightingale's
+ * as a structured `RenderingOptions` object — `color`, `shape`, `height`,
+ * `layout`, and an optional `colorScale: { theme | stops }`. Nightingale's
  * `<nightingale-colored-sequence>` however still reads two flat string
  * attributes, `scale` (letter-coded thresholds like `H:90,M:70,…`) and
  * `color-range` (hex-stop list like `#ff7d45:0,#ffdb13:50,…`). This
@@ -80,6 +80,8 @@ export function colorScaleToAttrs(
 interface NightingaleRenderAttrs {
   color?: string;
   shape?: string;
+  height?: string;
+  layout?: string;
   scale?: string;
   colorRange?: string;
 }
@@ -93,6 +95,8 @@ export function renderingToAttrs(r: RenderingOptions): NightingaleRenderAttrs {
   const out: NightingaleRenderAttrs = {};
   if (r.color !== undefined) out.color = r.color;
   if (r.shape !== undefined) out.shape = r.shape;
+  if (r.height !== undefined) out.height = String(r.height);
+  if (r.layout !== undefined) out.layout = r.layout;
   const cs = colorScaleToAttrs(r.colorScale);
   if (cs.scale !== undefined) out.scale = cs.scale;
   if (cs.colorRange !== undefined) out.colorRange = cs.colorRange;
