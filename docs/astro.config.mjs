@@ -113,6 +113,13 @@ export default defineConfig({
       title: 'ProtVista',
       description:
         'Embed an interactive protein feature viewer and load your own data — no framework required.',
+      // "Edit page" link on every page: this base + the page's path relative
+      // to docs/ (e.g. src/content/docs/tutorial.md), on `next`, the branch the
+      // site documents. Generated pages opt out with `editUrl: false`.
+      editLink: {
+        baseUrl:
+          'https://github.com/ebi-webcomponents/protvista/edit/next/docs/',
+      },
       // Keeps the splash home's three hero buttons on one row (see the file).
       customCss: ['./src/styles/hero.css'],
       // Every page states which version it documents, as a chip beside the

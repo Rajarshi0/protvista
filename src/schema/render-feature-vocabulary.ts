@@ -114,6 +114,9 @@ export function renderFeatureVocabularyMarkdown(
   const lines: string[] = [];
   lines.push('---');
   lines.push('title: Feature type and shape vocabulary');
+  // Generated: Starlight's "Edit page" link would point at a file the next
+  // sync overwrites.
+  lines.push('editUrl: false');
   lines.push('---');
   lines.push('');
   lines.push(
