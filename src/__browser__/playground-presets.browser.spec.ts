@@ -59,8 +59,11 @@ const SERVED: Record<string, string> = {
 };
 
 /** Community views give their protein's length in their `preset.json`. */
+// (examples.spec.ts checks these lengths; P05067 always keeps its stub.)
 const COMMUNITY_LENGTHS = new Map(
-  COMMUNITY_PRESETS.filter((p) => p.length).map((p) => [p.accession, p.length!])
+  COMMUNITY_PRESETS.filter((p) => p.length && p.accession !== 'P05067').map(
+    (p) => [p.accession, p.length!]
+  )
 );
 
 /**
@@ -518,24 +521,36 @@ describe('playground presets: conservation, your own sequence and small proteins
     expect(byId<HTMLSelectElement>('preset').value).toBe('custom');
   });
 
-  it('every preset renders with nothing listed and no console error', async () => {
-    const errors = vi.spyOn(console, 'error');
+  it('ships twelve presets', () => {
     expect(PRESETS.map((p) => p.id)).toHaveLength(12);
-    for (const preset of [...PRESETS, ...COMMUNITY_PRESETS]) {
-      await choose(preset.id);
-      await vi.waitFor(() => expect(preview()).not.toBeNull());
-      await settled();
-      // Give a late failure time to be listed, then check none was.
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(byId('error-summary').textContent, preset.id).toBe(
-        'No problems — config is valid.'
-      );
-      expect(
-        listItems().map((li) => li.textContent),
-        preset.id
-      ).toEqual([]);
-      expect(preview()!.querySelector(`.${CSS_PREFIX}-error-badge`)).toBeNull();
-    }
-    expect(errors).not.toHaveBeenCalled();
   });
+
+  // One test per preset, so adding community views never grows a single test
+  // past its timeout.
+  it.each([...PRESETS, ...COMMUNITY_PRESETS].map((p) => p.id))(
+    '%s renders with nothing listed and no console error',
+    async (id) => {
+      const errors = vi.spyOn(console, 'error');
+      try {
+        await choose(id);
+        await vi.waitFor(() => expect(preview()).not.toBeNull());
+        await settled();
+        // Give a late failure time to be listed, then check none was.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(byId('error-summary').textContent, id).toBe(
+          'No problems — config is valid.'
+        );
+        expect(
+          listItems().map((li) => li.textContent),
+          id
+        ).toEqual([]);
+        expect(
+          preview()!.querySelector(`.${CSS_PREFIX}-error-badge`)
+        ).toBeNull();
+        expect(errors).not.toHaveBeenCalled();
+      } finally {
+        errors.mockRestore();
+      }
+    }
+  );
 });
