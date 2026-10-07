@@ -904,6 +904,84 @@ describe('parse / adapter failures on screen', () => {
     expect(target.querySelector(`.${CSS_PREFIX}-error-retry`)).toBeNull();
   });
 
+  // One per way an author's file goes wrong — a header without a required
+  // column, a non-number in a numeric column (of a graph track too), a JSON
+  // file of the wrong shape, an adapter the author named rejecting the body —
+  // each must reach the badge naming the file, not just the console.
+  it.each([
+    {
+      name: 'a missing required column',
+      path: './hits.csv',
+      track: fileTrack('t', './hits.csv'),
+      body: 'kind,start,end,description\nDOMAIN,10,25,Kinase',
+      text: /^\.\/hits\.csv \(parsed as CSV\): missing required header column "type"/,
+    },
+    {
+      name: 'a bad value in a numeric column of a graph track',
+      path: './depth.csv',
+      track: {
+        ...sourceTrack('t', {
+          from: 'file',
+          url: './depth.csv',
+          format: 'csv',
+          shape: 'point',
+        }),
+        kind: 'linegraph',
+        component: 'nightingale-linegraph-track',
+      },
+      body: 'position,value\n1,abc',
+      text: /^\.\/depth\.csv \(parsed as CSV\): row 2, column "value": expected a number, got "abc"/,
+    },
+    {
+      name: 'a JSON file of the wrong shape',
+      path: './hits.json',
+      track: sourceTrack('t', {
+        from: 'file',
+        url: './hits.json',
+        format: 'json',
+        shape: 'feature',
+      }),
+      body: { features: [] },
+      text: /^\.\/hits\.json \(parsed as JSON\): expected an array of feature records/,
+    },
+    {
+      name: 'an explicit adapter rejecting the file',
+      path: './hits.txt',
+      track: sourceTrack('t', {
+        from: 'file',
+        url: './hits.txt',
+        adapter: 'author-parser',
+      }),
+      body: 'whatever',
+      text: /^Couldn't process the data from \.\/hits\.txt: no "score" column$/,
+    },
+  ])('badges $name, naming the file', async ({ path, track, body, text }) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([[path.slice(1), { ok: true, status: 200, body }]]);
+    const events: ErrorEvent[] = [];
+    const el = buildLoaded(normConfig([track as NormalizedTrack]), {
+      openGroups: ['g'],
+    });
+    (
+      el as El & { registerAdapter(n: string, fn: () => never): void }
+    ).registerAdapter('author-parser', () => {
+      throw new Error('no "score" column');
+    });
+    el.addEventListener('protvista-error', (e) => events.push(e as ErrorEvent));
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    const badge = target.querySelector(BADGE)!;
+    expect(badge).not.toBeNull();
+    const descId = badge.getAttribute('aria-describedby')!;
+    const detail = target.querySelector(`[id="${descId}"]`)!.textContent!;
+    expect(detail).toMatch(text);
+    const tf = events.find((e) => e.detail.phase === 'track-fetch')!;
+    expect(tf.detail.message).toBe(detail);
+    expect(tf.detail.source).toBe(path);
+  });
+
   it('offers no Retry for a parse failure (re-running is deterministic)', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     stubFetch([['/hits.csv', { ok: true, status: 200, body: BAD_CSV }]]);
