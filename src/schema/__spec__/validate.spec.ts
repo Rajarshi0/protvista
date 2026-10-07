@@ -983,6 +983,26 @@ describe('validateConfig — rendering fields with no effect', () => {
     ]);
   });
 
+  it('warns that color and shape do nothing on a line graph', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'depth',
+            kind: 'linegraph',
+            data: 'https://example.org/x.csv',
+            rendering: { color: 'red', shape: 'circle' },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.message)).toEqual([
+      'Track depth: rendering.color has no effect on nightingale-linegraph-track; only nightingale-track-canvas colours its features.',
+      'Track depth: rendering.shape has no effect on nightingale-linegraph-track; only nightingale-track-canvas draws feature glyphs.',
+    ]);
+  });
+
   it('does not warn for layout or height on a features track', () => {
     const result = validateConfig(
       {

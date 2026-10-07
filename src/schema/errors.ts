@@ -166,10 +166,11 @@ export type ValidationIssueCode =
    */
   | 'detail-only-standalone'
   /**
-   * A `rendering.layout` or `rendering.colorScale` set on a track (or group)
-   * whose built-in component has no such attribute: only the canvas feature
-   * track lays features out, and only the coloured sequence draws a colour
-   * scale. A `severity: 'warning'`: the config loads and the field is ignored.
+   * A `rendering.color`, `shape`, `layout` or `colorScale` set on a track (or
+   * group) whose built-in component has no such attribute: only the canvas
+   * feature track reads `color`, `shape` and `layout`, and only the coloured
+   * sequence draws a colour scale. A `severity: 'warning'`: the config loads
+   * and the field is ignored.
    */
   | 'rendering-field-ignored'
   /**

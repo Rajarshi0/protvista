@@ -204,11 +204,11 @@ features (isoforms, say) get thin rows at the default 40 px. Give them room:
 
 `height` under `defaults:` sizes every track, whatever its kind.
 
-`layout` or `colorScale` on a track that can't use it does nothing, and the
-validator says so with a `rendering-field-ignored` warning. In particular, a
-feature track has no colour scale: to colour features by score, give each one
-a `color` column ([Style and annotate each feature from your
-file](/protvista/your-data#style-and-annotate-each-feature-from-your-file)).
+`color`, `shape`, `layout` or `colorScale` on a track that can't use it does
+nothing, and the validator says so with a `rendering-field-ignored` warning.
+In particular, a feature track has no colour scale: to colour features by
+score, give each one a `color` column ([Style and annotate each feature from
+your file](/protvista/your-data#style-and-annotate-each-feature-from-your-file)).
 
 ## Editor autocomplete
 

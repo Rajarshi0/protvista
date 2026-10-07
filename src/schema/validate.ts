@@ -799,13 +799,22 @@ function checkRows(
 
 /**
  * The rendering fields only one built-in component reads, and what it does
- * with them. `getTrack()` hands `layout` to the canvas feature track alone
- * and `colorScale` (as `scale` / `color-range`) to the coloured sequence
- * alone; the other built-ins have no such attribute. `color`, `shape` and
- * `height` are not here: every component they reach does something with
- * them, or the track's records override them.
+ * with them. `getTrack()` hands `color`, `shape` and `layout` to the canvas
+ * feature track alone and `colorScale` (as `scale` / `color-range`) to the
+ * coloured sequence alone; the other built-ins have no such attribute.
+ * `height` is not here: every built-in reads it.
  */
 const SINGLE_COMPONENT_FIELDS = [
+  {
+    field: 'color',
+    component: 'nightingale-track-canvas',
+    does: 'colours its features.',
+  },
+  {
+    field: 'shape',
+    component: 'nightingale-track-canvas',
+    does: 'draws feature glyphs.',
+  },
   {
     field: 'layout',
     component: 'nightingale-track-canvas',
