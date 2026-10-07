@@ -516,7 +516,9 @@ describe('full render — shell + per-group DOM with frozen fixtures', () => {
     };
     expect(attrs('GROUP_CANVAS')).toEqual(['90', 'default']);
     expect(attrs('GROUP_CANVAS-canvas_track_A')).toEqual(['120', 'default']);
-    // A track without either keeps the defaults.
+    // A track whose resolved rendering has neither keeps the component
+    // defaults. (Track B is left uncascaded on purpose; after normalize it
+    // would inherit the group's 90/'default'.)
     expect(attrs('GROUP_CANVAS-canvas_track_B')).toEqual([
       '40',
       'non-overlapping',
