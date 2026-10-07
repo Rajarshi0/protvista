@@ -33,7 +33,7 @@ flowchart TB
 - Which rows and tracks appear, their labels and grouping.
 - The semantic `kind` of each track (`features`, `variants`, `alphafold-confidence`, …). This is a domain concept, not a component or adapter name.
 - Where the data comes from: `data:` with `from: url` / `file` / `inline` / `custom`, and named `sources`.
-- Rendering: `color`, `shape`, `height`, `layout`, `colorScale`.
+- Rendering: `color`, `shape`, `height`, `layout`, `colorScale` (each applies to some kinds of track only; see [`rendering`](/protvista/configure#rendering)).
 - Convenience shortcuts, such as a single-type `filter:` and `dataTooltip` templates.
 
 **What a data provider supplies (Representation)**

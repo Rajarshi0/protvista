@@ -147,7 +147,7 @@ Each track needs an `id` and a `kind`, and a `data` source. Common fields:
 | `filter` | Keep only records of one `type` (e.g. `DOMAIN`). A convenience shortcut. |
 | `label` | Human-readable track title. Supports rich inline text. |
 | `description` | Longer text shown alongside the track. |
-| `rendering` | Visual overrides — `color`, `shape`, `height`, `layout`, `colorScale`. Applies to every feature the track draws; see [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for the valid `shape` values and what a feature's `type` gets by default. |
+| `rendering` | Visual settings — `color`, `shape`, `height`, `layout`, `colorScale`. See [`rendering`](#rendering). |
 | `hidden` | `true` ships the track hidden: a visitor can reveal it from **Customize**. Also valid on a group. See [Customize the layout](/protvista/customize-layout#authoring-a-row-or-track-hidden-hidden). |
 
 ### `kind`
@@ -169,6 +169,39 @@ Points a track at its data. It can be:
 - **inline** — the records written directly in the config.
 
 The [Load your own data](/protvista/your-data) guide covers each in detail.
+
+### `rendering`
+
+How a track looks. Set it on a track, on a group (its tracks inherit it), or
+under `defaults:` for every track; the nearest one wins.
+
+| Field | What it does | Where it has an effect |
+| --- | --- | --- |
+| `color` | The colour of every feature the track draws. A feature's own `color` column wins. | Feature tracks |
+| `shape` | The glyph of every feature the track draws, one of the [shape names](/protvista/type-and-shape-vocabulary). A feature's own `shape` column wins. | Feature tracks |
+| `height` | The track's height in pixels. Unset, a feature track is 40 px tall, a line graph 50, a coloured sequence 13, a heatmap 300 and the variant plot 500. On a group, it also sizes the collapsed row. | Every track |
+| `layout` | `non-overlapping` (the default) gives overlapping features a row each; `default` draws them all on one row. | Feature tracks |
+| `colorScale` | A colour gradient: a `theme` (`alphafold-ramp`, `alphamissense-ramp`) or explicit `stops`. | Coloured-sequence tracks (`alphafold-confidence`, `alphamissense-pathogenicity`) |
+
+The rows of a `non-overlapping` track share its height, so ten overlapping
+features (isoforms, say) get thin rows at the default 40 px. Give them room:
+
+```yaml
+  - id: isoforms
+    label: Isoforms
+    kind: features
+    data: ./isoforms.csv
+    rendering:
+      height: 120
+```
+
+`height` under `defaults:` sizes every track, whatever its kind.
+
+`layout` or `colorScale` on a track that can't use it does nothing, and the
+validator says so with a `rendering-field-ignored` warning. In particular, a
+feature track has no colour scale: to colour features by score, give each one
+a `color` column ([Style and annotate each feature from your
+file](/protvista/your-data#style-and-annotate-each-feature-from-your-file)).
 
 ## Editor autocomplete
 

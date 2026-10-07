@@ -661,7 +661,9 @@ export interface RenderingOptions {
   layout?: 'non-overlapping' | 'default';
 
   /**
-   * Continuous colour scale for colored-sequence and heatmap tracks.
+   * Continuous colour scale for colored-sequence tracks, the only
+   * component that reads it; anywhere else the validator warns that it
+   * has no effect.
    *
    * Maps numeric values to colours via a gradient with named stops.
    * If omitted, the Nightingale component's built-in default is used.
