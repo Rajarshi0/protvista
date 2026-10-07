@@ -173,7 +173,14 @@ The [Load your own data](/protvista/your-data) guide covers each in detail.
 ### `rendering`
 
 How a track looks. Set it on a track, on a group (its tracks inherit it), or
-under `defaults:` for every track; the nearest one wins.
+under `defaults:` for every track. Each field is resolved separately, and the
+first of these that sets it wins: the track, its `kind`, its group, then
+`defaults:`.
+
+The `kind` step matters for `colorScale`: `alphafold-confidence` and
+`alphamissense-pathogenicity` bring their own ramp, which beats a group's or
+`defaults:` `colorScale`. A `colorScale` on such a group colours only the
+group's collapsed row; to recolour the track itself, set it on the track.
 
 | Field | What it does | Where it has an effect |
 | --- | --- | --- |
