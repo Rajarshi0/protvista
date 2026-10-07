@@ -166,6 +166,13 @@ export type ValidationIssueCode =
    */
   | 'detail-only-standalone'
   /**
+   * A `rendering.layout` or `rendering.colorScale` set on a track (or group)
+   * whose built-in component has no such attribute: only the canvas feature
+   * track lays features out, and only the coloured sequence draws a colour
+   * scale. A `severity: 'warning'`: the config loads and the field is ignored.
+   */
+  | 'rendering-field-ignored'
+  /**
    * An authored track has rows whose coordinates fall below 1 or past the
    * entry's sequence length. Emitted at runtime, once the sequence loads —
    * not by `validateConfig`, which never sees the data. Reported on
