@@ -110,6 +110,13 @@ describe('renderingToAttrs', () => {
     });
   });
 
+  it('passes `height` and `layout` through as attribute strings', () => {
+    expect(renderingToAttrs({ height: 120, layout: 'default' })).toEqual({
+      height: '120',
+      layout: 'default',
+    });
+  });
+
   it('omits fields that are undefined (never emits `color: undefined`)', () => {
     // Lit sets `attr="undefined"` literally if you hand it `undefined`
     // via string interpolation — we must leave the key off entirely

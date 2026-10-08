@@ -645,14 +645,25 @@ export interface RenderingOptions {
   /** Shape of feature glyphs (e.g. `"rectangle"`, `"circle"`, `"diamond"`). */
   shape?: string;
 
-  /** Height of the track in pixels. */
+  /**
+   * Height of the track in pixels. Unset, each component keeps its own
+   * default: 40 for feature tracks, 50 for line graphs, 13 for coloured
+   * sequences, 300 for heatmaps and 500 for variants.
+   */
   height?: number;
 
-  /** Layout mode. Defaults to `"non-overlapping"`. */
+  /**
+   * How a feature track places overlapping features: `"non-overlapping"`
+   * (the default) stacks them in rows; `"default"` draws them all on one
+   * row. Only `nightingale-track-canvas` lays features out — on any other
+   * component the validator warns that it has no effect.
+   */
   layout?: 'non-overlapping' | 'default';
 
   /**
-   * Continuous colour scale for colored-sequence and heatmap tracks.
+   * Continuous colour scale for colored-sequence tracks, the only
+   * component that reads it; anywhere else the validator warns that it
+   * has no effect.
    *
    * Maps numeric values to colours via a gradient with named stops.
    * If omitted, the Nightingale component's built-in default is used.

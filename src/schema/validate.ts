@@ -790,10 +790,162 @@ function checkRows(
         code: 'all-tracks-detail-only',
       });
     }
+    checkGroupRenderingFields(group, registry, issues);
     for (const track of group.tracks) {
       checkTrack(group, track, sourceKeys, sources, registry, issues);
     }
   }
+}
+
+/**
+ * The rendering fields only one built-in component reads, and what it does
+ * with them. `getTrack()` hands `color`, `shape` and `layout` to the canvas
+ * feature track alone and `colorScale` (as `scale` / `color-range`) to the
+ * coloured sequence alone; the other built-ins have no such attribute.
+ * `height` is not here: every built-in reads it.
+ */
+const SINGLE_COMPONENT_FIELDS = [
+  {
+    field: 'color',
+    component: 'nightingale-track-canvas',
+    does: 'colours its features.',
+  },
+  {
+    field: 'shape',
+    component: 'nightingale-track-canvas',
+    does: 'draws feature glyphs.',
+  },
+  {
+    field: 'layout',
+    component: 'nightingale-track-canvas',
+    does: 'lays features out in rows.',
+  },
+  {
+    field: 'colorScale',
+    component: 'nightingale-colored-sequence',
+    does: 'draws a colour scale.',
+  },
+] as const;
+
+/**
+ * Extra advice for a canvas feature track that ignores `colorScale`: its
+ * features can carry their own colour. Other components have no such column.
+ */
+function featureColorHint(field: string, components: string[]): string {
+  return field === 'colorScale' &&
+    components.includes('nightingale-track-canvas')
+    ? " To colour single features, give them a 'color' column."
+    : '';
+}
+
+/**
+ * The component a track renders with, resolved as `normalizeTrack` does.
+ */
+function trackComponent(
+  group: GroupConfig | undefined,
+  track: TrackConfig,
+  registry: Registry
+): string {
+  return (
+    track.component ??
+    (track.kind
+      ? registry.getSemanticKind(track.kind)?.component
+      : undefined) ??
+    group?.component ??
+    'nightingale-track-canvas'
+  );
+}
+
+/**
+ * Whether `component` is a built-in that ignores `field`. A consumer
+ * component may read any attribute it likes, so it never counts.
+ */
+function ignoresField(
+  component: string,
+  entry: (typeof SINGLE_COMPONENT_FIELDS)[number]
+): boolean {
+  return (
+    (RENDERABLE_COMPONENT_NAMES as ReadonlySet<string>).has(component) &&
+    component !== entry.component
+  );
+}
+
+/**
+ * Warn when a track sets a single-component rendering field on a component
+ * that ignores it. Only the track's own `rendering` counts: a value inherited
+ * from its group is reported (once) on the group, and `defaults.rendering`
+ * applies to every track, so it is meant to land only where it can.
+ */
+function checkTrackRenderingFields(
+  group: GroupConfig | undefined,
+  track: TrackConfig,
+  trackPath: string,
+  registry: Registry,
+  issues: ValidationIssue[]
+): void {
+  const component = trackComponent(group, track, registry);
+  for (const entry of SINGLE_COMPONENT_FIELDS) {
+    if (track.rendering?.[entry.field] === undefined) continue;
+    if (!ignoresField(component, entry)) continue;
+    issues.push({
+      path: trackPath,
+      severity: 'warning',
+      message: `Track ${trackPath}: rendering.${entry.field} has no effect on ${component}; only ${entry.component} ${entry.does}${featureColorHint(entry.field, [component])}`,
+      code: 'rendering-field-ignored',
+    });
+  }
+}
+
+/**
+ * Warn when a group sets a single-component rendering field that reaches no
+ * component able to use it: not the collapsed aggregate, and not any track
+ * that inherits it (one that sets the field itself, or whose kind presets
+ * it, does not inherit the group's).
+ */
+function checkGroupRenderingFields(
+  group: GroupConfig,
+  registry: Registry,
+  issues: ValidationIssue[]
+): void {
+  for (const entry of SINGLE_COMPONENT_FIELDS) {
+    if (group.rendering?.[entry.field] === undefined) continue;
+    const components = [
+      aggregateComponent(group, registry),
+      ...group.tracks
+        .filter(
+          (t) =>
+            t.rendering?.[entry.field] === undefined &&
+            (t.kind
+              ? registry.getSemanticKind(t.kind)?.rendering?.[entry.field]
+              : undefined) === undefined
+        )
+        .map((t) => trackComponent(group, t, registry)),
+    ];
+    if (!components.every((c) => ignoresField(c, entry))) continue;
+    issues.push({
+      path: group.id,
+      severity: 'warning',
+      message: `Group ${group.id}: rendering.${entry.field} has no effect on any of its tracks; only ${entry.component} ${entry.does}${featureColorHint(entry.field, components)}`,
+      code: 'rendering-field-ignored',
+    });
+  }
+}
+
+/**
+ * The component a group's collapsed view renders with, inferred as
+ * `normalizeGroup` does: the explicit one, else the one every feeding
+ * (non-`detailOnly`) track shares, else the canvas track.
+ */
+function aggregateComponent(group: GroupConfig, registry: Registry): string {
+  if (group.component) return group.component;
+  const feeding = new Set(
+    group.tracks
+      .filter((t) => !t.detailOnly)
+      .map((t) => trackComponent(group, t, registry))
+  );
+  return feeding.size === 1
+    ? (feeding.values().next().value as string)
+    : 'nightingale-track-canvas';
 }
 
 function checkTrack(
@@ -901,6 +1053,7 @@ function checkTrack(
   if (effectiveRendering?.colorScale) {
     checkColorScale(trackPath, effectiveRendering.colorScale, registry, issues);
   }
+  checkTrackRenderingFields(group, track, trackPath, registry, issues);
 
   // Data descriptors.
   for (const descriptor of collectDescriptors(track)) {

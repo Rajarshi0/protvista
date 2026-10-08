@@ -7,7 +7,8 @@
  * *rendering surface* that snapshot deliberately does not touch.
  *
  * What this guards
- *   • `getTrack(component, layout, color, shape, id, scale, colorRange)`
+ *   • `getTrack(component, layout, color, shape, id, scale, colorRange,
+ *     showSeriesLabel, height)`
  *     — each `KnownComponentName` must emit the exact nightingale
  *     element with the exact attribute set (tier 1).
  *   • The top-level shell (manager + navigation + sequence) plus one
@@ -119,6 +120,29 @@ describe('getTrack() per component — config → nightingale attribute mapping'
       const target = document.createElement('div');
       render(template, target);
       expect(normalize(target.innerHTML)).toMatchSnapshot();
+    });
+  }
+
+  // `rendering.height` replaces each component's default height; without it
+  // the defaults above (pinned by the snapshots) stand.
+  for (const component of COMPONENT_NAMES) {
+    it(`${component} → takes rendering.height when given`, () => {
+      const template = el.getTrack(
+        component,
+        '',
+        '',
+        '',
+        'H',
+        '',
+        '',
+        true,
+        '120'
+      );
+      const target = document.createElement('div');
+      render(template, target);
+      expect(target.querySelector(component)!.getAttribute('height')).toBe(
+        '120'
+      );
     });
   }
 
@@ -471,6 +495,35 @@ describe('full render — shell + per-group DOM with frozen fixtures', () => {
       expect(normalize(collected.join('\n'))).toMatchSnapshot();
     });
   }
+
+  it('draws a group and its tracks at their rendering height and layout', () => {
+    // The group's rendering sizes the collapsed aggregate; each track's own
+    // (cascaded) rendering sizes its expanded row.
+    const sized = structuredClone(testConfig) as typeof testConfig;
+    const group = sized.rows.find((r) => r.id === 'GROUP_CANVAS')!;
+    group.rendering = { height: 90, layout: 'default' };
+    group.tracks[0].rendering = { height: 120, layout: 'default' };
+    const sizedEl = buildInstance({
+      config: sized,
+      data: testData,
+      openGroups: ['GROUP_CANVAS'],
+    });
+    const sizedTarget = document.createElement('div');
+    render(sizedEl.render(), sizedTarget);
+    const attrs = (id: string) => {
+      const t = sizedTarget.querySelector(`#${CSS_PREFIX}-track-${id}`)!;
+      return [t.getAttribute('height'), t.getAttribute('layout')];
+    };
+    expect(attrs('GROUP_CANVAS')).toEqual(['90', 'default']);
+    expect(attrs('GROUP_CANVAS-canvas_track_A')).toEqual(['120', 'default']);
+    // A track whose resolved rendering has neither keeps the component
+    // defaults. (Track B is left uncascaded on purpose; after normalize it
+    // would inherit the group's 90/'default'.)
+    expect(attrs('GROUP_CANVAS-canvas_track_B')).toEqual([
+      '40',
+      'non-overlapping',
+    ]);
+  });
 
   it('keeps show-label-name on a domain count line graph but drops it for a bring-your-own one', () => {
     // The track pluralises the series name into its hover readout ("12

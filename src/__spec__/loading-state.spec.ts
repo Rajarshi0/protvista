@@ -96,6 +96,23 @@ afterEach(() => {
 });
 
 describe('initial loading state', () => {
+  it('shows the spinner while the config file is still in flight', async () => {
+    // The first wait of all: a config given by URL (`config-src`). Neither
+    // `config` nor `sequence` is set yet, so the readiness gate alone would
+    // render nothing.
+    const fetchFn = stubHungFetch();
+    const el = mountEl({
+      configSrc: 'https://example.org/config.yaml',
+      accession: 'P05067',
+    } as Partial<El>);
+
+    await settle(el);
+
+    expect(fetchFn).toHaveBeenCalled();
+    expect((el as unknown as { config?: unknown }).config).toBeUndefined();
+    expect(el.querySelector(LOADER)).not.toBeNull();
+  });
+
   it('shows the spinner while the sequence fetch is still in flight', async () => {
     stubHungFetch();
     const el = mountEl({ viewerConfig: VALID_CONFIG, accession: 'P05067' });

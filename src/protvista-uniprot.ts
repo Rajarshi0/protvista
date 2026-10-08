@@ -423,6 +423,15 @@ const hasRenderableData = (value: unknown): boolean => {
 const showsSeriesLabel = (tracks: readonly NormalizedTrack[]): boolean =>
   !tracks.some((t) => t.data?.some((d) => isAuthoredSource(d)));
 
+/** Each built-in component's height when `rendering.height` is unset. */
+const DEFAULT_TRACK_HEIGHT: Record<string, number> = {
+  'nightingale-track-canvas': 40,
+  'nightingale-variation-canvas': 500,
+  'nightingale-linegraph-track': 50,
+  'nightingale-colored-sequence': 13,
+  'nightingale-sequence-heatmap': 300,
+};
+
 /**
  * The `path` a runtime track warning's issue names the track by: the bare
  * track id on a standalone row, which has no group of its own, and
@@ -4090,13 +4099,14 @@ class ProtvistaUniprot extends LitElement {
               >
                 ${this.getTrack(
                   track.component,
-                  'non-overlapping',
+                  attrs.layout ?? 'non-overlapping',
                   attrs.color,
                   attrs.shape,
                   key,
                   attrs.scale,
                   attrs.colorRange,
-                  showsSeriesLabel([track])
+                  showsSeriesLabel([track]),
+                  attrs.height
                 )}
               </div>`
             : ''
@@ -4278,13 +4288,23 @@ class ProtvistaUniprot extends LitElement {
               ? `${CSS_PREFIX}-track-content__coloured-sequence`
               : ''
           }"
-          .style="${expanded ? 'opacity:0' : 'opacity:1'}"
+          .style="${
+            !expanded
+              ? 'opacity:1'
+              : groupAttrs.height
+                ? // The hidden aggregate keeps the group's height (Nightingale
+                  // does not redraw on a height change alone), so clip its
+                  // cell to the default height rather than leave a blank band
+                  // above the expanded tracks.
+                  `opacity:0;height:${DEFAULT_TRACK_HEIGHT[group.component] ?? 0}px;overflow:hidden`
+                : 'opacity:0'
+          }"
         >
           ${
             groupHasData
               ? this.getTrack(
                   group.component,
-                  'non-overlapping',
+                  groupAttrs.layout ?? 'non-overlapping',
                   groupAttrs.color,
                   groupAttrs.shape,
                   group.id,
@@ -4296,7 +4316,8 @@ class ProtvistaUniprot extends LitElement {
                   // the current order), not merely the first visible one.
                   showsSeriesLabel(
                     drawnAggregateTracks(group.tracks).slice(0, 1)
-                  )
+                  ),
+                  groupAttrs.height
                 )
               : ''
           }
@@ -4426,13 +4447,14 @@ class ProtvistaUniprot extends LitElement {
               >
                 ${this.getTrack(
                   track.component,
-                  'non-overlapping',
+                  attrs.layout ?? 'non-overlapping',
                   attrs.color,
                   attrs.shape,
                   key,
                   attrs.scale,
                   attrs.colorRange,
-                  showsSeriesLabel([track])
+                  showsSeriesLabel([track]),
+                  attrs.height
                 )}
               </div>`
             : ''
@@ -6066,16 +6088,18 @@ class ProtvistaUniprot extends LitElement {
     id = '',
     scale = '',
     colorRange = '',
-    showSeriesLabel = true
+    showSeriesLabel = true,
+    height = ''
   ) {
     // lit-html doesn't allow to have dynamic tag names, hence the switch/case
-    // with repeated code
+    // with repeated code. `height` is the track's `rendering.height`; each
+    // component keeps its own default when it is unset.
     switch (component) {
       case 'nightingale-track-canvas':
         return html`
           <nightingale-track-canvas
             length="${this.sequence?.length}"
-            height="40"
+            height="${height || DEFAULT_TRACK_HEIGHT[component]}"
             layout="${layout}"
             color="${color}"
             shape="${shape}"
@@ -6091,7 +6115,7 @@ class ProtvistaUniprot extends LitElement {
         return html`
           <nightingale-variation-canvas
             length="${this.sequence?.length}"
-            height="500"
+            height="${height || DEFAULT_TRACK_HEIGHT[component]}"
             display-start="${this.displayCoordinates?.start}"
             display-end="${this.displayCoordinates?.end}"
             id="${CSS_PREFIX}-track-${id}"
@@ -6104,7 +6128,7 @@ class ProtvistaUniprot extends LitElement {
         return html`
           <nightingale-linegraph-track
             length="${this.sequence?.length}"
-            height="50"
+            height="${height || DEFAULT_TRACK_HEIGHT[component]}"
             display-start="${this.displayCoordinates?.start}"
             display-end="${this.displayCoordinates?.end}"
             id="${CSS_PREFIX}-track-${id}"
@@ -6123,7 +6147,7 @@ class ProtvistaUniprot extends LitElement {
             id="${CSS_PREFIX}-track-${id}"
             scale="${scale}"
             color-range="${colorRange}"
-            height="13"
+            height="${height || DEFAULT_TRACK_HEIGHT[component]}"
             highlight-event="onclick"
             use-ctrl-to-zoom
           >
@@ -6140,7 +6164,7 @@ class ProtvistaUniprot extends LitElement {
             display-end="${this.displayCoordinates?.end}"
             highlight-event="onclick"
             highlight-color="#EB3BFF66"
-            height="300"
+            height="${height || DEFAULT_TRACK_HEIGHT[component]}"
             use-ctrl-to-zoom
           >
           </nightingale-sequence-heatmap>

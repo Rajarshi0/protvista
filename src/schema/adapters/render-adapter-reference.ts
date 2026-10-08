@@ -206,6 +206,9 @@ export function renderReferenceMarkdown(
   const lines: string[] = [];
   lines.push('---');
   lines.push('title: Built-in adapter reference');
+  // Generated: Starlight's "Edit page" link would point at a file the next
+  // sync overwrites.
+  lines.push('editUrl: false');
   lines.push('---');
   lines.push('');
   lines.push(

@@ -826,6 +826,310 @@ describe('validateConfig — colorScale', () => {
   });
 });
 
+describe('validateConfig — rendering fields with no effect', () => {
+  const stops = {
+    stops: [
+      { value: 0, color: '#fff' },
+      { value: 1, color: '#000' },
+    ],
+  };
+  const ignored = (issues: ValidationIssue[]) =>
+    issues.filter((i) => i.code === 'rendering-field-ignored');
+
+  it('warns that colorScale does nothing on a features track', () => {
+    const result = validateConfig(
+      {
+        sources: { features: 'https://example.org/features' },
+        rows: [
+          {
+            id: 'G',
+            tracks: [
+              {
+                id: 'hits',
+                kind: 'features',
+                data: 'features',
+                rendering: { colorScale: stops },
+              },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([
+      {
+        path: 'G/hits',
+        severity: 'warning',
+        message:
+          "Track G/hits: rendering.colorScale has no effect on nightingale-track-canvas; only nightingale-colored-sequence draws a colour scale. To colour single features, give them a 'color' column.",
+        code: 'rendering-field-ignored',
+      },
+    ]);
+    // A warning: the config still loads.
+    expect(result.valid).toBe(true);
+  });
+
+  it('does not warn for colorScale on a coloured-sequence track', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'af',
+            kind: 'alphafold-confidence',
+            data: 'https://example.org/x',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+
+  it('does not tell a heatmap to add a feature color column', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'am',
+            kind: 'alphamissense-heatmap',
+            data: 'https://example.org/x',
+            rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.message)).toEqual([
+      'Track am: rendering.colorScale has no effect on nightingale-sequence-heatmap; only nightingale-colored-sequence draws a colour scale.',
+    ]);
+  });
+
+  it('warns once, on the group, when no track of a group can use its colorScale', () => {
+    const result = validateConfig(
+      {
+        sources: { features: 'https://example.org/features' },
+        rows: [
+          {
+            id: 'G',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              { id: 'a', kind: 'features', data: 'features' },
+              { id: 'b', kind: 'features', data: 'features' },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([
+      {
+        path: 'G',
+        severity: 'warning',
+        message:
+          "Group G: rendering.colorScale has no effect on any of its tracks; only nightingale-colored-sequence draws a colour scale. To colour single features, give them a 'color' column.",
+        code: 'rendering-field-ignored',
+      },
+    ]);
+  });
+
+  it('does not warn for a group colorScale that its coloured-sequence aggregate draws', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              {
+                id: 'af',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/x',
+              },
+              { id: 'f', kind: 'features', data: 'https://example.org/y' },
+            ],
+            component: 'nightingale-colored-sequence',
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+
+  it('warns on the group when its only coloured-sequence track sets its own colorScale', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            component: 'nightingale-track-canvas',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              {
+                id: 'af',
+                kind: 'features',
+                component: 'nightingale-colored-sequence',
+                data: 'https://example.org/x',
+                rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+              },
+              { id: 'f', kind: 'features', data: 'https://example.org/y' },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.path)).toEqual(['G']);
+  });
+
+  it('warns on the group when its only coloured-sequence track has a kind preset colorScale', () => {
+    // The kind preset beats the group's colorScale in the cascade.
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            component: 'nightingale-track-canvas',
+            rendering: { colorScale: { theme: 'alphamissense-ramp' } },
+            tracks: [
+              {
+                id: 'af',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/x',
+              },
+              { id: 'f', kind: 'features', data: 'https://example.org/y' },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.path)).toEqual(['G']);
+  });
+
+  it('does not warn when the inferred aggregate is a coloured sequence', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'G',
+            rendering: { colorScale: { theme: 'alphafold-ramp' } },
+            tracks: [
+              {
+                id: 'a',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/a',
+              },
+              {
+                id: 'b',
+                kind: 'alphafold-confidence',
+                data: 'https://example.org/b',
+              },
+            ],
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+
+  it('warns that layout does nothing on a line graph', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'depth',
+            kind: 'features',
+            component: 'nightingale-linegraph-track',
+            data: 'https://example.org/x',
+            rendering: { layout: 'default' },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([
+      {
+        path: 'depth',
+        severity: 'warning',
+        message:
+          'Track depth: rendering.layout has no effect on nightingale-linegraph-track; only nightingale-track-canvas lays features out in rows.',
+        code: 'rendering-field-ignored',
+      },
+    ]);
+  });
+
+  it('warns that color and shape do nothing on a line graph', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'depth',
+            kind: 'linegraph',
+            data: 'https://example.org/x.csv',
+            rendering: { color: 'red', shape: 'circle' },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues).map((i) => i.message)).toEqual([
+      'Track depth: rendering.color has no effect on nightingale-linegraph-track; only nightingale-track-canvas colours its features.',
+      'Track depth: rendering.shape has no effect on nightingale-linegraph-track; only nightingale-track-canvas draws feature glyphs.',
+    ]);
+  });
+
+  it('does not warn for layout or height on a features track', () => {
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'hits',
+            kind: 'features',
+            data: 'https://example.org/x',
+            rendering: { layout: 'default', height: 120 },
+          },
+        ],
+      },
+      freshRegistry()
+    );
+    expect(result.issues).toEqual([]);
+  });
+
+  it('does not warn for defaults, which apply only where they can', () => {
+    const result = validateConfig(
+      {
+        defaults: { rendering: { layout: 'default', colorScale: stops } },
+        rows: [{ id: 'hits', kind: 'features', data: 'https://example.org/x' }],
+      },
+      freshRegistry()
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+
+  it('does not warn for a consumer component, which reads what it likes', () => {
+    const registry = freshRegistry();
+    registry.registerComponent('acme-track', class extends HTMLElement {});
+    const result = validateConfig(
+      {
+        rows: [
+          {
+            id: 'mine',
+            kind: 'features',
+            component: 'acme-track',
+            data: 'https://example.org/x',
+            rendering: { colorScale: stops, layout: 'default' },
+          },
+        ],
+      },
+      registry
+    );
+    expect(ignored(result.issues)).toEqual([]);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────
 // Semantic: version
 // ─────────────────────────────────────────────────────────────
