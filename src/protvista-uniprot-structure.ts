@@ -402,6 +402,7 @@ const foldseekLink = (accession: string, sourceDB: string) => {
 };
 
 const styleId = 'protvista-styles';
+let colorSchemeInstanceCounter = 0;
 
 @customElement('protvista-uniprot-structure')
 class ProtvistaUniprotStructure extends LitElement {
@@ -415,6 +416,7 @@ class ProtvistaUniprotStructure extends LitElement {
   isoforms?: IsoformIdSequence;
   private loading?: boolean;
   private alphamissenseAvailable?: boolean;
+  private readonly colorSchemeGroupId = `protvista-color-scheme-${++colorSchemeInstanceCounter}`;
 
   @state()
   private modelUrl = '';
@@ -714,7 +716,10 @@ class ProtvistaUniprotStructure extends LitElement {
     }
 
     .theme-selection {
-      padding-bottom: 1rem;
+      border: 0;
+      margin: 0;
+      min-width: 0;
+      padding: 0 0 1rem;
     }
 
     .protvista-uniprot-structure__structure {
@@ -800,6 +805,9 @@ class ProtvistaUniprotStructure extends LitElement {
   }
 
   render() {
+    const alphafoldRadioId = `${this.colorSchemeGroupId}-alphafold`;
+    const alphamissenseRadioId = `${this.colorSchemeGroupId}-alphamissense`;
+
     return html`
       <div class="protvista-uniprot-structure">
         <div class="protvista-uniprot-structure__structure">
@@ -807,32 +815,33 @@ class ProtvistaUniprotStructure extends LitElement {
             this.metaInfo
               ? html`
                   <div class="protvista-uniprot-structure__meta">
-                    <div class="theme-selection">
-                      Select color scale
+                    <fieldset class="theme-selection">
+                      <legend>Select color scale</legend>
                       <div>
                         <input
                           type="radio"
-                          id="alphafold"
-                          name="colorScheme"
+                          id=${alphafoldRadioId}
+                          name=${this.colorSchemeGroupId}
                           value="alphafold"
                           @click=${this.toggleColorTheme}
-                          checked
+                          .checked=${this.colorTheme !== 'alphamissense'}
                         />
-                        <label for="alphafold">Confidence</label>
+                        <label for=${alphafoldRadioId}>Confidence</label>
                       </div>
                       <div
                         class=${this.alphamissenseAvailable ? '' : 'am-disabled'}
                       >
                         <input
                           type="radio"
-                          id="alphamissense"
-                          name="colorScheme"
+                          id=${alphamissenseRadioId}
+                          name=${this.colorSchemeGroupId}
                           value="alphamissense"
                           @click=${this.toggleColorTheme}
+                          .checked=${this.colorTheme === 'alphamissense'}
                           ?disabled=${!this.alphamissenseAvailable}
                         />
                         <label
-                          for="alphamissense"
+                          for=${alphamissenseRadioId}
                           title=${
                             this.alphamissenseAvailable
                               ? ''
@@ -843,7 +852,7 @@ class ProtvistaUniprotStructure extends LitElement {
                           ${this.alphamissenseAvailable ? '' : ' (unavailable)'}
                         </label>
                       </div>
-                    </div>
+                    </fieldset>
                     ${this.metaInfo}
                   </div>
                 `
