@@ -824,7 +824,7 @@ class ProtvistaUniprotStructure extends LitElement {
                           name=${this.colorSchemeGroupId}
                           value="alphafold"
                           @click=${this.toggleColorTheme}
-                          ?checked=${this.colorTheme === 'alphafold'}
+                          .checked=${this.colorTheme !== 'alphamissense'}
                         />
                         <label for=${alphafoldRadioId}>Confidence</label>
                       </div>
@@ -837,7 +837,7 @@ class ProtvistaUniprotStructure extends LitElement {
                           name=${this.colorSchemeGroupId}
                           value="alphamissense"
                           @click=${this.toggleColorTheme}
-                          ?checked=${this.colorTheme === 'alphamissense'}
+                          .checked=${this.colorTheme === 'alphamissense'}
                           ?disabled=${!this.alphamissenseAvailable}
                         />
                         <label
