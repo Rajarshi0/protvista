@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>F9 live: variants vs AlphaMissense</title>
+<style>body{font-family:system-ui;margin:1rem} protvista-uniprot{display:block;width:100%} .note{color:#444;font-size:.9rem}</style>
+</head>
+<body>
+<h1>Variants coloured by AlphaMissense (live)</h1>
+<p class="note">Dots: blue = AM likely benign (&lt; 0.34), grey = ambiguous, red = AM likely pathogenic (&gt; 0.564); small grey = no prediction.
+  <strong>AlphaMissense predictions are not validated for clinical use.</strong>
+  AlphaMissense data: Cheng et al. 2023, CC BY 4.0, via AlphaFold DB.</p>
+<protvista-uniprot id="v" nostructure></protvista-uniprot>
+<script type="module">
+// The same pinned build the Starter Kit loads (starter-kit/index.html).
+const BUNDLE_URL = 'https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs';
+import { variationAlphaMissense, variationCountsByProvenance } from './variation-am.js';
+const acc = new URLSearchParams(location.search).get('acc') || 'P60484';
+const v = document.getElementById('v');
+// Register the adapters BEFORE setting config-src.
+v.adapters = { 'variation-alphamissense': variationAlphaMissense, 'variation-counts-provenance': variationCountsByProvenance };
+v.setAttribute('config-src', `./live-${acc}.yaml`);
+await import(BUNDLE_URL);
+</script>
+</body>
+</html>

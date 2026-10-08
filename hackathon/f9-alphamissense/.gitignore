@@ -1,0 +1,5 @@
+# Downloaded and generated data. Never commit it: the Proteins API variation
+# JSON (and join.py output built from it) includes NCI-TCGA / COSMIC rows
+# whose terms do not allow redistribution. Run fetch_data.py to get your own copy.
+data/
+__pycache__/

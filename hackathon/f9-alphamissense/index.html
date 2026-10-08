@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>F9 Milestone 1: variants vs AlphaMissense</title>
+<style>body{font-family:system-ui;margin:1rem;max-width:90rem} protvista-uniprot{display:block;width:100%} .note{color:#444;font-size:.9rem}</style>
+</head>
+<body>
+<h1>Variants coloured by AlphaMissense (from join.py output)</h1>
+<p class="note">Needs <code>fetch_data.py</code> and <code>join.py</code> first (see README.md). Loads <code>config-{acc}.yaml</code>; <code>?acc=P60484</code> by default.
+  <strong>AlphaMissense predictions are not validated for clinical use.</strong>
+  AlphaMissense data: Cheng et al. 2023, CC BY 4.0, via AlphaFold DB.</p>
+<protvista-uniprot id="v" nostructure></protvista-uniprot>
+<script type="module">
+// The same pinned build the Starter Kit loads (starter-kit/index.html).
+const BUNDLE_URL = 'https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs';
+const acc = new URLSearchParams(location.search).get('acc') || 'P60484';
+const v = document.getElementById('v');
+v.setAttribute('config-src', `./config-${acc}.yaml`);
+await import(BUNDLE_URL);
+</script>
+</body>
+</html>

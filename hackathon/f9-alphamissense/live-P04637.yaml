@@ -1,0 +1,16 @@
+accession: P04637
+sources:
+  variation: https://www.ebi.ac.uk/proteins/api/variation/{accession}
+  alphafoldPrediction: https://alphafold.ebi.ac.uk/api/prediction/{accession}
+rows:
+  - id: F9
+    label: Variants vs AlphaMissense
+    tracks:
+      - id: am
+        label: Variants coloured by AlphaMissense (live join)
+        kind: variants
+        data: { source: [variation, alphafoldPrediction], adapter: variation-alphamissense }
+      - id: counts_by_provenance
+        label: Disease labels by source
+        kind: variant-counts
+        data: { source: variation, adapter: variation-counts-provenance }

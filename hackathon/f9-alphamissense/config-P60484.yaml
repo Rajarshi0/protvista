@@ -1,0 +1,40 @@
+accession: P60484
+rows:
+  - id: F9
+    label: Variants vs AlphaMissense
+    tracks:
+      - id: variation_default
+        label: Variants (today's colours)
+        kind: variants
+        data: { url: ./data/proteins-P60484.json, adapter: uniprot-variation-json }
+      - id: variation_am
+        label: Variants coloured by AlphaMissense
+        kind: variants
+        data: { url: ./data/P60484-variants-am.json, adapter: uniprot-variation-json }
+        dataTooltip:
+          kind: fields
+          fields:
+            - { path: wildType, label: From }
+            - { path: alternativeSequence, label: To }
+            - { path: begin, label: Position }
+            - { path: amScore, label: AlphaMissense score (this substitution) }
+            - { path: amClass, label: AlphaMissense class }
+            - { path: clinicalSignificances.0.type, label: First significance }
+            - { path: clinicalSignificances.0.sources.0, label: Its source }
+        description: Each dot coloured by the AlphaMissense score of that exact substitution (blue < 0.34, grey ambiguous, red > 0.564); small grey = no prediction. Not for clinical use.
+      - id: agreement
+        label: ClinVar vs AlphaMissense
+        kind: features
+        data: ./data/P60484-agreement.csv
+      - id: dens_clinvar
+        label: ClinVar P/LP per residue
+        kind: linegraph
+        data: ./data/P60484-density-clinvar_plp.csv
+      - id: dens_mim
+        label: Curated (MIM) disease per residue
+        kind: linegraph
+        data: ./data/P60484-density-curated_mim.csv
+      - id: dens_tcga
+        label: TCGA tissue labels per residue
+        kind: linegraph
+        data: ./data/P60484-density-tcga_tissue.csv
