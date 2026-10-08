@@ -30,7 +30,6 @@ type StructureEl = LitElement & {
   colorTheme: string;
   data?: unknown;
   metaInfo?: unknown;
-  alphamissenseAvailable?: boolean;
   updateComplete: Promise<boolean>;
 };
 
