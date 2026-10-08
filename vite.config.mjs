@@ -87,6 +87,15 @@ export default defineConfig({
       vertx: fileURLToPath(new URL('./src/__browser__/vertx-stub.js', import.meta.url)),
     },
   },
+  // Library mode leaves `process.env.NODE_ENV` in bundled dependencies for the
+  // consumer's bundler to replace. Loaded straight from a CDN (the Starter
+  // Kit, any plain <script type="module">) there is no bundler, and immer,
+  // which Mol* uses, reads it unguarded: the structure viewer failed with
+  // "process is not defined". Replace it for the build only; tests keep
+  // Vitest's own NODE_ENV.
+  ...(isVitest
+    ? {}
+    : { define: { 'process.env.NODE_ENV': JSON.stringify('production') } }),
   build: {
     target: 'ES2021',
     sourcemap: true,

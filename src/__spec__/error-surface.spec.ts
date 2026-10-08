@@ -22,11 +22,17 @@ import { render } from 'lit';
 // Registers <protvista-uniprot>; nightingale packages are stubbed
 // globally via `src/__spec__/nightingale-mocks.ts` (setupFiles).
 import '../protvista-uniprot.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fixtureText } from './fixture-text.js';
 import { loadProtvistaData, type AdapterMap } from '../load-data.js';
 import { CSS_PREFIX } from '../styles/css-prefix.js';
 import { formatValidationIssues } from '../errors/format.js';
 import type { ValidationIssue } from '../schema/errors.js';
 import type { NormalizedConfig, NormalizedTrack } from '../schema/normalize.js';
+
+// Vitest runs from the repo root, so resolve paths from cwd.
+const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), 'utf8');
 
 const PANEL = `.${CSS_PREFIX}-error-panel`;
 const BADGE = `.${CSS_PREFIX}-error-badge`;
@@ -692,9 +698,14 @@ describe('per-track error badge', () => {
     const badges = target.querySelectorAll(BADGE);
     expect(badges.length).toBe(1);
     const badge = badges[0];
-    expect(badge.getAttribute('tabindex')).toBe('0');
-    expect(badge.getAttribute('role')).toBe('img');
+    // A button like the visitor ⓘ: its popover holds the detail…
+    expect(badge.tagName).toBe('BUTTON');
+    expect(badge.getAttribute('aria-expanded')).toBe('false');
+    const popId = badge.getAttribute('aria-controls')!;
+    const popover = target.querySelector(`[id="${popId}"]`)!;
+    expect(popover.textContent).toMatch(/HTTP 500/);
 
+    // …and a screen reader hears it on focus without opening it.
     const descId = badge.getAttribute('aria-describedby')!;
     const desc = target.querySelector(`[id="${descId}"]`)!;
     expect(desc.textContent).toMatch(/HTTP 500/);
@@ -777,6 +788,39 @@ describe('per-track error badge', () => {
     expect(descId).not.toMatch(/\s/); // no whitespace → valid HTML id / token
     // The referenced description element actually exists under that id.
     expect(target.querySelector(`[id="${descId}"]`)).not.toBeNull();
+  });
+
+  it('keeps ids apart that differ only in characters an id cannot hold', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFetch([['/bad', { ok: false, status: 500 }]]);
+    const el = buildLoaded(
+      normConfig([
+        customTrack('ok'),
+        urlTrack('a.b', 'https://example.org/bad-dot.json'),
+        urlTrack('a b', 'https://example.org/bad-space.json'),
+      ]),
+      {
+        customTrackData: { 'g-ok': [{ type: 'DOMAIN', start: 1, end: 10 }] },
+        hasData: true,
+        openGroups: ['g'],
+      }
+    );
+
+    await el._loadData();
+    const target = renderTarget(el);
+
+    // Each badge is described by its own track's error, under an id nothing
+    // else on the page has.
+    const described = [...target.querySelectorAll(BADGE)].map((badge) => {
+      const ids = target.querySelectorAll(
+        `[id="${badge.getAttribute('aria-describedby')}"]`
+      );
+      expect(ids).toHaveLength(1);
+      return ids[0].textContent;
+    });
+    expect(described).toHaveLength(2);
+    expect(described.some((t) => t!.includes('bad-dot'))).toBe(true);
+    expect(described.some((t) => t!.includes('bad-space'))).toBe(true);
   });
 });
 
@@ -1075,7 +1119,7 @@ describe('standalone row error badge', () => {
     expect(target.querySelector(`#${CSS_PREFIX}-group_solo`)).not.toBeNull();
     const badge = target.querySelector(BADGE)!;
     expect(badge).not.toBeNull();
-    expect(badge.getAttribute('role')).toBe('img');
+    expect(badge.tagName).toBe('BUTTON');
     const descId = badge.getAttribute('aria-describedby')!;
     expect(target.querySelector(`[id="${descId}"]`)!.textContent).toMatch(
       /HTTP 500/
@@ -1909,7 +1953,7 @@ describe('aggregate data hygiene', () => {
 // ── per-instance id uniqueness ────────────────────────────────────
 
 describe('badge id uniqueness across instances', () => {
-  it('gives two viewers distinct aria-describedby ids for the same track', async () => {
+  it('gives two viewers distinct badge and popover ids for the same group', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     stubFetch([['/bad', { ok: false, status: 500 }]]);
 
@@ -1919,12 +1963,16 @@ describe('badge id uniqueness across instances', () => {
         { openGroups: [] }
       );
       await el._loadData();
-      const target = renderTarget(el);
-      return target.querySelector(BADGE)!.getAttribute('aria-describedby')!;
+      const badge = renderTarget(el).querySelector(BADGE)!;
+      return [badge.id, badge.getAttribute('aria-controls')!];
     };
 
-    const [id1, id2] = [await describedById(), await describedById()];
+    const [[id1, pop1], [id2, pop2]] = [
+      await describedById(),
+      await describedById(),
+    ];
     expect(id1).not.toBe(id2);
+    expect(pop1).not.toBe(pop2);
     expect(id1).not.toMatch(/\s/);
   });
 });
@@ -2074,9 +2122,16 @@ describe('a component rejecting its payload', () => {
 
     const badge = target.querySelector(BADGE)!;
     expect(badge).not.toBeNull();
-    const descId = badge.getAttribute('aria-describedby')!;
-    // The aggregate's own message, not the generic "Some tracks…" count.
-    expect(target.querySelector(`[id="${descId}"]`)!.textContent).toContain(
+    // The aggregate's own message, not the generic "Some tracks…" count. It
+    // is the badge's name, so it is not repeated as its description.
+    expect(badge.getAttribute('aria-label')).toContain(
+      'could not render the data it was given'
+    );
+    expect(badge.hasAttribute('aria-describedby')).toBe(false);
+    const popover = target.querySelector(
+      `[id="${badge.getAttribute('aria-controls')}"]`
+    )!;
+    expect(popover.textContent).toContain(
       'could not render the data it was given'
     );
   });
@@ -3371,6 +3426,57 @@ describe('track-data coordinate warning', () => {
       expect(trackData()[0].detail.context.trackId).toBe('y');
     });
 
+    it('routes both warnings of a file with reserved columns and unpaintable colours from one load, with no badge', async () => {
+      const name = 'reserved-and-bad-colours.csv';
+      stubRoutes({ files: { [name]: async () => fixtureText(name) } });
+      const { el, events, trackData, warn } = mountCollecting({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'g',
+              tracks: [
+                {
+                  id: 'y',
+                  kind: 'features',
+                  data: `./${name}`,
+                  dataTooltip: {
+                    kind: 'markdown',
+                    template: '{% $description %}',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      const IGNORED_BOTH =
+        './reserved-and-bad-colours.csv (parsed as CSV): ignored column(s) ' +
+        '"tooltipContent", "toString" — these names are reserved by the ' +
+        'viewer or by JavaScript and cannot come from a data file.';
+      const UNPAINTABLE =
+        './reserved-and-bad-colours.csv (parsed as CSV): 2 row(s) have a ' +
+        'colour the canvas cannot paint ("bleu", "#catFace"); those ' +
+        "features are drawn in the previous feature's colour.";
+      // One event per warning, both from the one load.
+      await vi.waitFor(() => expect(trackData()).toHaveLength(2));
+      const issues = trackData().flatMap((e) => e.detail.issues);
+      expect(issues.map((i) => [i.code, i.message])).toEqual([
+        ['data-field-ignored', IGNORED_BOTH],
+        ['unpaintable-color', UNPAINTABLE],
+      ]);
+      expect(warn).toHaveBeenCalledWith(`[protvista] ${IGNORED_BOTH}`);
+      expect(warn).toHaveBeenCalledWith(`[protvista] ${UNPAINTABLE}`);
+      expect(events.some((e) => e.detail.phase === 'track-fetch')).toBe(false);
+      await el.updateComplete;
+      expect(el._trackErrors.has('g-y')).toBe(false);
+      expect(el.querySelector(BADGE)).toBeNull();
+      // The file's `tooltipContent` cells never reach a tooltip.
+      const rows = el.data['g-y'] as Array<{ tooltipContent?: string }>;
+      expect(rows).toHaveLength(3);
+      for (const row of rows) expect(row.tooltipContent).not.toContain('injected');
+    });
+
     it('routes a bad opacity as a track-fetch failure with a badge instead', async () => {
       stubRoutes({
         csv: 'type,start,end,description,opacity\nDOMAIN,1,10,a,1.5\n',
@@ -3626,6 +3732,92 @@ describe('track-data coordinate warning', () => {
       const rows = el.data['g-y'] as Array<Record<string, unknown>>;
       expect(rows.map((row) => 'description' in row)).toEqual([false, true]);
       expect(misses()).toHaveLength(0);
+    });
+
+    it('warns once for a grouped markdown track and once for a standalone fields row', async () => {
+      const HOTSPOTS = '/protvista/sample-data/hotspots.csv';
+      stubRoutes({
+        files: { 'hotspots.csv': async () => read('docs/public/sample-data/hotspots.csv') },
+      });
+      const { misses, lines } = mountMisses({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'LAB',
+              label: 'Lab',
+              tracks: [
+                {
+                  id: 'grouped',
+                  label: 'Grouped hits',
+                  kind: 'features',
+                  data: HOTSPOTS,
+                  dataTooltip: {
+                    kind: 'markdown',
+                    template:
+                      '{% $description %} p={% $pvalue %} gene={% $Gene %}',
+                  },
+                },
+              ],
+            },
+            {
+              id: 'solo',
+              label: 'Standalone hits',
+              kind: 'features',
+              data: HOTSPOTS,
+              dataTooltip: {
+                kind: 'fields',
+                fields: [
+                  { path: 'score', label: 'Score' },
+                  { path: 'pvalue', label: 'P-value' },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => expect(misses()).toHaveLength(2));
+      // `score` is in the file, so it is never listed.
+      const messages = [
+        'Track LAB/grouped: dataTooltip references unknown fields: pvalue, Gene',
+        'Track solo: dataTooltip references unknown fields: pvalue',
+      ];
+      expect(misses().map((e) => e.detail.message).sort()).toEqual(messages);
+      expect(misses().map((e) => e.detail.issues[0].path).sort()).toEqual([
+        'LAB/grouped',
+        'solo',
+      ]);
+      expect(lines().map(([line]) => line).sort()).toEqual(
+        messages.map((m) => `[protvista-uniprot] ${m}`)
+      );
+    });
+
+    it('never checks a line graph track', async () => {
+      stubRoutes({ files: { 'depth.csv': async () => fixtureText('depth.csv') } });
+      const { el, misses, lines } = mountMisses({
+        viewerConfig: {
+          rows: [
+            {
+              id: 'g',
+              tracks: [
+                {
+                  id: 'y',
+                  kind: 'linegraph',
+                  data: './depth.csv',
+                  dataTooltip: { kind: 'markdown', template: '{% $nope %}' },
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(() => {
+        expect(el.data['g-y']).toBeDefined();
+        expect(el.sequence).toBeDefined();
+      });
+      expect(misses()).toHaveLength(0);
+      expect(lines()).toHaveLength(0);
     });
   });
 });

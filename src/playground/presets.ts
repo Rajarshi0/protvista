@@ -22,6 +22,9 @@
  *     belongs to that protein.
  *   - `csv` (a single standalone track — one row, no group) and `json` (a
  *     live UniProt API track next to the BYO file) are bring-your-own-file.
+ *   - `csv-styled` is `csv`'s own-data idea plus a custom `dataTooltip`: a
+ *     `color` column per feature and a `kind: markdown` template showing the
+ *     file's extra `ref` / `url` columns, the latter via `{% link %}`.
  *   - `own-sequence` and `small-peptide` show a protein from its own
  *     sequence (`sequence:`, inline FASTA) rather than an accession:
  *     `own-sequence` with its records inline, so it makes no request, and
@@ -61,6 +64,7 @@ import basicConfig from '../../examples/basic/config.yaml?raw';
 import inlineDataConfig from '../../examples/inline-data/config.yaml?raw';
 import linegraphConfig from '../../examples/linegraph/config.yaml?raw';
 import csvConfig from '../../examples/csv/config.yaml?raw';
+import csvStyledConfig from '../../examples/csv-styled/config.yaml?raw';
 import jsonConfig from '../../examples/json/config.yaml?raw';
 // The `extends:` recipe from the Starter Kit. Its base config is repointed
 // below at the copy this site serves, so — unlike examples/extend-default,
@@ -210,6 +214,15 @@ export const PRESETS: readonly Preset[] = [
     label: 'UniProt + your own data (JSON)',
     description: 'A live UniProt track alongside a bring-your-own-JSON track.',
     config: withServedData(jsonConfig),
+    accession: DEFAULT_ACCESSION,
+  },
+  {
+    id: 'csv-styled',
+    label: 'Customize a tooltip (CSV + dataTooltip)',
+    description:
+      'Per-feature colour from a CSV column, plus a custom dataTooltip ' +
+      'template showing the extra ref/url columns as a Markdoc link.',
+    config: withServedData(csvStyledConfig, 'csv-styled'),
     accession: DEFAULT_ACCESSION,
   },
   {

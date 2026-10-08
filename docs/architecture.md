@@ -24,11 +24,11 @@ src/
     render-helpers.ts            rendering glue (group / track DOM)
   schema/                        config-as-data: types, schema, validate, normalize, extends, load
   tooltips/                      declarative tooltip resolver + click-popover
-  adapters/                      per-API data shapers
+  schema/adapters/               per-API data shapers (BUILTIN_ADAPTERS)
   utils/security.ts              escapeHtml + URL-scheme allowlist
   styles/                        component CSS
 specs/                           design notes (intentionally ephemeral)
-docs/                            authoring guides (data-tooltip.md, this file)
+docs/                            this file and other design notes; the user guide is under docs/src/content/docs/
 ```
 
 The `src/schema/` and `src/tooltips/` folders are where most config-as-data work happens. The element file (`src/protvista-uniprot.ts`) is small on purpose — it orchestrates the pipeline rather than implementing it.
@@ -179,7 +179,7 @@ The XSS regression suite lives in `src/utils/__spec__/security.spec.ts` — quot
 
 The custom element. Roughly:
 
-- **Reactive properties.** `accession`, `configSrc`, `config`, `nostructure`, `notooltip`, `suspend`, `quietNotices`, `showWarnings`. Lit watches these and triggers `updated()`.
+- **Reactive properties.** `accession`, `sequence`, `configSrc`, `viewerConfig`, `config`, `nostructure`, `notooltip`, `suspend`, `noPersistLayout`, `quietNotices`, `showWarnings` (plus the `adapters` setter). Lit watches these and triggers `updated()`.
 - **`updated(changedProperties)`.** First mount → `_init()`. `accession` change after mount → re-`_init()` with cancellation of any in-flight `_loadData()`. On a sequence-mode element (`sequence:` config) an accession set after mount drops the config and re-`_init()`s, so the loader reports `accession-and-sequence`; `setConfig()` clearing an accession the previous config supplied is not treated as a change.
 - **`_init()`.** Resolves the effective config via `resolveViewerConfig()` (`viewerConfig` property > `configSrc` attribute > bundled default), runs `loadConfig()`, mounts the Nightingale components into the DOM, then calls `_loadData()`.
 - **`_loadData()`.** Calls `loadProtvistaData()` and writes the result onto each Nightingale component instance, scoped to this element's `_instanceId` so two viewers on the same page don't cross-talk.
@@ -232,7 +232,7 @@ Register a custom component so a semantic kind (or an explicit `component:`) res
 
 ### A new colour-scale theme
 
-"Theme" here means a named colour ramp for `colorScale` rendering (e.g. `alphafold-ramp`, `alphamissense-ramp`) — a value referenced from `ColorScaleConfig.theme` in the config. It is **not** a CSS theme for the overall component look-and-feel. Chrome look-and-feel is themed either via the component's CSS variables directly (`src/styles/protvista-styles.ts` / `tokens.ts`), or, for a no-code subset, via the top-level config `theme:` block (`ThemeConfig` — `labelColor` / `accentColor`), which the component applies as inline `--protvista-*` tokens on the host at mount (see `docs/theming.md`).
+"Theme" here means a named colour ramp for `colorScale` rendering (e.g. `alphafold-ramp`, `alphamissense-ramp`) — a value referenced from `ColorScaleConfig.theme` in the config. It is **not** a CSS theme for the overall component look-and-feel. Chrome look-and-feel is themed either via the component's CSS variables directly (`src/styles/protvista-styles.ts` / `tokens.ts`), or, for a no-code subset, via the top-level config `theme:` block (`ThemeConfig` — `labelColor` / `accentColor`), which the component applies as inline `--protvista-*` tokens on the host at mount (see `docs/src/content/docs/theming.md`).
 
 For built-in colour ramps: add to `BUILTIN_THEMES` in `src/schema/registry.ts`. For consumer-defined ramps: `element.registerTheme(name, stops)` at runtime. `stops` requires at least two `{ value, color, label? }` entries; values are the numeric thresholds at which each colour applies, in monotonically increasing order.
 
@@ -290,9 +290,9 @@ The JSON Schema (`src/schema/schema.json`) is for shape. The semantic validator 
 
 ## Testing
 
-`pnpm test` runs lint + types + unit. `pnpm test:unit` is the CI-friendly subset. `pnpm test:coverage` writes v8 coverage to `./coverage/`. See the README's Testing section for the full list.
+`pnpm test` runs lint + types + unit + browser (the browser project needs the Playwright Chromium; see CONTRIBUTING.md). `pnpm test:unit` is the quick, browser-free subset. `pnpm test:coverage` writes v8 coverage to `./coverage/`. See the README's Testing section for the full list.
 
-Spec files live next to the code they test in `__spec__/` directories, except `src/adapters/__tests__/` (legacy naming, not worth churning). Tests import from `'vitest'` explicitly — `globals: false` is set so `describe` / `it` / `expect` are not module-globals.
+Spec files live next to the code they test in `__spec__/` directories, except `src/schema/adapters/__tests__/` (legacy naming, not worth churning). Tests import from `'vitest'` explicitly — `globals: false` is set so `describe` / `it` / `expect` are not module-globals.
 
 ## Where to ask
 

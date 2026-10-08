@@ -9,15 +9,11 @@
  * (`registry.getAdapter(name)`), so this table is the single source of
  * truth for both config validation and data loading.
  *
- * Two families live here:
- *
- *   - Generic bring-your-own-data *format* adapters (`features-json`,
- *     `features-csv`, `features-tsv`, `bed`) — parse an author-supplied
- *     file into the canonical feature shape.
- *   - The UniProt/EBI *domain* adapters (`uniprot-features-json`,
- *     `interpro-entries-json`, `alphafold-prediction-json`, …) — transform
- *     a specific EBI API response into what a track renders. These carry
- *     the semantic-kind adapter names referenced by `BUILTIN_SEMANTIC_KINDS`.
+ * Every entry is a UniProt/EBI *domain* adapter (`uniprot-features-json`,
+ * `interpro-entries-json`, `alphafold-prediction-json`, …): it transforms a
+ * specific EBI API response into what a track renders, under the adapter
+ * name `BUILTIN_SEMANTIC_KINDS` references. Author-supplied files (CSV, TSV,
+ * JSON, BED) are not named adapters any more; see the comment on the table.
  *
  * To add a built-in adapter: write the adapter module in this directory
  * (a named `export const … : AdapterFunction`), add its name to

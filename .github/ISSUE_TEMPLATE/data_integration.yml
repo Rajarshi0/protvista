@@ -1,0 +1,77 @@
+name: My data won't load
+description: You're putting your own data into ProtVista and it doesn't show, or shows wrongly.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying ProtVista with your own data. Before you file, the [troubleshooting page](https://ebi-webcomponents.github.io/protvista/troubleshooting) covers the most common causes: a `data:` path that is relative to the page rather than the config, a missing `description` column in a CSV/TSV file, or opening the page from disk instead of through a web server.
+
+        Please don't paste data you aren't allowed to share publicly; a few made-up rows that show the problem are enough.
+  - type: dropdown
+    id: route
+    attributes:
+      label: How are you running ProtVista?
+      options:
+        - Starter Kit (template repository)
+        - Playground
+        - My own web page
+        - Inside a framework app (React, Vue, Angular, …)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of data is it?
+      options:
+        - Features (type, start, end, description)
+        - Variants (position, variant)
+        - Per-residue values for a line graph (position, value)
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File format
+      options:
+        - CSV
+        - TSV
+        - JSON
+        - BED
+        - Inline in the config
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: protein
+    attributes:
+      label: Protein
+      description: The UniProt accession (e.g. P05067), or say if you use `sequence:` for a protein outside UniProt.
+  - type: textarea
+    id: config
+    attributes:
+      label: Your config
+      description: The `config.yaml` (or the JSON you set on the element).
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: A few rows of your data
+      description: Include the header row.
+      render: text
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What you see
+      description: What you expected, what happened instead, and any message on the page or in the browser console (press F12 to open it).
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      placeholder: e.g. Chrome 140 on Windows 11

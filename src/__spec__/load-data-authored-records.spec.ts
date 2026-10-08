@@ -26,6 +26,7 @@ import { normalizeConfig } from '../schema/normalize.js';
 import { SHAPES, SHAPE_NAMES } from '../schema/shapes.js';
 import type { DataFormat, ProtvistaViewerConfig } from '../schema/types.js';
 import '../protvista-uniprot.js';
+import { fixtureText } from './fixture-text.js';
 
 const registry = () => createRegistry();
 const noFetch = async () => null;
@@ -788,5 +789,83 @@ describe('an authored tooltip with nothing to say gives way to the default', () 
     const [series] = data['G-t'] as Array<Record<string, unknown>>;
     expect(series.values).toEqual([{ position: 1, value: 5 }]);
     expect(series.tooltipContent).toBe('<p> · </p>');
+  });
+});
+
+describe('styled CSV and JSON files (#283)', () => {
+  /** A grouped track with a grey `rendering.color`, reading `file` as `body`. */
+  const loadStyled = (file: string, body: unknown) => {
+    const r = registry();
+    return loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        {
+          accession: 'P05067',
+          rows: [
+            {
+              id: 'MY_LAB',
+              label: 'My lab',
+              tracks: [
+                {
+                  id: 'hits',
+                  label: 'Styled hits',
+                  kind: 'features',
+                  data: file,
+                  rendering: { color: '#7f7f7f' },
+                },
+              ],
+            },
+          ],
+        } as ProtvistaViewerConfig,
+        { registry: r }
+      ),
+      async () => body,
+      (name) => r.getAdapter(name),
+      {}
+    );
+  };
+
+  it('styled.json keeps each record’s colour, shape, fill and opacity, with no warnings', async () => {
+    const { data, trackWarnings, trackFailures } = await loadStyled(
+      './styled.json',
+      JSON.parse(fixtureText('styled.json'))
+    );
+    expect(trackWarnings).toEqual({});
+    expect(trackFailures).toEqual({});
+    const [e1, binding, region] = data['MY_LAB-hits'] as Array<
+      Record<string, unknown>
+    >;
+    expect(e1).toMatchObject({
+      type: 'DOMAIN',
+      color: '#2ca02c',
+      shape: 'diamond',
+      fill: '#98df8a',
+      opacity: 0.5,
+    });
+    expect(binding).toMatchObject({
+      type: 'BINDING',
+      color: '#d62728',
+      shape: 'circle',
+    });
+    // A `null` colour and a blank opacity are left off, so the REGION takes
+    // the track's `rendering.color`.
+    expect(region.type).toBe('REGION');
+    expect(region).not.toHaveProperty('color');
+    expect(region).not.toHaveProperty('opacity');
+  });
+
+  it('styled.csv keeps its blue and red, and leaves the blank cell to the track colour', async () => {
+    const { data, trackWarnings } = await loadStyled(
+      './styled.csv',
+      fixtureText('styled.csv')
+    );
+    expect(trackWarnings).toEqual({});
+    const records = data['MY_LAB-hits'] as Array<Record<string, unknown>>;
+    expect(records.map((r) => [r.type, r.color])).toEqual([
+      ['DOMAIN', '#1f77b4'],
+      ['DOMAIN', '#1f77b4'],
+      ['BINDING', '#d62728'],
+      ['REGION', undefined],
+    ]);
   });
 });

@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * The playground page, for specs that drive the real page controller.
  *
@@ -15,11 +16,24 @@ import { EditorView } from 'codemirror';
 
 import { encodeState, type PlaygroundState } from '../playground/url-state.js';
 
-/** Every id `index.ts` and the local-data control look up. */
+/**
+ * Every id `index.ts` and the local-data control look up. The header keeps
+ * the page's `header.bar` and `.field` wrappers so a spec that loads the
+ * page's CSS gets its layout too: the preset <select> is as wide as its
+ * longest option, and only the page's `.field { min-width: 0 }` lets it
+ * shrink at phone width. Without them it overflowed 390 px with wider fonts
+ * (as on the CI runner).
+ */
 export const SKELETON = `
-  <header>
-    <select id="preset" aria-label="Configuration preset"></select>
-    <input id="accession" aria-label="Accession" value="P05067" />
+  <header class="bar">
+    <div class="field">
+      <label for="preset">Preset</label>
+      <select id="preset" aria-label="Configuration preset"></select>
+    </div>
+    <div class="field">
+      <label for="accession">Accession</label>
+      <input id="accession" aria-label="Accession" value="P05067" />
+    </div>
     <div class="local-data">
       <button id="load-data" type="button" aria-describedby="local-note">Load data file…</button>
       <input id="data-file" type="file" hidden />
@@ -98,20 +112,31 @@ export function setEditorText(text: string): void {
   });
 }
 
-/** A drag carrying `files`, as the browser builds it. */
-export function filesDrag(type: 'dragover' | 'drop', files: File[]): DragEvent {
+export type DragType = 'dragenter' | 'dragover' | 'dragleave' | 'drop';
+
+/**
+ * A drag carrying `files`, as the browser builds it. `relatedTarget` is where
+ * a `dragleave` goes: `null` when the drag leaves the window or is cancelled
+ * with Escape.
+ */
+export function filesDrag(
+  type: DragType,
+  files: File[],
+  relatedTarget: EventTarget | null = null
+): DragEvent {
   const transfer = new DataTransfer();
   for (const file of files) transfer.items.add(file);
   return new DragEvent(type, {
     dataTransfer: transfer,
     bubbles: true,
     cancelable: true,
+    relatedTarget,
   });
 }
 
 /** A drag carrying one file, as the browser builds it. */
 export function fileDrag(
-  type: 'dragover' | 'drop',
+  type: DragType,
   name: string,
   text: string
 ): DragEvent {
@@ -219,6 +244,83 @@ export async function openPlayground(
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.spyOn(console, 'info').mockImplementation(() => undefined);
   await import('../playground/index.js');
+}
+
+/**
+ * The files a visitor might open with "Load data file…"
+ * (`src/__fixtures__/local-files/`), by file name.
+ */
+const FIXTURES = import.meta.glob<string>('../__fixtures__/local-files/*', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+/** A fixture file's text, by its file name (`styled.csv`). */
+export function fixtureText(name: string): string {
+  const text = FIXTURES[`../__fixtures__/local-files/${name}`];
+  if (text === undefined) throw new Error(`no fixture file ${name}`);
+  return text;
+}
+
+/** Pick a fixture file with "Load data file…", optionally renamed. */
+export async function pickFixture(name: string, as = name): Promise<void> {
+  await pick(as, fixtureText(name));
+}
+
+/** The status line under the Load button. */
+export const status = () => byId('data-status').textContent;
+/** The loaded-files list, one entry per file. */
+export const fileList = () =>
+  [...byId('data-files').querySelectorAll('li span')].map((s) => s.textContent);
+/** The records the mounted preview holds for a track. */
+export const records = (key: string) =>
+  preview()?.data?.[key] as Record<string, unknown>[] | undefined;
+/** The preview's ruler length, as its `nightingale-sequence` carries it. */
+export const sequenceLength = () =>
+  preview()?.querySelector('nightingale-sequence')?.getAttribute('length');
+
+/**
+ * Press undo in the focused editor. CodeMirror binds undo to `Mod-z`, which
+ * is Cmd+Z where the browser reports a Mac platform and Ctrl+Z elsewhere.
+ */
+export async function pressUndo(): Promise<void> {
+  await userEvent.keyboard(
+    /Mac|iPhone|iPad/.test(navigator.platform)
+      ? '{Meta>}z{/Meta}'
+      : '{Control>}z{/Control}'
+  );
+}
+
+/** Pick a preset in the picker, as a visitor would. */
+export async function choose(id: string): Promise<void> {
+  await userEvent.selectOptions(byId<HTMLSelectElement>('preset'), id);
+}
+
+/** Resolves once nothing new has been pushed to `recorded` for 300 ms. */
+export async function settled(recorded: string[]): Promise<void> {
+  let seen = -1;
+  while (seen !== recorded.length) {
+    seen = recorded.length;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+}
+
+/** Choose "New track" in the open attach form and press Add. */
+export async function addAsNewTrack(): Promise<void> {
+  const target = await vi.waitFor(() => {
+    const select = byId<HTMLSelectElement>('data-attach-target');
+    if (!select) throw new Error('attach form not open');
+    return select;
+  });
+  await userEvent.selectOptions(target, '');
+  const add = [...byId('data-attach').querySelectorAll('button')].find(
+    (b) => b.textContent === 'Add'
+  )!;
+  await userEvent.click(add);
+  await vi.waitFor(() => {
+    if (!byId('data-attach').hidden) throw new Error('attach form still open');
+  });
 }
 
 /** Remove the page and restore `fetch` and the console. */

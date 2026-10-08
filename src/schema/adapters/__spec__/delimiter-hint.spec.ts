@@ -21,6 +21,7 @@ import {
 import type { CoordinateRow } from '../coordinates.js';
 import type { DecodeWarning } from '../feature-fields.js';
 import type { DataFormat, ShapeName } from '../../types.js';
+import { fixtureText } from '../../../__spec__/fixture-text.js';
 
 const FEATURE_HEADER =
   'Header must contain type, start, end, description[, score].';
@@ -201,6 +202,63 @@ describe('delimiter hints across {comma, tab, semicolon} × {CSV, TSV}', () => {
     const { message } = thrown('feature', 'csv', featureBody(';'));
     expect(message).not.toContain('`format: csv`');
     expect(message).toContain('read it as TSV (`format: tsv`)');
+  });
+});
+
+describe('the hint for each mismatched file, in full', () => {
+  const message = (name: string, format: DataFormat) =>
+    thrown('feature', format, fixtureText(name), { source: `./${name}` })
+      .message;
+  const MISSING = (name: string, label: string) =>
+    `./${name} (parsed as ${label}): missing required header column "type". ` +
+    `${FEATURE_HEADER} `;
+
+  it('a tab-separated .csv', () => {
+    expect(message('tab-header.csv', 'csv')).toBe(
+      MISSING('tab-header.csv', 'CSV') +
+        'The header looks tab-separated — read it as TSV: set `format: tsv` ' +
+        '(or rename the file to .tsv).'
+    );
+  });
+
+  it('a comma-separated .tsv', () => {
+    expect(message('comma.tsv', 'tsv')).toBe(
+      MISSING('comma.tsv', 'TSV') +
+        'The header looks comma-separated — read it as CSV: set `format: csv` ' +
+        '(or rename the file to .csv).'
+    );
+  });
+
+  it('a semicolon-separated .csv, with `format: tsv` first', () => {
+    expect(message('semicolon.csv', 'csv')).toBe(
+      MISSING('semicolon.csv', 'CSV') +
+        'The header looks semicolon-separated, which ProtVista does not read. ' +
+        'If it came from Excel, save it as "Text (Tab delimited)" and read it ' +
+        'as TSV (`format: tsv` or a .tsv name — Excel names that export .txt), ' +
+        'or re-export it comma-separated.'
+    );
+  });
+
+  it('a semicolon-separated .tsv', () => {
+    expect(message('semicolon.tsv', 'tsv')).toBe(
+      MISSING('semicolon.tsv', 'TSV') +
+        'The header looks semicolon-separated, which ProtVista does not read. ' +
+        'If it came from Excel, save it again as "Text (Tab delimited)" and ' +
+        'keep reading it as TSV (`format: tsv`), or re-export it ' +
+        'comma-separated and read it as CSV: set `format: csv` (or rename the ' +
+        'file to .csv).'
+    );
+  });
+
+  it('a comment line above a tab header suggests comma (a known limitation)', () => {
+    // A known, accepted limitation: the sniffer reads the first
+    // line, here a comment that happens to hold a comma, so the hint points
+    // the wrong way. Pinned so a change in behaviour is a deliberate one.
+    expect(message('comment-first-line.tsv', 'tsv')).toBe(
+      MISSING('comment-first-line.tsv', 'TSV') +
+        'The header looks comma-separated — read it as CSV: set `format: csv` ' +
+        '(or rename the file to .csv).'
+    );
   });
 });
 

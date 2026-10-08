@@ -13,8 +13,9 @@ Publish from a machine with npm auth (`npm login`) — the sandbox/CI GitHub cre
 | --- | --- | --- |
 | npm dist-tag | `latest` | `beta` (`publishConfig.tag`) |
 | Version | `4.9.x` semver | `5.0.0-beta.N` |
-| Build on publish | **manual** — `pnpm build` first (no `prepack`) | automatic (`prepack: pnpm build`) |
-| Pre-publish gate | **none** — run `pnpm test` yourself | `prepublishOnly: pnpm test:pack` |
+| Package manager | **yarn** (`yarn.lock`) | **pnpm** (`packageManager`) |
+| Build on publish | **manual** — `yarn build` first (no `prepack`) | automatic (`prepack: pnpm build`) |
+| Pre-publish gate | **none** — run `yarn test` yourself | `prepublishOnly: pnpm test:pack` |
 | Files to bump | `package.json` only | `package.json` **+** the version pins (see below) |
 | GitHub release | optional | cut `vX.Y.Z-beta.N` — fires `publish-starter-kit.yml` |
 | Stakes | high — the default install | low — opt-in testers |
@@ -24,10 +25,10 @@ Publish from a machine with npm auth (`npm login`) — the sandbox/CI GitHub cre
 ```bash
 git checkout main && git pull
 npm login                                   # if not already authed
-rm -rf node_modules dist && pnpm install --frozen-lockfile
-pnpm test                                   # no publish gate on main — run it yourself
+rm -rf node_modules dist && yarn install --frozen-lockfile
+yarn test                                   # no publish gate on main — run it yourself
 npm version patch                           # e.g. 4.9.3 -> 4.9.4; commits + tags v4.9.4
-pnpm build                                  # REQUIRED — main has no prepack
+yarn build                                  # REQUIRED — main has no prepack
 npm publish --dry-run                       # inspect the tarball (safe on main — no re-pack lifecycle)
 npm publish                                 # -> latest (main has no publishConfig.tag)
 npm dist-tag ls protvista-uniprot           # expect latest: 4.9.4
@@ -74,4 +75,4 @@ Notes for `next`:
 
 - **Do not use `npm publish --dry-run` here.** It exports `npm_config_dry_run`, which leaks into the `npm pack` that `attw` runs inside `prepublishOnly` and makes it fail on a missing tarball. To rehearse, run `pnpm test:pack` (no dry-run wrapper) instead.
 - The jsDelivr CDN pins are enforced by `starter-kit.spec.ts` and `schema-publishing.spec.ts`; a stale pin fails `pnpm test`. Leave alone: `src/styles/css-prefix.ts` (keyed to the `5.0.0` base line, not the `-beta.N` suffix) and the bare `@4.9.x` mentions in docs prose (they name the published stable release).
-- Cutting the GitHub release fires `publish-starter-kit.yml`, which mirrors `starter-kit/` to the template repo and strips its "not published yet" banner once the version is live on npm.
+- Cutting the GitHub release fires `publish-starter-kit.yml`, which mirrors `starter-kit/` to the template repo. If the kit carries a `protvista:unpublished` notice, the workflow strips it once the pinned version is live on npm; it polls the registry for up to 15 minutes, because the release can land before the npm publish is visible (5.0.0-beta.3 shipped its banner that way). After a release, check the [template repo](https://github.com/ebi-webcomponents/protvista-starter-kit) shows no "does not work yet" notice. If it does, open that release's run under **Actions → Publish starter kit** and choose **Re-run all jobs**: the npm check passes the second time. (The **Run workflow** button only appears once this workflow file is on the default branch, `main`.)

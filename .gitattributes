@@ -1,0 +1,28 @@
+# Check out every text file with LF line endings, on every OS.
+#
+# Git for Windows defaults to core.autocrlf=true, which would otherwise
+# check text files out with CRLF. Several specs compare committed files
+# byte for byte with generated output (adapter-reference, feature
+# vocabulary, the docs' embedded examples), and the .sh scripts fail in
+# Git Bash with `$'\r': command not found`, so a CRLF checkout breaks
+# `pnpm test:unit` on Windows. Pinning eol=lf makes a Windows clone
+# identical to a macOS or Linux one.
+* text=auto eol=lf
+
+# Binary: never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+
+# Recorded network fixtures for the screenshot harness. Each file's sha256
+# is recorded in fixtures/index.json and one of them (an AlphaFold CSV) is
+# CRLF as served upstream, so they must be checked out byte for byte.
+scripts/screenshots/fixtures/net/** -text
+
+# A metrics export with mixed line endings, kept as downloaded.
+docs/program/npm_downloads.csv -text

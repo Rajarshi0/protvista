@@ -182,13 +182,17 @@ or URL it came from, and the note visitors see for it (unless `quiet-notices`
 is set). A rejected `setTrackData()` call made three times is listed once,
 marked ×3.
 
-Author mode shows errors in full too. A track's red `⚠` badge becomes a
-button whose list starts with the error's whole text and its source (Retry
-stays beside it). An error on a track whose label isn't drawn — inside a
+A red `⚠` badge works like the ⓘ: select it and a note opens with what went
+wrong — the same text the console and the event carry, such as
+"./hits.csv could not be found (HTTP 404) — check the path is relative to the
+page." Unlike a notice, an error says which file or URL failed, because the
+person reading it is often the one who can fix it. Retry stays beside it.
+
+Author mode shows errors in full too. A track's red `⚠` badge lists the
+error's whole text and its source, then the track's warnings. An error on a track whose label isn't drawn — inside a
 collapsed group, which shows only the group's count badge — is listed beside
 Customize under the track's name. The alert panel adds the console's text
-under its summary. With author mode off, errors look exactly as they always
-have.
+under its summary.
 
 Setting or removing either attribute on a live element takes effect at once,
 with no reload.
@@ -234,6 +238,22 @@ of them. A wrong accession shows the "No UniProt entry found" panel instead.
 While the first load is in flight you see a spinner, and screen readers hear
 "Loading protein data…" — so a region that stays *blank* is not a slow load.
 Check that `suspend` is not still on the element.
+
+**Opened the page by double-clicking it?** A page opened from disk (a
+`file://` address) can't load its config or any data file: browsers block it
+from reading other local files. Serve the folder with a local web server
+instead and open `http://localhost:8000/`. On Windows run
+`py -m http.server 8000 --bind 127.0.0.1` in that folder (or `python` if `py`
+isn't found); on macOS or Linux, `python3 -m http.server 8000 --bind 127.0.0.1`.
+The [Starter Kit](https://github.com/ebi-webcomponents/protvista-starter-kit)
+detects this case and says so on the page.
+
+**Self-hosting `dist/` with Python on Windows?** Python's server takes file
+types from the Windows registry, which on some machines maps `.mjs` or `.js` to
+`text/plain`. The browser then refuses to run the module, and the console says
+it was blocked because of a disallowed MIME type. Load the component from the
+CDN instead (see [Embed the viewer](/protvista/embed)), or use a different
+static server such as `npx serve`.
 
 ### A track shows up empty
 

@@ -16,6 +16,7 @@ import defaultConfigYaml from '../../default-config.yaml?raw';
 import { PRESETS, DEV_PRESETS } from '../presets.js';
 import { lintConfig } from '../lint.js';
 import { appendTrack } from '../config-edit.js';
+import { fixtureText } from '../../__spec__/fixture-text.js';
 import {
   KIND_FOR_SHAPE,
   PRIVACY_NOTE,
@@ -450,6 +451,15 @@ describe('guessShape / countRecords / KIND_FOR_SHAPE', () => {
     expect(countRecords('variation', undefined)).toBe(0);
   });
 
+  it('reads a variants CSV (position, wildType, variant) as variants, all six rows', () => {
+    const text = fixtureText('my-variants.csv');
+    const shape = guessShape(text, 'csv');
+    expect(shape).toBe('variation');
+    expect(KIND_FOR_SHAPE[shape]).toBe('variants');
+    const payload = runPipeline(shape, 'csv', text, { source: './my-variants.csv' });
+    expect(countRecords(shape, payload)).toBe(6);
+  });
+
   it('names, for each shape, a built-in kind of that shape', () => {
     const registry = createRegistry();
     for (const [shape, kind] of Object.entries(KIND_FOR_SHAPE)) {
@@ -503,6 +513,21 @@ describe('localDataDiagnostics', () => {
     expect(diagnostics[0].message).toMatch(
       /^\.\/x\.json \(parsed as JSON\): decoded 0 records/
     );
+  });
+
+  it('warns, in full, about a CSV with a header and no rows', async () => {
+    const { store } = makeStore();
+    load(store, './empty.csv', fixtureText('empty.csv'));
+    const { diagnostics } = await run(standalone('./empty.csv'), store);
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'data-empty',
+        severity: 'warning',
+        message:
+          './empty.csv (parsed as CSV): decoded 0 records — the file has no ' +
+          'data rows the track can draw.',
+      }),
+    ]);
   });
 
   it('rejects a top-level JSON object as the decoder does', async () => {

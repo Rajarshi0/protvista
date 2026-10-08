@@ -184,6 +184,30 @@ describe('appendTrack', () => {
     );
   });
 
+  it('adds files named null and 1e3 to the CSV preset with their id and label quoted', async () => {
+    let text = getPreset('csv')!.config;
+    for (const name of ['null', '1e3']) {
+      const parsed = await parse(text);
+      const row: NewRow = {
+        id: rowIdFor(name, parsed),
+        label: rowLabelFor(name),
+        kind: 'features',
+        data: { url: referenceFor(name), format: 'csv' },
+      };
+      const result = await appendTrack(text, parsed, row);
+      if (!('text' in result)) throw new Error(result.error);
+      expect(result.text).toContain(`- id: "${name}"\n    label: "${name}"\n`);
+      text = result.text;
+    }
+    const rows = ((await parse(text)) as { rows: Array<Record<string, unknown>> })
+      .rows;
+    // They read back as text, not as YAML null or the number 1000.
+    expect(rows.slice(-2).map((r) => [r.id, r.label])).toEqual([
+      ['null', 'null'],
+      ['1e3', '1e3'],
+    ]);
+  });
+
   it('quotes a url a flow mapping would read as syntax, though it reads back alone', async () => {
     const text = 'rows:\n  - id: a\n    data: ./a.csv\n';
     const row = { ...ROW, data: { url: './a,b.txt', format: 'csv' as const } };

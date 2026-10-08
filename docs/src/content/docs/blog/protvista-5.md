@@ -20,10 +20,10 @@ code more reliable and easier to maintain, and to
 
 :::tip[Bring your data to the ProtVista hackathon: 7–9 October 2026]
 Three free days online, working directly with the developers to get your own
-datasets into ProtVista and shape how they are visualised. **30 places, first
-come first served. Applications close 1 October 2026.**
+datasets into ProtVista and shape how they are visualised. **Applications
+closed on 1 October 2026.**
 
-[Apply now](https://www.ebi.ac.uk/training/events/protvista-hackathon/) ·
+[Event page](https://www.ebi.ac.uk/training/events/protvista-hackathon/) ·
 [More about the hackathon](#hackathon-visualise-your-own-data)
 :::
 
@@ -112,14 +112,14 @@ paper, a way to show your group's data next to UniProt's. Everyone is welcome,
 whether or not you have used ProtVista before, and you do not need to have
 contributed to the project.
 
-|                        |                             |
-| ---------------------- | --------------------------- |
-| **Dates**              | 7–9 October 2026            |
-| **Format**             | Online, free                |
-| **Places**             | 30, first come first served |
-| **Applications close** | 1 October 2026              |
+|                  |                             |
+| ---------------- | --------------------------- |
+| **Dates**        | 7–9 October 2026            |
+| **Format**       | Online, free                |
+| **Places**       | 30, first come first served |
+| **Applications** | Closed on 1 October 2026    |
 
-[Apply for the hackathon](https://www.ebi.ac.uk/training/events/protvista-hackathon/)
+[Hackathon event page](https://www.ebi.ac.uk/training/events/protvista-hackathon/)
 
 ## Where to go next
 

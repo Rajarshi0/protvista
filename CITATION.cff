@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: >-
+  If you use ProtVista in your research, please cite the paper below.
+title: ProtVista
+type: software
+repository-code: https://github.com/ebi-webcomponents/protvista
+url: https://ebi-webcomponents.github.io/protvista/
+license: MIT
+authors:
+  - name: UniProt Consortium
+preferred-citation:
+  type: article
+  title: 'ProtVista: visualization of protein sequence annotations'
+  authors:
+    - family-names: Watkins
+      given-names: Xavier
+    - family-names: Garcia
+      given-names: Leyla J.
+    - family-names: Pundir
+      given-names: Sangya
+    - family-names: Martin
+      given-names: Maria J.
+    - name: UniProt Consortium
+  journal: Bioinformatics
+  volume: 33
+  issue: 13
+  start: 2040
+  end: 2041
+  year: 2017
+  doi: 10.1093/bioinformatics/btx120

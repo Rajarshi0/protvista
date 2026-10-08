@@ -62,3 +62,97 @@ describe('consumer-registered adapter (registerAdapter escape hatch)', () => {
     ).rejects.toThrow(/not-registered/);
   });
 });
+
+// The two examples on docs/src/content/docs/escape-hatches.md, run as written.
+// The page's previous custom-adapter example parsed CSV text, which a custom
+// adapter never receives (naming `adapter:` replaces `format:`, so the body is
+// fetched as JSON); these keep the published examples honest.
+describe('escape-hatches.md examples', () => {
+  const parseMyHits = (response: {
+    hits: { from: number; to: number; label: string }[];
+  }) =>
+    response.hits.map((hit) => ({
+      type: 'REGION',
+      start: hit.from,
+      end: hit.to,
+      description: hit.label,
+    }));
+
+  it('a custom adapter on a file source receives the parsed JSON body', async () => {
+    const registry = createRegistry();
+    registry.registerAdapter('my-hits', parseMyHits as never);
+    const config = await loadConfig(
+      {
+        accession: 'P05067',
+        rows: [
+          {
+            id: 'MY_LAB',
+            tracks: [
+              {
+                id: 'hits',
+                kind: 'features',
+                data: {
+                  from: 'file',
+                  url: './my-hits.json',
+                  adapter: 'my-hits',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { registry }
+    );
+
+    const fetchOne = vi.fn(async () => ({
+      hits: [{ from: 18, to: 289, label: 'Extracellular domain' }],
+    }));
+    const result = await loadProtvistaData('P05067', config, fetchOne, (name) =>
+      registry.getAdapter(name)
+    );
+
+    expect(fetchOne).toHaveBeenCalledWith('./my-hits.json', 'json');
+    const track = result.data['MY_LAB-hits'] as Array<Record<string, unknown>>;
+    expect(track).toHaveLength(1);
+    expect(track[0]).toMatchObject({
+      type: 'REGION',
+      start: 18,
+      end: 289,
+      description: 'Extracellular domain',
+    });
+  });
+
+  it('setTrackData() records reach a `from: custom` track', async () => {
+    const config = await loadConfig({
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'MY_LAB',
+          tracks: [{ id: 'hits', kind: 'features', data: { from: 'custom' } }],
+        },
+      ],
+    });
+
+    const fetchOne = vi.fn(async () => null);
+    const result = await loadProtvistaData(
+      'P05067',
+      config,
+      fetchOne,
+      () => undefined,
+      {
+        'MY_LAB-hits': [
+          {
+            type: 'REGION',
+            start: 18,
+            end: 289,
+            description: 'Extracellular domain',
+          },
+        ],
+      }
+    );
+
+    expect(fetchOne).not.toHaveBeenCalled();
+    const track = result.data['MY_LAB-hits'] as Array<Record<string, unknown>>;
+    expect(track[0]).toMatchObject({ type: 'REGION', start: 18, end: 289 });
+  });
+});

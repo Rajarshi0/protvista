@@ -1,0 +1,33 @@
+[
+ {
+  "type": "DOMAIN",
+  "start": 18,
+  "end": 189,
+  "description": "E1 from JSON",
+  "color": "#2ca02c",
+  "shape": "diamond",
+  "fill": "#98df8a",
+  "opacity": 0.5,
+  "gene": "APP",
+  "url": "https://www.uniprot.org/uniprotkb/P05067/entry"
+ },
+ {
+  "type": "BINDING",
+  "start": 132,
+  "end": 140,
+  "description": "Heparin site from JSON",
+  "color": "#d62728",
+  "shape": "circle",
+  "gene": "APP",
+  "url": "mailto:lab@example.org"
+ },
+ {
+  "type": "REGION",
+  "start": 290,
+  "end": 340,
+  "description": "Unstyled region from JSON",
+  "color": null,
+  "opacity": "",
+  "gene": "APP"
+ }
+]

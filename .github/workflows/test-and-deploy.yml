@@ -45,6 +45,38 @@ jobs:
       - name: Coverage (both unit and browser tests, enforces thresholds)
         run: pnpm test:coverage
 
+  # The maintainers all develop on macOS and the job above runs on Linux, so
+  # nothing else would notice a change that breaks contributors on Windows:
+  # cmd.exe quoting in package.json scripts, `/`-separator assumptions in
+  # specs, or line-ending sensitivity (Windows runners check out with
+  # core.autocrlf=true, as Git for Windows does by default). Lint, types and
+  # unit tests only — the browser suite and coverage gate stay on Linux.
+  # Not a dependency of `build`, so it never holds up a deploy.
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm test:lint
+
+      - name: Type check
+        run: pnpm test:types
+
+      - name: Unit tests
+        run: pnpm test:unit
+
   build:
     name: Build
     needs: test

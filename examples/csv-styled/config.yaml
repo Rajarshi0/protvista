@@ -2,8 +2,7 @@
 # `color` column paints each feature on its own and wins over the track's
 # `rendering.color`; the row with a blank `color` falls back to it. Every
 # other column (`ref`, `url`) is kept on the record, so the `dataTooltip`
-# below can show it — `{% link %}` turns the `url` column into a link, and
-# a row with no URL shows the text without one.
+# below can show it — `{% link %}` turns the `url` column into a link.
 accession: P05067
 rows:
   - id: MY_LAB
