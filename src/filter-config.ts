@@ -7,6 +7,17 @@ import type {
   ClinicalSignificance,
 } from '@nightingale-elements/nightingale-variation-canvas';
 
+import type { TransformedVariant } from './schema/adapters/variation-adapter.js';
+
+// Adapter fields are optional so bare Nightingale data remains supported.
+type FilterableVariant = VariationDatum &
+  Partial<
+    Pick<
+      TransformedVariant,
+      'association' | 'clinicalSignificances' | 'sourceType'
+    >
+  >;
+
 const scaleColors = {
   UPDiseaseColor: '#990000',
   UPNonDiseaseColor: '#99cc00',
@@ -27,12 +38,12 @@ const significanceMatches = (
   });
 
 export type VariantsForFilter = {
-  variants: VariationDatum[];
+  variants: FilterableVariant[];
 }[];
 
 export const getFilteredVariants = (
   variants: VariantsForFilter,
-  callbackFilter: (variantPos: VariationDatum) => void
+  callbackFilter: (variantPos: FilterableVariant) => unknown
 ) =>
   variants.map((variant) => {
     const matchingVariants = variant.variants.filter((variantPos) =>
@@ -45,14 +56,14 @@ export const getFilteredVariants = (
   });
 
 const filterPredicates = {
-  disease: (variantPos) =>
+  disease: (variantPos: FilterableVariant) =>
     variantPos.association?.some((association) => association.disease),
-  predicted: (variantPos) => variantPos.hasPredictions,
-  nonDisease: (variantPos) =>
+  predicted: (variantPos: FilterableVariant) => variantPos.hasPredictions,
+  nonDisease: (variantPos: FilterableVariant) =>
     variantPos.association?.some(
       (association) => association.disease === false
     ),
-  uncertain: (variantPos) =>
+  uncertain: (variantPos: FilterableVariant) =>
     (typeof variantPos.clinicalSignificances === 'undefined' &&
       !variantPos.hasPredictions) ||
     (variantPos.clinicalSignificances &&
@@ -60,15 +71,15 @@ const filterPredicates = {
         variantPos.clinicalSignificances,
         consequences.uncertain
       )),
-  UniProt: (variantPos) =>
+  UniProt: (variantPos: FilterableVariant) =>
     variantPos.xrefNames &&
     (variantPos.xrefNames.includes('uniprot') ||
       variantPos.xrefNames.includes('UniProt')),
-  ClinVar: (variantPos) =>
+  ClinVar: (variantPos: FilterableVariant) =>
     variantPos.xrefNames &&
     (variantPos.xrefNames.includes('ClinVar') ||
       variantPos.xrefNames.includes('clinvar')),
-  LSS: (variantPos) =>
+  LSS: (variantPos: FilterableVariant) =>
     variantPos.sourceType === 'large_scale_study' ||
     variantPos.sourceType === 'mixed',
 };
@@ -176,7 +187,7 @@ const filterConfig = [
 
 const countVariantsForFilter = (
   filterName: 'disease' | 'nonDisease' | 'uncertain' | 'predicted',
-  variant: VariationDatum
+  variant: FilterableVariant
 ) => {
   const variantWrapper: VariantsForFilter = [{ variants: [variant] }];
   const filter = filterConfig.find((filter) => filter.name === filterName);
@@ -186,7 +197,7 @@ const countVariantsForFilter = (
   return false;
 };
 
-export const colorConfig = (variant: any) => {
+export const colorConfig = (variant: FilterableVariant) => {
   if (countVariantsForFilter('disease', variant)) {
     return scaleColors.UPDiseaseColor;
   } else if (countVariantsForFilter('nonDisease', variant)) {
