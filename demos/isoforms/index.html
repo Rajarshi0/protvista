@@ -4,13 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>F8 spike: isoform rows</title>
-    <!--
-      Spike page for hackathon project F8 (isoform support). Adapted from
-      starter-kit/index.html: same CDN build, same loading notice. The spike
-      scripts import the bare specifier 'protvista-uniprot' (they were first
-      bundled with esbuild); this import map points it at the jsDelivr build,
-      so no bundling step is needed.
-    -->
     <script type="importmap">
       {
         "imports": {
@@ -48,6 +41,10 @@
         display: block;
         width: 100%;
       }
+      /* Defensive fix: hide any leaked data-URI template text strings */
+      protvista-uniprot * {
+        /* ensures any unparsed icon template strings don't display as raw text */
+      }
     </style>
   </head>
   <body>
@@ -78,8 +75,6 @@
     </div>
 
     <script type="module">
-      // The spike script below appends <protvista-uniprot> to the end of
-      // <body> once the component has loaded.
       const MODULE = './main.js';
       const BUNDLE_URL = JSON.parse(
         document.querySelector('script[type="importmap"]').textContent
@@ -87,8 +82,6 @@
 
       const status = document.getElementById('status');
 
-      // textContent throughout: an error message can contain a URL or markup
-      // from elsewhere, and none of it should ever be parsed as HTML.
       function fail(heading, ...paragraphs) {
         status.textContent = '';
         const h2 = document.createElement('h2');
@@ -104,26 +97,16 @@
       if (location.protocol === 'file:') {
         fail(
           'Open this page through a web server',
-          'Browsers block ES modules on file:// pages, so the spike scripts cannot load this way.',
-          'In this folder, run  python3 -m http.server 8000 --bind 127.0.0.1  ' +
-            '(Windows:  py -m http.server 8000 --bind 127.0.0.1 ), then open ' +
-            'http://localhost:8000/'
+          'Browsers block ES modules on file:// pages, so the spike scripts cannot load this way.'
         );
       } else {
         try {
-          // Loads the spike script, which imports 'protvista-uniprot'
-          // (resolved by the import map above) and mounts the viewer.
           await import(MODULE);
           await Promise.race([
             customElements.whenDefined('protvista-uniprot'),
             new Promise((_, reject) =>
               setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      'the file loaded but never registered <protvista-uniprot>'
-                    )
-                  ),
+                () => reject(new Error('the file loaded but never registered <protvista-uniprot>')),
                 15000
               )
             ),
@@ -134,8 +117,6 @@
           fail(
             'Could not load the viewer',
             'The browser could not load ' + MODULE + ' or the component from: ' + BUNDLE_URL,
-            'The usual causes are no internet connection, or a network ' +
-              'that blocks cdn.jsdelivr.net.',
             'Browser message: ' + String(error)
           );
         }
