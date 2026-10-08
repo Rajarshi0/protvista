@@ -1,5 +1,5 @@
 import 'protvista-uniprot';
-import { uniprotIsoforms } from './isoforms-adapter.js';
+import { uniprotIsoforms, projectToIsoformAdapter } from './isoforms-adapter.js';
 
 // Inject the Biology Check note
 const bioCheck = document.createElement('div');
@@ -16,8 +16,9 @@ const acc = new URLSearchParams(location.search).get('acc') || 'P05067';
 const viewer = document.createElement('protvista-uniprot');
 viewer.setAttribute('nostructure', '');
 viewer.adapters = { 'uniprot-isoforms': uniprotIsoforms };
+viewer.registerAdapter('project-to-isoform', projectToIsoformAdapter);
 
-// Use the spike's specific viewerConfig structure
+// Configure viewer for Milestone 3 projection
 viewer.viewerConfig = {
   accession: acc,
   sources: {
@@ -29,11 +30,9 @@ viewer.viewerConfig = {
       { id: 'isoforms', label: 'Isoforms (canonical coordinates)', kind: 'features',
         data: { source: 'uniprotEntry', adapter: 'uniprot-isoforms' },
         rendering: { layout: 'non-overlapping', height: 160 } },
-      { id: 'splice', label: 'Splice variant (VAR_SEQ)', kind: 'features', filter: 'VAR_SEQ', data: 'features',
-        rendering: { layout: 'non-overlapping', height: 110 } },
-    ] },
-    { id: 'DOMAINS', label: 'Domains', tracks: [
-      { id: 'domain', kind: 'features', filter: 'DOMAIN', data: 'features' } 
+      { id: 'projected', label: 'Tau-441 Projected Features', kind: 'features',
+        data: { source: ['features', 'uniprotEntry'], adapter: 'project-to-isoform' },
+        rendering: { layout: 'non-overlapping', height: 120 } },
     ] },
   ],
 };
