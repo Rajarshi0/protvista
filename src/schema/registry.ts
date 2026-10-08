@@ -23,9 +23,9 @@
  *     say "must not collide with built-ins" and silent overrides would
  *     make the viewer's behaviour depend on call order.
  *   - Built-in *adapters* are the one exception, because they name a
- *     data format rather than a viewer behaviour: an adopter whose CSV
- *     has a different column layout needs to swap our `features-csv`
- *     for theirs. `createRegistry()` seeds them first (via
+ *     data source rather than a viewer behaviour: an adopter reading a
+ *     different feed needs to swap a provider transform such as
+ *     `uniprot-features-json` for theirs. `createRegistry()` seeds them first (via
  *     `registerBuiltinAdapters()`, through the same public
  *     `registerAdapter()` path consumers use, so both share one
  *     namespace), and a consumer registering the same name afterwards
@@ -39,9 +39,8 @@
  *     callbacks) is not registering anything new, so it must not throw;
  *     a *different* value under a taken name still does.
  *   - The built-in semantic kinds reference adapter names that are
- *     themselves registered built-ins — both the generic file-format
- *     adapters and the UniProt/EBI domain adapters live in
- *     `BUILTIN_ADAPTERS`. `resolveSemanticKind()` returns the adapter
+ *     themselves registered built-ins — the UniProt/EBI domain adapters
+ *     in `BUILTIN_ADAPTERS`. `resolveSemanticKind()` returns the adapter
  *     *name* (a string); the loader resolves that name to a function
  *     through this same registry (`getAdapter`) at fetch time, so config
  *     validation and data loading share one source of truth and can no

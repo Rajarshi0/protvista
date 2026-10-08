@@ -273,13 +273,15 @@ describe('loadProtvistaData — template variables', () => {
           'json'
         );
 
-        const invalid = result.skipWarnings.filter((m) =>
-          m.includes('invalid value')
+        const invalid = result.skipWarnings.filter((w) =>
+          w.message.includes('invalid value')
         );
         expect(invalid).toHaveLength(1);
-        expect(invalid[0]).toContain('https://e.org/public/{dataset}/data');
-        expect(invalid[0]).toContain('G/a');
-        expect(invalid[0]).toContain('{dataset}');
+        expect(invalid[0].message).toContain(
+          'https://e.org/public/{dataset}/data'
+        );
+        expect(invalid[0].message).toContain('G/a');
+        expect(invalid[0].message).toContain('{dataset}');
 
         expect(result.trackUrls['G-a']).toBeUndefined();
         expect(result.data['G-a'] ?? []).toEqual([]);
@@ -304,7 +306,7 @@ describe('loadProtvistaData — template variables', () => {
       expect(fetchOne).toHaveBeenCalledWith('https://e.org/ok/P05067', 'json');
       expect(result.data['G-b']).toHaveLength(1);
       expect(
-        result.skipWarnings.filter((m) => m.includes('invalid value'))
+        result.skipWarnings.filter((w) => w.message.includes('invalid value'))
       ).toHaveLength(1);
     });
   });
@@ -327,16 +329,16 @@ describe('loadProtvistaData — template variables', () => {
       expect(fetchOne).toHaveBeenCalledWith('https://e.org/ok/P05067', 'json');
 
       // One warning naming the template, the track, and both tokens.
-      const unresolved = result.skipWarnings.filter((m) =>
-        m.includes('undefined variable')
+      const unresolved = result.skipWarnings.filter((w) =>
+        w.message.includes('undefined variable')
       );
       expect(unresolved).toHaveLength(1);
-      expect(unresolved[0]).toContain(
+      expect(unresolved[0].message).toContain(
         'https://e.org/{species}/{build}/{accession}'
       );
-      expect(unresolved[0]).toContain('G/a');
-      expect(unresolved[0]).toContain('{species}');
-      expect(unresolved[0]).toContain('{build}');
+      expect(unresolved[0].message).toContain('G/a');
+      expect(unresolved[0].message).toContain('{species}');
+      expect(unresolved[0].message).toContain('{build}');
 
       // No substituted URL recorded for the skipped track, so the element
       // can't correlate a phantom fetch error against it.
@@ -360,10 +362,43 @@ describe('loadProtvistaData — template variables', () => {
         resolveAdapter
       );
       expect(fetchOne).not.toHaveBeenCalled();
-      const unresolved = result.skipWarnings.filter((m) =>
-        m.includes('undefined variable')
+      const unresolved = result.skipWarnings.filter((w) =>
+        w.message.includes('undefined variable')
       );
       expect(unresolved).toHaveLength(1);
+    });
+
+    it('lists every track that references a skipped template', async () => {
+      // The second track reaches the template after it was already skipped,
+      // which is the early return that must still record it.
+      const result = await loadProtvistaData(
+        { accession: 'P05067' },
+        configWith([
+          urlSource('https://e.org/{species}'),
+          urlSource('https://e.org/{species}'),
+        ]),
+        echoFetch(),
+        resolveAdapter
+      );
+      expect(result.skipWarnings).toHaveLength(1);
+      expect(result.skipWarnings[0].tracks).toEqual(['G-a', 'G-b']);
+    });
+
+    it('lists a partly skipped track, whose other URL is still fetched', async () => {
+      const result = await loadProtvistaData(
+        { accession: 'P05067' },
+        configWith([
+          urlSource(['https://e.org/{accession}', 'https://e.org/{species}']),
+          urlSource('https://e.org/{species}'),
+        ]),
+        echoFetch(),
+        resolveAdapter
+      );
+      expect(result.skipWarnings).toHaveLength(1);
+      expect(result.skipWarnings[0].tracks).toEqual(['G-a', 'G-b']);
+      // What tells the two apart for the element: only G-a fetched anything.
+      expect(result.trackUrls['G-a']).toEqual(['https://e.org/P05067']);
+      expect(result.trackUrls['G-b']).toBeUndefined();
     });
 
     it('fetches the resolvable URLs of a multi-URL descriptor', async () => {
@@ -417,7 +452,9 @@ describe('loadProtvistaData — template variables', () => {
       );
       expect(fetchOne).not.toHaveBeenCalled();
       expect(result.skipWarnings).toHaveLength(1);
-      expect(result.skipWarnings[0]).toContain("Not fetching './{ds}/x.csv'");
+      expect(result.skipWarnings[0].message).toContain(
+        "Not fetching './{ds}/x.csv'"
+      );
       expect(result.trackFailures).toEqual({});
       expect(warn).not.toHaveBeenCalled();
       expect(result.data['G-a']).toBeUndefined();

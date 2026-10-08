@@ -77,7 +77,8 @@ sequence. The exceptions: `sequence-only/`, `sequence-inline/` and
 another.
 
 One consequence worth knowing: mounting even the "offline" examples
-(`inline-data/`, `csv/`, `tsv/`, `json/`, `bed/`) for real still performs
+(`inline-data/`, `linegraph/`, `csv/`, `csv-styled/`, `tsv/`, `bed/`,
+`linegraph-csv/`, `variation-csv/`) for real still performs
 one network call — the element's top-level sequence fetch for `P05067` —
 even though their own track data never touches the network.
 
@@ -107,10 +108,11 @@ fetched config — a track's `data: ./hotspots.csv` shorthand, an
 by the loader's default fetcher as a bare `fetch(url)`, which the
 browser resolves against the *hosting page's* URL, not the config
 file's own directory. This is transparent for `basic/`,
-`inline-data/` and `sequence-inline/` (none references another file), so
-"point `config-src` at any example" is literally true only for those. For
-the file-backed examples (`csv/`, `tsv/`, `json/`, `bed/`,
-`extend-default/`, `sequence-only/`, `small-peptide/`, `conservation/`), the
+`inline-data/`, `linegraph/` and `sequence-inline/` (none references another
+file), so "point `config-src` at any example" is literally true only for
+those. For the file-backed examples (`csv/`, `csv-styled/`, `tsv/`, `json/`,
+`bed/`, `linegraph-csv/`, `variation-csv/`, `extend-default/`,
+`sequence-only/`, `small-peptide/`, `conservation/`), the
 snippet above only resolves
 correctly when the hosting page itself lives in that example's own
 directory (e.g. serve from `examples/csv/` and use

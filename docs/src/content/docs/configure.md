@@ -148,6 +148,7 @@ Each track needs an `id` and a `kind`, and a `data` source. Common fields:
 | `label` | Human-readable track title. Supports rich inline text. |
 | `description` | Longer text shown alongside the track. |
 | `rendering` | Visual overrides — `color`, `shape`, `height`, `layout`, `colorScale`. Applies to every feature the track draws; see [Feature type and shape vocabulary](/protvista/type-and-shape-vocabulary) for the valid `shape` values and what a feature's `type` gets by default. |
+| `hidden` | `true` ships the track hidden: a visitor can reveal it from **Customize**. Also valid on a group. See [Customize the layout](/protvista/customize-layout#authoring-a-row-or-track-hidden-hidden). |
 
 ### `kind`
 
@@ -204,7 +205,7 @@ beyond local development, point `extends` at your own hosted copy of the config,
 or at the published package on a CDN:
 
 ```yaml
-extends: https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/default-config.yaml
+extends: https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/default-config.yaml
 ```
 
 That path is served straight from the npm tarball, so pin an exact version — a

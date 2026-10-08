@@ -2,6 +2,14 @@
 # here rather than from a "pnpm" field in package.json, so this file exists
 # even though there is only one package.
 
+# Run package.json scripts in pnpm's built-in POSIX shell on every OS,
+# instead of cmd.exe on Windows. Scripts here are written for sh: a
+# `VAR=1 vitest …` prefix (adapters:sync, vocabulary:sync) is a syntax error
+# in cmd, and cmd passes single quotes through to the program. With the
+# emulator, Windows contributors can run every script except the ./scripts
+# *.sh maintainer tools (which need Git Bash or WSL) unchanged.
+shellEmulator: true
+
 # pnpm blocks dependency install/postinstall scripts unless they are allowed
 # here. Each entry is a deliberate decision, not a formality: a build script
 # runs third-party code at install time.

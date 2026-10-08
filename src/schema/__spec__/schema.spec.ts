@@ -627,6 +627,19 @@ describe('JSON Schema — rejection cases', () => {
 // Top-level standalone tracks (discriminated GroupConfig | TrackConfig)
 // ─────────────────────────────────────────────────────────────
 
+describe('JSON Schema — showWarnings', () => {
+  const rows = [{ id: 'C', tracks: [] }];
+
+  it('accepts true and false', () => {
+    expectValid({ showWarnings: true, rows });
+    expectValid({ showWarnings: false, rows });
+  });
+
+  it('rejects anything but a boolean', () => {
+    expectInvalid({ showWarnings: 'yes', rows }, /\/showWarnings type/);
+  });
+});
+
 describe('JSON Schema — top-level standalone tracks', () => {
   it('accepts a single standalone track and zero groups', () => {
     expectValid({

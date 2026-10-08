@@ -22,9 +22,9 @@
  *     (`linegraph-csv`, `linegraph-tsv`): the same records out of CSV/TSV,
  *     reached only by a file extension on a track already using that kind.
  *
- * This is NOT a normative schema. The normative contract for the generic
- * format lives in `specs/generic-format-adapters.md`; the Intent vs
- * Representation split in `specs/config-approach.md`. Do not restate those
+ * This is NOT a normative schema. The normative contract for shapes and
+ * formats is "Shape and format (normative)" in `specs/config-approach.md`,
+ * alongside the Intent vs Representation split. Do not restate those
  * here — this table is the input to the generated `docs/adapter-reference.md`
  * and `public/schema/v1/feature-record.schema.json` (run `pnpm adapters:sync`).
  *
@@ -119,7 +119,8 @@ export const FEATURE_RECORD_FIELDS: readonly FieldDoc[] = [
     name: 'description',
     type: 'string',
     required: false,
-    notes: 'Free text shown in the default tooltip. Omitted when empty.',
+    notes:
+      'Free text shown in the default tooltip. CSV/TSV: the `description` header column is required (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty.',
   },
   {
     name: 'score',

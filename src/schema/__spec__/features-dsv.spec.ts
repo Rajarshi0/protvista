@@ -20,6 +20,7 @@ import type { DecodeWarning } from '../adapters/feature-fields.js';
 import type { CoordinateRow } from '../adapters/coordinates.js';
 
 import { runPipeline } from '../adapters/pipeline.js';
+import { fixtureText } from '../../__spec__/fixture-text.js';
 
 /**
  * The grid adapters these tests were written against are gone: a source now
@@ -670,6 +671,56 @@ describe('rowsToFeatureRecords — the warnings sink', () => {
           'features-csv: ignored column(s) "toString" — these names are ' +
           'reserved by the viewer or by JavaScript and cannot come from a ' +
           'data file.',
+      },
+    ]);
+  });
+});
+
+describe('reserved names and colours in an authored file (#283)', () => {
+  const decodeFixture = (name: string) => {
+    const warnings: DecodeWarning[] = [];
+    const out = runPipeline('feature', 'csv', fixtureText(name), {
+      source: `./${name}`,
+      warnings,
+    }) as Record<string, unknown>[];
+    return { out, warnings };
+  };
+
+  it('drops the one reserved `shape` in shape-valueof.csv, naming it once', () => {
+    const { out, warnings } = decodeFixture('shape-valueof.csv');
+    expect(out.map((r) => r.shape)).toEqual([undefined, 'diamond']);
+    expect('shape' in out[0]).toBe(false);
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          './shape-valueof.csv (parsed as CSV): ignored "shape" value(s) in ' +
+          '1 row(s) ("valueOf") — these names are reserved by JavaScript, so ' +
+          "those features take the track's or type's shape.",
+      },
+    ]);
+  });
+
+  it('names both reserved columns and both unpaintable colours of reserved-and-bad-colours.csv', () => {
+    const { out, warnings } = decodeFixture('reserved-and-bad-colours.csv');
+    for (const record of out) {
+      expect(Object.keys(record)).not.toContain('tooltipContent');
+      expect(Object.prototype.hasOwnProperty.call(record, 'toString')).toBe(false);
+    }
+    expect(warnings).toEqual([
+      {
+        code: 'data-field-ignored',
+        message:
+          './reserved-and-bad-colours.csv (parsed as CSV): ignored column(s) ' +
+          '"tooltipContent", "toString" — these names are reserved by the ' +
+          'viewer or by JavaScript and cannot come from a data file.',
+      },
+      {
+        code: 'unpaintable-color',
+        message:
+          './reserved-and-bad-colours.csv (parsed as CSV): 2 row(s) have a ' +
+          'colour the canvas cannot paint ("bleu", "#catFace"); those ' +
+          "features are drawn in the previous feature's colour.",
       },
     ]);
   });

@@ -91,16 +91,12 @@ export default css`
     font-size: 0.75rem;
   }
 
-  protvista-uniprot .${p}-error-badge {
-    display: inline-block;
-    margin-left: 0.35em;
-    color: #b3261e;
-    cursor: help;
-  }
-
-  protvista-uniprot .${p}-error-badge:focus-visible {
-    outline: 2px solid #b3261e;
-    outline-offset: 1px;
+  /*
+   * The ⚠ badge is a note control: notice-styles.ts draws it. It and its
+   * Retry stay on one line, so the badge's popover never covers Retry.
+   */
+  protvista-uniprot .${p}-error-controls {
+    white-space: nowrap;
   }
 
   protvista-uniprot .${p}-error-retry {

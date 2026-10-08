@@ -8,7 +8,7 @@ customise without forking.
 
 **Status: the Q2 core slice is implemented** (token registry, all three
 components migrated, datatable `::part`, inline styles removed, unified
-injection, `docs/theming.md`). Dark mode, colour-blind palettes, and a
+injection, `docs/src/content/docs/theming.md`). Dark mode, colour-blind palettes, and a
 no-code styling panel are deliberately deferred — see
 [Roadmap alignment & Q2 delivery](#roadmap-alignment--q2-delivery).
 
@@ -247,7 +247,7 @@ prior literals → zero visual change):**
 - `::part` on the datatable; `--protvista-dt-*` → `--protvista-datatable-*`
   with back-compat aliases.
 - Unified light-DOM injection (`src/styles/inject.ts`).
-- `docs/theming.md` (CC BY 4.0), plus a `theming.spec.ts` guard.
+- `docs/src/content/docs/theming.md` (CC BY 4.0), plus a `theming.spec.ts` guard.
 
 **Deferred (tracked as `next`-label issues, per the grant's
 scheduling-risk mitigation):**
@@ -262,7 +262,7 @@ scheduling-risk mitigation):**
 - **Live no-code styling panel** — belongs with the Q2 track-config-UI /
   playground workstream; the registry is the ready substrate.
 
-The `docs/theming.md` reference is published under CC BY 4.0 (Q2/Q4
+The `docs/src/content/docs/theming.md` reference is published under CC BY 4.0 (Q2/Q4
 documentation outputs); its typed token vocabulary also serves as the
 kind of clear, machine-readable boundary the grant argues aids
 AI-assisted maintenance.
@@ -317,7 +317,7 @@ AI-assisted maintenance.
    confirm existing `:host` defaults resolve from the global tier.
 5. **Injection unification.** Single idempotent helper for the two
    light-DOM paths.
-6. **Docs.** New `docs/theming.md` — token reference table, `::part`
+6. **Docs.** New `docs/src/content/docs/theming.md` — token reference table, `::part`
    list, copy-paste theming recipes; link from `README.md` and the
    architecture audit (updating the B9-adjacent styling-debt note).
 7. **(Stretch) dark mode.** `prefers-color-scheme` default set, gated
@@ -347,7 +347,7 @@ AI-assisted maintenance.
   all three components.
 - Datatable internals reachable via `::part`.
 - Structure component free of inline `style=` attributes.
-- `docs/theming.md` published with a token reference, part list, and
+- `docs/src/content/docs/theming.md` published with a token reference, part list, and
   working recipes.
 - Byte-for-byte visual parity at defaults; overrides demonstrably work.
 - Backwards-compatible: no class-name promotion, datatable tokens

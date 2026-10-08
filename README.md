@@ -2,12 +2,18 @@
 
 A Web Component which uses [Nightingale](https://github.com/ebi-webcomponents/nightingale) components to display protein sequence information.
 
-> ⚠️ **v5 is a beta pre-release.** The current stable release is **`protvista-uniprot@4.9.x`** (npm `latest`) — use that in production. **`5.0.0-beta.3`** ships under the **`beta`** dist-tag for early testing: once released, install it with `npm install protvista-uniprot@beta`. Its schemas and APIs are still evolving; don't depend on them in production yet. Targeted stable release: early 2027.
+> ⚠️ **v5 is a beta pre-release.** The current stable release is **`protvista-uniprot@4.9.x`** (npm `latest`) — use that in production. **`5.0.0-beta.5`** is published under the **`beta`** dist-tag for early testing: install it with `npm install protvista-uniprot@beta`, or load it from `https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs`. Its schemas and APIs are still evolving; don't depend on them in production yet. Targeted stable release: early 2027.
 
 **Branching model and v5**
 
-> - **`main` (this branch)** is the current-major **4.x** production line. Published on npm as `protvista-uniprot`; custom element `<protvista-uniprot>`. Receives non-breaking changes (security, performance, dependencies, CI). Use this for production.
-> - **[`next`](../../tree/next)** is the **v5** development line. It carries any breaking changes that come out of the [SSI RSMF](ROADMAP.md) work: a configuration-driven loader, a published JSON-Schema for viewer configurations, a declarative tooltip resolver. v5 keeps the `protvista-uniprot` package name and the `<protvista-uniprot>` element; a rename to the generic `protvista` remains under consideration for a later cycle, not this one. (The GitHub repository has already been renamed to `protvista` and the old URL auto-redirects — that is the repo only, not the npm package.) **Schemas and APIs on `next` are still evolving — do not depend on them in production yet.** Targeted production release: early 2027.
+> - **[`next`](https://github.com/ebi-webcomponents/protvista/tree/next)** is the **v5** development line, and the branch this README describes. It is where all v5 work happens, **including the hackathon**: branch from `next` and open pull requests against `next`. It carries the breaking changes that come out of the [SSI RSMF](ROADMAP.md) work: a configuration-driven loader, a published JSON-Schema for viewer configurations, a declarative tooltip resolver. v5 keeps the `protvista-uniprot` package name and the `<protvista-uniprot>` element; a rename to the generic `protvista` remains under consideration for a later cycle, not this one. (The GitHub repository has already been renamed to `protvista` and the old URL auto-redirects — that is the repo only, not the npm package.) **Schemas and APIs on `next` are still evolving — do not depend on them in production yet.** Targeted production release: early 2027.
+> - **[`main`](https://github.com/ebi-webcomponents/protvista/tree/main)** is the repository's default branch and the current-major **4.x** production line (npm `latest`). It receives non-breaking changes only (security, performance, dependencies, CI). Use it for production; contribute to it only for a 4.x fix.
+>
+> This README and the [documentation site](https://ebi-webcomponents.github.io/protvista/) describe `next` as it is today, which can be ahead of the latest beta on npm. The `## Unreleased` section of [CHANGELOG.md](./CHANGELOG.md) lists what hasn't shipped yet.
+
+## ProtVista hackathon, 7–9 October 2026
+
+Taking part? Start with **[Contributing via a fork](./CONTRIBUTING.md#contributing-via-a-fork)** and the **[hackathon notes](./CONTRIBUTING.md#hackathon-participants)** in CONTRIBUTING.md. In short: fork with *Copy the `main` branch only* **unticked**, work on a branch made from `next`, and open your pull request against `next`. Want to bring your own data without writing code? Use the **[Starter Kit](https://github.com/ebi-webcomponents/protvista-starter-kit)** or the **[playground](https://ebi-webcomponents.github.io/protvista/playground/)**.
 
 ![ProtVista showing the full default UniProt view of P05067: rows of domains, sites, modifications, variants and structure coverage drawn along the protein sequence.](protvista.png)
 
@@ -33,8 +39,10 @@ We welcome contributions!
 
 ## Compatibility
 
-- [protvista-uniprot v3](https://github.com/ebi-webcomponents/protvista-uniprot) is compatible with [nightingale v5](https://github.com/ebi-webcomponents/nightingale)
-- [protvista-uniprot v2](https://github.com/ebi-webcomponents/protvista-uniprot/tree/v2) is compatible with [nightingale v3](https://github.com/ebi-webcomponents/nightingale/tree/v3)
+- protvista-uniprot v5 beta ([`next`](https://github.com/ebi-webcomponents/protvista/tree/next)) is compatible with [nightingale](https://github.com/ebi-webcomponents/nightingale) v5.11 and later
+- protvista-uniprot v4 ([`main`](https://github.com/ebi-webcomponents/protvista/tree/main)) is compatible with [nightingale v5](https://github.com/ebi-webcomponents/nightingale)
+- [protvista-uniprot v3](https://github.com/ebi-webcomponents/protvista/tree/v3.0.9) is compatible with [nightingale v5](https://github.com/ebi-webcomponents/nightingale)
+- [protvista-uniprot v2](https://github.com/ebi-webcomponents/protvista/tree/v2.5.5) is compatible with [nightingale v3](https://github.com/ebi-webcomponents/nightingale/tree/v3)
 
 ## Browser Support
 
@@ -105,6 +113,8 @@ Reactive properties on the `<protvista-uniprot>` element (HTML attribute name in
 - `suspend` [`suspend`]: `boolean` (default `false`) — holds off loading and rendering until cleared. Useful when the accession is about to change and you want to avoid a flash of intermediate state.
 - `adapters`: `Record<string, AdapterFunction>` — adapters to register by name, assigned as a JS property (no HTML attribute); the declarative form of `registerAdapter()`. May be set before the element is defined; applied before loading starts.
 - `noPersistLayout` [`no-persist-layout`]: `boolean` (default `false`) — opts out of layout persistence (a user's reorder/show-hide is neither restored on mount nor saved to localStorage or the `?layout=` URL). See [Customize the layout](https://ebi-webcomponents.github.io/protvista/customize-layout).
+- `quietNotices` [`quiet-notices`]: `boolean` (default `false`) — turns off the visitor notices, the quiet ⓘ that tells a visitor when the view is incomplete or misleading. The `protvista-error` event is unaffected. See [What visitors and authors see](https://ebi-webcomponents.github.io/protvista/troubleshooting#what-visitors-and-authors-see).
+- `showWarnings` [`show-warnings`]: `boolean` (default `false`) — author mode: lists every warning on its track or the viewer, with the console's text, and expands error badges and the error panel into their full detail. Equivalent to `showWarnings: true` in the config; either turns it on.
 
 ### Layout (Customize layout)
 
@@ -122,19 +132,21 @@ A layout persists per-config in localStorage and in a shareable `?layout=` URL p
 
 ## Development
 
-Run:
+You need Node 24 and pnpm; [CONTRIBUTING.md](./CONTRIBUTING.md#prerequisites) covers installing both, on Windows too. Then run:
 
 ```bash
 pnpm install
-pnpm exec playwright install chromium   # once, and again after any `playwright` bump
+pnpm exec playwright install chromium
 pnpm start
 ```
 
 to install dependencies, fetch the headless Chromium that the browser tests run
-in (see [Testing](#testing)), and start the Astro dev server (`pnpm start` =
-`pnpm docs:dev`) — it serves the docs **and** the native playground page (the
-docs are the site home). Use `pnpm site:build && pnpm site:preview` to preview
-the whole site (docs + playground + bench) exactly as GitHub Pages serves it.
+in (once, and again after any `playwright` version bump; see
+[Testing](#testing)), and start the Astro dev server (`pnpm start` =
+`pnpm docs:dev`). It serves the docs **and** the native playground page at
+<http://localhost:4321/protvista/> and <http://localhost:4321/protvista/playground/>.
+To preview the whole site (docs + playground + bench) exactly as GitHub Pages
+serves it, run `pnpm site:build`, then `pnpm site:preview`.
 
 ## Testing
 
@@ -142,43 +154,42 @@ Tests run under [Vitest](https://vitest.dev/), split into two projects: `unit` (
 
 The `browser` project needs the Playwright Chromium binary, which `pnpm install` does not download. Run `pnpm exec playwright install chromium` once after cloning, and again whenever the `playwright` version in `package.json` changes — otherwise `pnpm test:browser` fails at startup with `browserType.launch: Executable doesn't exist at …`. See [CONTRIBUTING.md](./CONTRIBUTING.md#browser-tests-need-a-playwright-browser) for details.
 
-A small setup file at `src/__spec__/setup.ts` filters out jsdom's benign "Could not parse CSS stylesheet" warnings; jsdom's CSS parser is CSS2-era and chokes on the nested-selector syntax used in `src/protvista-styles.ts`. The stylesheet still attaches correctly — it's log noise only. Every other `console.error` passes through untouched. Remove the filter if we ever migrate to happy-dom (which parses modern CSS natively) or jsdom gains native-nesting support.
+A small setup file at `src/__spec__/setup.ts` filters out jsdom's benign "Could not parse CSS stylesheet" warnings; jsdom's CSS parser is CSS2-era and chokes on the nested-selector syntax used in `src/styles/protvista-styles.ts`. The stylesheet still attaches correctly — it's log noise only. Every other `console.error` passes through untouched. Remove the filter if we ever migrate to happy-dom (which parses modern CSS natively) or jsdom gains native-nesting support.
 
-```bash
-# Run the full pipeline (lint + types + unit + browser)
-pnpm test
-
-# Unit tests only (jsdom; no Playwright browser needed)
-pnpm test:unit
-
-# Browser component tests only (needs the Playwright browser, see above)
-pnpm test:browser
-
-# Watch mode
-pnpm test:watch
-
-# Coverage (writes text + html + lcov to ./coverage/)
-pnpm test:coverage
-```
+| Command | What it runs |
+| --- | --- |
+| `pnpm test` | The full pipeline: lint + types + unit + browser |
+| `pnpm test:unit` | Unit tests only (jsdom; no Playwright browser needed). The quickest check that your setup works. |
+| `pnpm test:browser` | Browser component tests only (needs the Playwright browser, see above) |
+| `pnpm test:watch` | Watch mode |
+| `pnpm test:coverage` | Both projects, with coverage written to `./coverage/` (text + html + lcov). This is the gate CI enforces. |
 
 Coverage output is for local use only and is not committed. Open `coverage/index.html` after `pnpm test:coverage` to inspect.
 
 ### Continuous integration
 
-Every push and pull request runs four steps via [`.github/workflows/test-and-deploy.yml`](./.github/workflows/test-and-deploy.yml): `pnpm test:lint`, `pnpm test:types`, `pnpm test:unit`, and — after `pnpm exec playwright install --with-deps chromium chromium-headless-shell` — `pnpm test:coverage`, under Node 24 on `ubuntu-latest`. The coverage step runs both the unit and browser suites and enforces the coverage floor (see below), so a PR that drops coverage below the floor fails CI. A separate `build` job runs `pnpm build` (and, on `next`, `pnpm site:build`, which builds the Astro + Starlight docs — including the playground page — plus the bench page into `site/`) and deploys that to GitHub Pages.
+Every push and pull request runs [`.github/workflows/test-and-deploy.yml`](./.github/workflows/test-and-deploy.yml) under Node 24:
+
+- **Test** (`ubuntu-latest`): `pnpm test:lint`, `pnpm test:types`, `pnpm test:unit`, and — after `pnpm exec playwright install --with-deps chromium chromium-headless-shell` — `pnpm test:coverage`. The coverage step runs both the unit and browser suites and enforces the coverage floor (see below), so a PR that drops coverage below the floor fails CI.
+- **Test (Windows)** (`windows-latest`): `pnpm test:lint`, `pnpm test:types` and `pnpm test:unit`, so a change that breaks contributors on Windows shows up in the PR.
+- **Build**: `pnpm test:pack` (build + publint + attw) and the packaging-contract spec against `dist/`. On a push to `next` it also runs `pnpm site:build` (the Astro + Starlight docs, including the playground page, plus the bench page, into `site/`) and deploys that to GitHub Pages.
+
+Pull requests from forks: GitHub holds a first-time contributor's workflow runs until a maintainer approves them, so your PR's checks may show *Approval required* for a while. Run `pnpm test:unit` (and, if you can, `pnpm test:coverage`) locally first.
 
 ### Coverage
 
 Coverage is gated by a fixed floor (a coverage ratchet) configured under `test.coverage.thresholds` in [`vite.config.mjs`](./vite.config.mjs) and enforced by the CI coverage step. The floor is bumped up manually as coverage improves and is never lowered without justification.
 
-Captured 2026-07-24 via `pnpm test:coverage` (v8 instrumentation, 727 tests across 53 spec files):
+The current floor (v8 instrumentation):
 
-| Metric     | Coverage % | Floor |
-| ---------- | ---------- | ----- |
-| Statements | 82.45      | 80    |
-| Branches   | 75.60      | 74    |
-| Functions  | 80.24      | 78    |
-| Lines      | 83.91      | 81    |
+| Metric     | Floor |
+| ---------- | ----- |
+| Statements | 80    |
+| Branches   | 74    |
+| Functions  | 78    |
+| Lines      | 81    |
+
+Run `pnpm test:coverage` for today's figures; when your change raises them, bump the floor in the same PR (see [CONTRIBUTING.md](./CONTRIBUTING.md#writing-tests)).
 
 ## Performance benchmarks
 
@@ -276,9 +287,9 @@ layout overlay, the same shape `getLayout()` returns:
 ```js
 detail: {
   // row ids in the user's order, or null for the authored order
-  order: ['VARIATION', 'DOMAINS_AND_SITES', 'MOLECULE_PROCESSING'],
+  order: ['VARIATION', 'DOMAINS', 'MOLECULE_PROCESSING'],
   // per-row track order, keyed by row id (rows left as authored are omitted)
-  tracks: { DOMAINS_AND_SITES: ['domain', 'region'] },
+  tracks: { DOMAINS: ['domain', 'region'] },
   // show/hide overrides — whole rows, and tracks within a row
   hidden: { rows: { MOLECULE_PROCESSING: true }, tracks: {} }
 }
@@ -288,14 +299,15 @@ See [Customize the layout](https://ebi-webcomponents.github.io/protvista/customi
 
 ## Publishing
 
-```bash
-npm login
-rm -rf node_modules dist
-pnpm install
-pnpm build
-npm publish
-git push
-```
+Maintainers only: see [RELEASING.md](./RELEASING.md). On `next`, `pnpm release:next` cuts the next beta.
+
+## Citation
+
+If you use ProtVista in your research, please cite:
+
+> Watkins X, Garcia LJ, Pundir S, Martin MJ, UniProt Consortium. ProtVista: visualization of protein sequence annotations. *Bioinformatics*. 2017;33(13):2040–2041. doi:[10.1093/bioinformatics/btx120](https://doi.org/10.1093/bioinformatics/btx120)
+
+GitHub's **Cite this repository** button (from [`CITATION.cff`](./CITATION.cff)) gives the same reference in BibTeX and APA.
 
 ## Licensing
 

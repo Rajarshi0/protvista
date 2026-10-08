@@ -14,7 +14,7 @@ viewer for that protein:
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/protvista-uniprot.mjs"
+  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs"
 ></script>
 
 <protvista-uniprot accession="P05067"></protvista-uniprot>
@@ -35,7 +35,7 @@ beta with nothing to install:
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/protvista-uniprot.mjs"
+  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs"
 ></script>
 
 <protvista-uniprot accession="P05067"></protvista-uniprot>
@@ -44,8 +44,11 @@ beta with nothing to install:
 Pin the exact version, as above: `@beta` and `@5` would move under you as the
 beta develops.
 
-To host the file yourself instead, run `pnpm install && pnpm build` in a clone of
-the [repository](https://github.com/ebi-webcomponents/protvista), copy the
+To host the file yourself instead, clone the `next` branch of the
+[repository](https://github.com/ebi-webcomponents/protvista)
+(`git clone --branch next https://github.com/ebi-webcomponents/protvista`; the
+default branch, `main`, is the 4.x line), run `pnpm install`, then
+`pnpm build`, copy the
 **contents** of `dist/` next to your page, and point the tag at your own copy
 (`src="./protvista-uniprot.mjs"`). Copy the whole folder: the build is split up,
 so the `.mjs` loads sibling files from the same directory and will not run
@@ -66,7 +69,7 @@ import 'protvista-uniprot';
 ```
 
 :::caution
-A plain `npm install protvista-uniprot` gives you `4.9.3` — the current stable
+A plain `npm install protvista-uniprot` gives you `4.9.x` — the current stable
 release, which predates the config surface these docs describe (`rows:`,
 `kind:`, `extends:`) and will not read the configs in this guide. That stays
 true for as long as v5 is in beta, because the beta publishes under the `beta`
@@ -100,6 +103,8 @@ Set these as HTML attributes (or as JavaScript properties on the element).
 | `nostructure` | boolean | Hides the 3D structure group. |
 | `notooltip` | boolean | Suppresses the built-in click tooltip (set this when you render your own — see [Rich tooltips in React](/protvista/react-integration)). |
 | `suspend` | boolean | Holds off loading (and rendering) until it is removed, e.g. while you configure the element or an accession is about to change. |
+| `quiet-notices` | boolean | Turns off the visitor notices: the quiet ⓘ that tells a visitor when what they see is incomplete (features outside the sequence, colours not painted, a track whose data couldn't be loaded). See [What visitors and authors see](/protvista/troubleshooting#what-visitors-and-authors-see). |
+| `show-warnings` | boolean | Author mode: lists every warning on its track or beside Customize, with the console's text, and expands error badges and the error panel. Same as `showWarnings: true` in the config. Off by default. |
 | `adapters` | object | A map of adapter name to function, assigned as a JS property — the declarative form of `registerAdapter()`. May be set before the element is defined. See [Escape hatches](/protvista/escape-hatches). |
 
 ## Driving it with your own config

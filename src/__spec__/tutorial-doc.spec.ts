@@ -19,8 +19,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// Vitest runs from the repo root, so resolve paths from cwd.
-const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), 'utf8');
+// Vitest runs from the repo root, so resolve paths from cwd. Line endings are
+// normalised so a CRLF checkout (Git for Windows without .gitattributes)
+// compares the same as an LF one.
+const read = (rel: string) =>
+  readFileSync(resolve(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
 
 // Pull every fenced code block of a given language out of a Markdown doc, in
 // document order.

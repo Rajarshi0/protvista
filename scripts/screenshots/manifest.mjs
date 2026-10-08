@@ -89,7 +89,7 @@ const DEFAULT_GROUPS = [
  *  removed. Capturing both makes a before/after where the *only* difference is
  *  the theming — using two different presets would compare different data. */
 const inlineData = readRepoFile('examples/inline-data/config.yaml');
-const unthemed = inlineData.replace(/^theme:\n(?:[ \t]+.*\n)*/m, '');
+const unthemed = inlineData.replace(/^theme:\r?\n(?:[ \t]+.*\r?\n)*/m, '');
 
 const CC_BY = 'https://creativecommons.org/licenses/by/4.0/';
 
@@ -144,7 +144,7 @@ export const shots = [
     viewport: { width: 1280, height: 900 },
     expectGroups: ['hotspots'],
     doc: 'docs/src/content/docs/tutorial.md',
-    alt: 'A ProtVista viewer showing a single track named Hotspots, with three labelled feature blocks positioned along the amino-acid sequence of P05067.',
+    alt: 'A ProtVista viewer showing a single track named Hotspots, with four feature blocks positioned along the amino-acid sequence of P05067.',
     caption: 'A standalone track loaded from a CSV file.',
   },
   {

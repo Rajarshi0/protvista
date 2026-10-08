@@ -1,6 +1,97 @@
 # Changelog
 
-## Unreleased
+## 5.0.0-beta.5 — 2026-10-06
+
+### Fixed: the 3D structure viewer works when loaded from a CDN
+
+Loaded straight from jsDelivr, as the Starter Kit and any plain
+`<script type="module">` page do, the structure panel failed with
+"process is not defined" and showed no 3D view. A library inside Mol* read
+`process.env.NODE_ENV`, which only a bundler provides; the build now
+replaces it. Pages that bundle ProtVista themselves were not affected.
+
+## 5.0.0-beta.4 — 2026-10-06
+
+### Fixed: contributing from Windows, and docs that disagreed with the code
+
+Cloning and testing ProtVista on Windows now works the same as on macOS and
+Linux. Every text file checks out with LF line endings whatever Git's
+`core.autocrlf` says, `package.json` scripts run in pnpm's POSIX-style shell
+instead of `cmd.exe`, and `pnpm test` no longer fails on Windows at the lint
+step or in specs that assumed `/` path separators. A Windows CI job now checks
+lint, types and unit tests on every pull request.
+
+The Starter Kit no longer says it "does not work yet", and gives Windows users
+commands that work in Command Prompt. CONTRIBUTING.md now explains how to
+contribute through a fork (fork with `next`, and open pull requests against
+`next`, not the default `main`) and has notes for hackathon participants and
+Windows users.
+
+The docs now say that a CSV or TSV feature file needs a `description` column
+(cells may be empty). The custom-adapter example on Escape hatches now works:
+a custom adapter is handed the response parsed as JSON, never as text. The
+page also documents `setTrackData()` and the current limit on
+`registerComponent`.
+
+### Changed: the ⚠ error badge opens a note, like the ⓘ
+
+A track or group's red `⚠` badge is now a button that behaves like the
+visitor ⓘ: it has the same hover, and selecting it opens a note, titled with
+the track or group, with the same text as before: what failed and, for your
+own file, how to fix it. Before, that text was only in a hover tooltip, which
+touch screens never show. Escape, a click elsewhere or moving focus closes the
+note. Screen readers still hear the error when the badge is focused. Retry is
+unchanged, and stays on the same line as its badge.
+
+Every note — ⓘ, ⚠ and author mode — shows a single message as plain text and
+uses a bulleted list only for two or more.
+
+Inside a group's label, Enter on a link, or Enter or Space on a badge or
+Retry, now activates that control instead of collapsing the group.
+
+### Added: tell visitors when the view is incomplete
+
+A warning that changes what is on screen now tells the person looking at the
+viewer, not only the console and the `protvista-error` event. Features that
+fall outside the sequence, colours in the data the canvas cannot paint, a
+track whose data URL has an undefined `{variable}` (so its data never loads),
+and a component with no renderer each put a quiet ⓘ on the track's label, or
+beside **Customize** for a viewer-level note or a track whose label isn't on
+screen (a collapsed group, an empty track). It opens one plain-language line
+— "2 features extend beyond this sequence, so they aren't shown in full." —
+and the notes are announced once to screen readers. Warnings that change
+nothing a visitor sees (an ignored column, a tooltip field no record has, a
+`theme:` colour that didn't resolve) stay off it. The `quiet-notices`
+attribute turns the notices off; the event is unchanged. The routing table in
+[Where a failure shows up](https://ebi-webcomponents.github.io/protvista/troubleshooting#where-a-failure-shows-up)
+gains Code, Visitor notice and Author mode columns. See
+[What visitors and authors see](https://ebi-webcomponents.github.io/protvista/troubleshooting#what-visitors-and-authors-see).
+
+### Added: author mode (`show-warnings` / `showWarnings`)
+
+The `show-warnings` attribute, or `showWarnings: true` in the config, lists
+every warning on its track or beside Customize, with the text the console and
+the playground show (file, row and field), its phase, code and source, and
+what visitors see for it. Error badges become buttons that list their full
+text, an error on a track inside a collapsed group is listed beside
+Customize, and the alert panel adds the console's text under its summary.
+Off by default; with it off, errors look exactly as before. Both attributes
+take effect on a live element with no reload, and the JSX types in
+`protvista-uniprot/react` declare both.
+
+### Changed: a tooltip whose fields are all missing shows the default tooltip
+
+A record that has none of the fields an authored `dataTooltip` names, and for
+which the template renders no letter or digit (only the `·` of
+`{% $gene %} · {% link href=$url /%}`, or nothing), now shows the track's
+default tooltip instead: its kind's built-in one, or the automatic tooltip,
+as with no `dataTooltip`. Before, such a record showed a tooltip with only
+punctuation in it, or, in the `fields` form, none at all. A record with any
+of the fields, and a template with its own wording for the case (an
+`{% else %}` branch, fixed text), are unchanged. The
+[data-tooltip guide](https://ebi-webcomponents.github.io/protvista/data-tooltip#guard-a-field-some-records-lack)
+now shows the `{% if $field %}` pattern for a field only some records have,
+and the guard that also leaves out blank cells.
 
 ### Added: playground examples for your own sequence, small proteins and conservation
 
@@ -200,6 +291,36 @@ supported path.
 The preset picker is as wide as its longest preset name, which pushed the
 playground page about 60px sideways at 390px wide. It now shrinks to fit.
 
+### Added: template variables in data URLs
+
+Any `{token}` in a `sources` URL or a descriptor `url:` now resolves, not only
+`{accession}`. Values come from a new top-level `variables:` block (baseline
+defaults), then the element's `data-*` attributes (`data-species="mouse"` fills
+`{species}`; `data-dataset-id` fills `{datasetId}`), then the `accession`
+attribute, which also wins over `data-accession`. Changing a `data-*` attribute
+that a URL uses re-runs the data load once per animation frame. `variables:`
+merges by key across `extends`.
+
+A token that nothing defines is reported as a `missing-variable` validation
+warning (the config still loads). At fetch time that URL is skipped with a
+console warning rather than requested half-built.
+
+Substituted values are now URL-encoded, so a value can't add a path segment,
+query string or fragment. A value of exactly `.` or `..` (which would climb out
+of the URL's path) or one containing malformed Unicode is refused: that URL is
+skipped with a console warning, and other tracks load normally. `{accession}`
+keeps its existing `[A-Za-z0-9_-]{1,32}` gate. `data-accession` has no effect
+on the element, because `{accession}` always comes from the `accession`
+attribute or the config's `accession:`. Every occurrence of a token is replaced; previously
+only the first `{accession}` in a URL was.
+
+### Fixed: Retry during a full reload no longer leaves mixed data
+
+Clicking a track's Retry badge while a full reload was in flight (after an
+accession or `data-*` change) aborted that reload and refetched only the
+retried track, so every other track kept the previous accession's or
+variables' data. The retry now runs as a full load.
+
 ## 5.0.0-beta.3 — 2026-10-02
 
 ### Changed: Nightingale 5.11, and `BINDING` features get their own colour
@@ -328,36 +449,6 @@ standalone track, is a config warning.
 
 PDB rows link to PDBe, RCSB PDB and PDBj, as they did in 4.x, and PDB
 structures are listed in descending id order.
-
-### Added: template variables in data URLs
-
-Any `{token}` in a `sources` URL or a descriptor `url:` now resolves, not only
-`{accession}`. Values come from a new top-level `variables:` block (baseline
-defaults), then the element's `data-*` attributes (`data-species="mouse"` fills
-`{species}`; `data-dataset-id` fills `{datasetId}`), then the `accession`
-attribute, which also wins over `data-accession`. Changing a `data-*` attribute
-that a URL uses re-runs the data load once per animation frame. `variables:`
-merges by key across `extends`.
-
-A token that nothing defines is reported as a `missing-variable` validation
-warning (the config still loads). At fetch time that URL is skipped with a
-console warning rather than requested half-built.
-
-Substituted values are now URL-encoded, so a value can't add a path segment,
-query string or fragment. A value of exactly `.` or `..` (which would climb out
-of the URL's path) or one containing malformed Unicode is refused: that URL is
-skipped with a console warning, and other tracks load normally. `{accession}`
-keeps its existing `[A-Za-z0-9_-]{1,32}` gate. `data-accession` has no effect
-on the element, because `{accession}` always comes from the `accession`
-attribute or the config's `accession:`. Every occurrence of a token is replaced; previously
-only the first `{accession}` in a URL was.
-
-### Fixed: Retry during a full reload no longer leaves mixed data
-
-Clicking a track's Retry badge while a full reload was in flight (after an
-accession or `data-*` change) aborted that reload and refetched only the
-retried track, so every other track kept the previous accession's or
-variables' data. The retry now runs as a full load.
 
 ### Fixed: a collapsed group no longer draws its hidden tracks
 

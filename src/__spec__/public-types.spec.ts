@@ -64,6 +64,8 @@ describe('public typings', () => {
       suspend: true,
       'config-src': './config.yaml',
       'no-persist-layout': true,
+      'quiet-notices': true,
+      'show-warnings': true,
     };
     const structure: Intrinsic['protvista-uniprot-structure'] = {
       accession: 'P05067',

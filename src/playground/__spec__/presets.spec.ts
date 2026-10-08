@@ -253,6 +253,7 @@ describe('presets', () => {
       'conservation',
       'csv',
       'json',
+      'csv-styled',
       'extend-uniprot',
       'own-sequence',
       'small-peptide',

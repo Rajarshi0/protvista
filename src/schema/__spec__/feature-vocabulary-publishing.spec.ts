@@ -46,8 +46,10 @@ describe('feature type and shape vocabulary — generated page', () => {
     return;
   }
 
+  // Line endings are normalised so a CRLF checkout (Git for Windows without
+  // .gitattributes) doesn't read as drift; everything else is byte-for-byte.
   it('type-and-shape-vocabulary.md is byte-identical to the renderer', () => {
-    const onDisk = readFileSync(mdPath, 'utf8');
+    const onDisk = readFileSync(mdPath, 'utf8').replace(/\r\n/g, '\n');
     expect(
       onDisk,
       'type-and-shape-vocabulary.md drifted from Nightingale — run `pnpm vocabulary:sync`'

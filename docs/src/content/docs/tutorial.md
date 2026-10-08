@@ -16,8 +16,11 @@ the links to the how-to guides.
 
 The quickest way to follow along is the
 **[Starter Kit](https://github.com/ebi-webcomponents/protvista-starter-kit)**: a
-no-build template repository you can copy and open straight in the browser. You
-can also work in your own page served by any static file server or your app's dev
+no-build template repository you can copy and publish with GitHub Pages, or
+serve from your own computer with one command (its README has the steps for
+Windows, macOS and Linux). Opening its `index.html` by double-clicking doesn't
+work: browsers block a page opened from disk from reading the config. You can
+also work in your own page served by any static file server or your app's dev
 server, or use the [playground](/protvista/playground/) for the config-only
 steps. No build tooling is required.
 
@@ -35,7 +38,7 @@ accession:
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/protvista-uniprot.mjs"
+  src="https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/protvista-uniprot.mjs"
 ></script>
 
 <protvista-uniprot accession="P05067"></protvista-uniprot>
@@ -52,11 +55,14 @@ build is split up, so `protvista-uniprot.mjs` loads `errors.js` and
 needs them), and will not run on its own.
 
 ```sh
-git clone https://github.com/ebi-webcomponents/protvista
+git clone --branch next https://github.com/ebi-webcomponents/protvista
 cd protvista
-pnpm install && pnpm build
-# then copy the contents of dist/ next to your HTML page
+pnpm install
+pnpm build
 ```
+
+Then copy the contents of `dist/` next to your HTML page. The `--branch next`
+matters: the repository's default branch, `main`, is the 4.x line.
 
 Either way, the `accession` attribute on its own gives you the **full default
 UniProt viewer** for that protein: domains, variants, binding sites, structure
@@ -125,7 +131,7 @@ playground, press **Load data file…** and pick your own CSV. It is read in you
 browser and never uploaded.
 :::
 
-![A ProtVista viewer showing a single track named Hotspots, with three labelled feature blocks positioned along the amino-acid sequence of P05067.](../../assets/screenshots/tutorial-standalone-csv.png)
+![A ProtVista viewer showing a single track named Hotspots, with four feature blocks positioned along the amino-acid sequence of P05067.](../../assets/screenshots/tutorial-standalone-csv.png)
 
 _A standalone track loaded from a CSV file._
 
@@ -172,7 +178,7 @@ at the end.
 `extends: /src/default-config.yaml` resolves only when the page is served from
 this repo's root; a deployed site must point `extends` at a hosted copy instead —
 either your own, or the published package on a CDN:
-`https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.3/dist/default-config.yaml`. See
+`https://cdn.jsdelivr.net/npm/protvista-uniprot@5.0.0-beta.5/dist/default-config.yaml`. See
 [Author a config](/protvista/configure#reuse-the-default-with-extends) for the
 merge rules and the full caveat.
 :::
@@ -217,8 +223,8 @@ carries a `theme:` block — edit the colours and press **Run**.
 :::
 
 **From your page's CSS.** For full control, `<protvista-uniprot>` exposes
-`--protvista-*` design tokens and `::part` hooks — set them in ordinary CSS on
-the page:
+`--protvista-*` design tokens, and its datatable exposes `::part` hooks — set
+them in ordinary CSS on the page:
 
 ```css
 protvista-uniprot {

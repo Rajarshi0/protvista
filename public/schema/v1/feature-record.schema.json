@@ -26,7 +26,7 @@
     },
     "description": {
       "type": "string",
-      "description": "Free text shown in the default tooltip. Omitted when empty."
+      "description": "Free text shown in the default tooltip. CSV/TSV: the `description` header column is required (its cells may be empty); optional in JSON, and BED reads it from the `name` column. Omitted when empty."
     },
     "score": {
       "type": "number",

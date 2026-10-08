@@ -244,6 +244,16 @@ export interface ProtvistaViewerConfig {
   strict?: boolean;
 
   /**
+   * Author mode. When `true`, the viewer lists every warning on the track
+   * or the viewer it concerns — the same text the console and the
+   * `protvista-error` event carry, with the file, row and field — and
+   * expands error badges and the error panel into that author detail.
+   * Equivalent to the element's `show-warnings` attribute; either one turns
+   * it on. Off by default, so visitors never see authoring notes.
+   */
+  showWarnings?: boolean;
+
+  /**
    * Ordered list of rows displayed in the viewer — the viewer's
    * vertical lanes, top to bottom.
    *
@@ -912,6 +922,11 @@ export interface ProtvistaRuntimeAPI {
    * gets its tag defined automatically when the config references it,
    * with no consumer `customElements.define()` call. The name must not
    * collide with a built-in renderable component.
+   *
+   * Limitation: the component is defined and validated but not yet
+   * drawn. Its track renders empty and an `unrendered-component`
+   * warning is reported. A new renderer has to be added inside
+   * ProtVista (`RENDERABLE_COMPONENTS` plus a `getTrack()` case).
    */
   registerComponent(name: string, ctor: CustomElementConstructor): void;
 

@@ -1,0 +1,3 @@
+type,start,end,description,shape
+DOMAIN,18,189,Shape named after a JS built-in,valueOf
+REGION,290,340,Normal shape,diamond

@@ -26,6 +26,7 @@ import { normalizeConfig } from '../schema/normalize.js';
 import { SHAPES, SHAPE_NAMES } from '../schema/shapes.js';
 import type { DataFormat, ProtvistaViewerConfig } from '../schema/types.js';
 import '../protvista-uniprot.js';
+import { fixtureText } from './fixture-text.js';
 
 const registry = () => createRegistry();
 const noFetch = async () => null;
@@ -741,5 +742,130 @@ describe('decoder warnings are returned, not logged (#283)', () => {
     const { data, trackWarnings } = await loadFile('./hits.bed', 'chr1\t0\t9\tx\n');
     expect(data['G-t']).toHaveLength(1);
     expect(trackWarnings).toEqual({});
+  });
+});
+
+describe('an authored tooltip with nothing to say gives way to the default', () => {
+  // The issue's template, over a CSV that has `url` on one row only and no
+  // `gene` column at all. A blank description is left off the record, so the
+  // default lists Type, Start and End.
+  const TEMPLATE = '{% $gene %} · {% link href=$url /%}';
+  const URL = 'https://x.org/a';
+  const loadInline = (kind: string, inlineData: string) =>
+    load({
+      accession: 'P05067',
+      rows: [
+        {
+          id: 'G',
+          tracks: [
+            {
+              id: 't',
+              kind,
+              dataTooltip: { kind: 'markdown', template: TEMPLATE },
+              data: { from: 'inline', inlineData, format: 'csv' },
+            } as never,
+          ],
+        },
+      ],
+    });
+
+  it('shows the default on a record with neither field, the template on one with a field', async () => {
+    const { data } = await loadInline(
+      'features',
+      `type,start,end,description,url\nDOMAIN,1,9,,\nSITE,4,4,,${URL}\n`
+    );
+    const [bare, linked] = data['G-t'] as Array<Record<string, unknown>>;
+    expect(bare.url).toBe('');
+    expect(bare.tooltipContent).toBe(
+      '<h5>Type</h5><p>DOMAIN</p><h5>Start</h5><p>1</p><h5>End</h5><p>9</p>'
+    );
+    expect(linked.tooltipContent).toBe(`<p> · <a href="${URL}">${URL}</a></p>`);
+  });
+
+  it('leaves a line graph’s series tooltip as it was', async () => {
+    // A line graph draws no per-item tooltip, so neither the field check
+    // nor the fallback applies to it; its series still get the template.
+    const { data } = await loadInline('linegraph', 'position,value\n1,5\n');
+    const [series] = data['G-t'] as Array<Record<string, unknown>>;
+    expect(series.values).toEqual([{ position: 1, value: 5 }]);
+    expect(series.tooltipContent).toBe('<p> · </p>');
+  });
+});
+
+describe('styled CSV and JSON files (#283)', () => {
+  /** A grouped track with a grey `rendering.color`, reading `file` as `body`. */
+  const loadStyled = (file: string, body: unknown) => {
+    const r = registry();
+    return loadProtvistaData(
+      'P05067',
+      normalizeConfig(
+        {
+          accession: 'P05067',
+          rows: [
+            {
+              id: 'MY_LAB',
+              label: 'My lab',
+              tracks: [
+                {
+                  id: 'hits',
+                  label: 'Styled hits',
+                  kind: 'features',
+                  data: file,
+                  rendering: { color: '#7f7f7f' },
+                },
+              ],
+            },
+          ],
+        } as ProtvistaViewerConfig,
+        { registry: r }
+      ),
+      async () => body,
+      (name) => r.getAdapter(name),
+      {}
+    );
+  };
+
+  it('styled.json keeps each record’s colour, shape, fill and opacity, with no warnings', async () => {
+    const { data, trackWarnings, trackFailures } = await loadStyled(
+      './styled.json',
+      JSON.parse(fixtureText('styled.json'))
+    );
+    expect(trackWarnings).toEqual({});
+    expect(trackFailures).toEqual({});
+    const [e1, binding, region] = data['MY_LAB-hits'] as Array<
+      Record<string, unknown>
+    >;
+    expect(e1).toMatchObject({
+      type: 'DOMAIN',
+      color: '#2ca02c',
+      shape: 'diamond',
+      fill: '#98df8a',
+      opacity: 0.5,
+    });
+    expect(binding).toMatchObject({
+      type: 'BINDING',
+      color: '#d62728',
+      shape: 'circle',
+    });
+    // A `null` colour and a blank opacity are left off, so the REGION takes
+    // the track's `rendering.color`.
+    expect(region.type).toBe('REGION');
+    expect(region).not.toHaveProperty('color');
+    expect(region).not.toHaveProperty('opacity');
+  });
+
+  it('styled.csv keeps its blue and red, and leaves the blank cell to the track colour', async () => {
+    const { data, trackWarnings } = await loadStyled(
+      './styled.csv',
+      fixtureText('styled.csv')
+    );
+    expect(trackWarnings).toEqual({});
+    const records = data['MY_LAB-hits'] as Array<Record<string, unknown>>;
+    expect(records.map((r) => [r.type, r.color])).toEqual([
+      ['DOMAIN', '#1f77b4'],
+      ['DOMAIN', '#1f77b4'],
+      ['BINDING', '#d62728'],
+      ['REGION', undefined],
+    ]);
   });
 });
