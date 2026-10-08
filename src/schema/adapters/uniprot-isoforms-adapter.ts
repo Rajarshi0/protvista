@@ -46,8 +46,8 @@ export const uniprotIsoformsAdapter = (data: any) => {
 
     const isCanonical = isoform.isoformSequenceStatus === "Displayed";
     const edits = editsMap[isoformId] || [];
-    let tooltipNotes: string[] = [];
-    let missingRegions: {start: number, end: number}[] = [];
+    const tooltipNotes: string[] = [];
+    const missingRegions: {start: number, end: number}[] = [];
 
     edits.forEach((edit: any) => {
       if (edit.alternativeSequence === 'Missing') {
