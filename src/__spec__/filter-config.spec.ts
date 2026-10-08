@@ -70,7 +70,14 @@ const transformedVariantPositions = [
         alternativeSequence: 'V',
         consequenceType: 'disease',
         xrefs: [],
-        hasPredictions: false,
+        // Uncertain takes precedence over predicted.
+        clinicalSignificances: [
+          {
+            type: 'Variant of uncertain significance',
+            sources: ['ClinVar'],
+          },
+        ],
+        hasPredictions: true,
       },
     ],
   },
@@ -118,12 +125,12 @@ const transformedVariantPositions = [
       },
     ],
   },
-];
+] as unknown as VariantsForFilter;
 
 describe('Variation filter config', () => {
   test('it should filter according to the callback function', () => {
     const filteredVariants = getFilteredVariants(
-      transformedVariantPositions as VariantsForFilter,
+      transformedVariantPositions,
       (variant) => variant.accession === 'A'
     );
     expect(filteredVariants).toEqual([
@@ -158,7 +165,7 @@ describe('Variation filter config', () => {
 
   test('it should get the right colour for uncertain', () => {
     const thirdVariant = colorConfig(
-      transformedVariantPositions?.[1].variants[0]
+      transformedVariantPositions[1].variants[0]
     );
     expect(thirdVariant).toEqual('#009e73');
   });
