@@ -209,6 +209,10 @@ function makeExampleFetchers(exampleDir: string) {
     url: string,
     responseType: 'json' | 'text'
   ): Promise<unknown> => {
+    if (exampleDir.includes("isoforms-app") && url.includes("rest.uniprot.org")) {
+      const fixtureText = await readFile(resolve(exampleDir, "../../src/__fixtures__/isoforms/P05067.json"), "utf8");
+      return responseType === "json" ? JSON.parse(fixtureText) : fixtureText;
+    }
     if (/^https?:\/\//i.test(url)) {
       return responseType === 'json' ? CANNED_FEATURES_RESPONSE : '';
     }

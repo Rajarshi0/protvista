@@ -1,0 +1,15 @@
+accession: P05067
+sources:
+  uniprotEntry: "https://rest.uniprot.org/uniprotkb/{accession}.json?fields=sequence,features,cc_alternative_products"
+rows:
+  - id: "ISOFORMS"
+    label: "Isoforms"
+    tracks:
+      - id: "isoform-track"
+        label: "Isoform Rows"
+        kind: "features"
+        data:
+          source: "uniprotEntry"
+          adapter: "uniprot-isoforms-json"
+        rendering:
+          layout: "non-overlapping"
