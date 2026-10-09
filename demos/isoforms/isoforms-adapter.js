@@ -1,129 +1,186 @@
+// Plain-JS twin of the built-in adapter for hackathon demo pages.
+// Loads from published jsDelivr build, so it must run standalone.
+
+// Helper to read each edit once, as requested in Step 6
+function getEdit(feature) {
+  const loc = feature.location;
+  const start = loc.start ? loc.start.value : loc.position.value;
+  const end = loc.end ? loc.end.value : loc.position.value;
+  const original = feature.alternativeSequence?.originalSequence ?? '';
+  const replacement = feature.alternativeSequence?.alternativeSequences?.[0] ?? '';
+  const deletion = replacement === '';
+  return { start, end, original, replacement, deletion };
+}
+
+function fmtSeq(seq) {
+  if (seq.length > 10) return `${seq.slice(0, 10)}… (${seq.length} aa)`;
+  return seq;
+}
+
+function formatEdit(edit) {
+  const range = edit.start === edit.end ? `${edit.start}` : `${edit.start}-${edit.end}`;
+  if (edit.deletion) return `${range}: missing`;
+  const isInsertion = edit.replacement.length > edit.original.length;
+  const insText = isInsertion ? ' (insertion)' : '';
+  return `${range}: ${fmtSeq(edit.original)} → ${fmtSeq(edit.replacement)}${insText}`;
+}
+
 export function isoformEdits(entry) {
   const comment = (entry.comments || []).find((c) => c.commentType === 'ALTERNATIVE PRODUCTS');
-  if (!comment) return {};
-  
+  if (!comment) return [];
+
   const vspMap = new Map(
     (entry.features || [])
       .filter((f) => f.type === 'Alternative sequence')
       .map((f) => [f.featureId, f])
   );
 
-  const edits = {};
-  for (const isoform of comment.isoforms) {
-    const id = isoform.isoformIds[0];
-    edits[id] = (isoform.sequenceIds || [])
-      .map((seqId) => vspMap.get(seqId))
-      .filter(Boolean);
-  }
-  return edits;
-}
-
-export function uniprotIsoforms(entry) {
-  const comment = (entry.comments || []).find((c) => c.commentType === 'ALTERNATIVE PRODUCTS');
-  if (!comment) return [];
-  
-  const editsMap = isoformEdits(entry);
-  const canonLength = entry.sequence?.length || 0;
-
   return comment.isoforms.map((isoform) => {
     const id = isoform.isoformIds[0];
-    const isCanonical = isoform.isoformSequenceStatus === 'Displayed';
-    const edits = editsMap[id] || [];
+    const status = isoform.isoformSequenceStatus;
+    const external = status === 'External';
+    const canonical = status === 'Displayed';
+    const name = isoform.name?.value || isoform.name || '';
 
-    const missing = edits.filter((e) => !e.alternativeSequence);
-    missing.sort((a, b) => a.location.start.value - b.location.start.value);
+    const edits = [];
+    const unresolved = [];
 
-    let current = 1;
-    const fragments = [];
-    for (const m of missing) {
-      const start = m.location.start.value;
-      const end = m.location.end.value;
-      if (start > current) fragments.push({ start: current, end: start - 1 });
-      current = end + 1;
+    if (!external && isoform.sequenceIds) {
+      for (const seqId of isoform.sequenceIds) {
+        const feature = vspMap.get(seqId);
+        if (feature) {
+          edits.push({ featureId: seqId, ...getEdit(feature) });
+        } else {
+          unresolved.push(seqId);
+        }
+      }
     }
-    if (current <= canonLength) fragments.push({ start: current, end: canonLength });
 
-    return {
-      accession: id,
-      type: 'CHAIN',
-      begin: 1,
-      end: canonLength,
-      description: isCanonical ? 'Canonical' : `${id}`,
-      color: isCanonical ? '#0053d6' : '#888888',
-      locations: [{ fragments }],
-    };
+    edits.sort((a, b) => a.start - b.start);
+    return { id, name, status, canonical, external, edits, unresolved };
   });
 }
 
-export function projectFeatures(features, entry, isoformId) {
-  const editsMap = isoformEdits(entry);
-  const edits = editsMap[isoformId] || [];
+export function uniprotIsoforms(data) {
+  const entry = Array.isArray(data) ? data[0] : data;
+  if (!entry || !entry.sequence) return [];
   
-  const missingRegions = edits
-    .filter((e) => !e.alternativeSequence)
-    .map((e) => ({ start: e.location.start.value, end: e.location.end.value }))
-    .sort((a, b) => a.start - b.start);
+  const canonicalLength = entry.sequence.length || entry.sequence.value?.length;
+  const isoforms = isoformEdits(entry);
 
-  const mapCoord = (coord) => {
-    let offset = 0;
-    for (const reg of missingRegions) {
-      if (coord >= reg.start && coord <= reg.end) return null;
-      if (coord > reg.end) offset += reg.end - reg.start + 1;
-    }
-    return coord - offset;
-  };
+  const externals = isoforms.filter((i) => i.external);
+  const extString = externals.length > 0
+    ? `; not shown (External): ` + externals.map((i) => `${i.id} (${/^\d+$/.test(i.name) ? 'isoform ' + i.name : i.name})`).join(', ')
+    : '';
 
-  const projected = [];
-  for (const feat of features) {
-    const newLocations = [];
-    for (const loc of (feat.locations || [])) {
-      const newFragments = [];
-      for (const frag of (loc.fragments || [])) {
-        const start = mapCoord(frag.start);
-        const end = mapCoord(frag.end);
-        if (start !== null && end !== null) {
-          newFragments.push({ ...frag, start: Math.min(start, end), end: Math.max(start, end) });
+  return isoforms
+    .filter((i) => !i.external)
+    .map((isoform) => {
+      const formattedName = /^\d+$/.test(isoform.name) ? `isoform ${isoform.name}` : isoform.name;
+      const label = formattedName ? `${isoform.id} (${formattedName})` : isoform.id;
+      let description = label;
+
+      if (isoform.canonical) {
+        description += `: canonical sequence${extString}`;
+      } else {
+        const editNotes = isoform.edits.map(formatEdit);
+        if (isoform.unresolved.length > 0) editNotes.push(`edits not in the entry: ${isoform.unresolved.join(', ')}`);
+        if (editNotes.length === 0) description += `: no edits listed`;
+        else description += `: ` + editNotes.join('; ');
+      }
+
+      const fragments = [];
+      const residuesToHighlight = [];
+      let current = 1;
+
+      for (const edit of isoform.edits) {
+        if (edit.deletion) {
+          if (edit.start > current) fragments.push({ start: current, end: edit.start - 1 });
+          current = edit.end + 1;
+        } else {
+          const name = formatEdit(edit);
+          for (let p = edit.start; p <= edit.end; p++) residuesToHighlight.push({ position: p, name });
         }
       }
-      if (newFragments.length > 0) {
-        newLocations.push({ ...loc, fragments: newFragments });
-      }
-    }
+      if (current <= canonicalLength) fragments.push({ start: current, end: canonicalLength });
 
-    if (newLocations.length > 0) {
-      projected.push({
-        type: feat.type || 'REGION',
-        category: feat.category || 'DOMAIN_REGION',
-        description: feat.description || '',
-        begin: feat.begin,
-        end: feat.end,
-        locations: newLocations,
-      });
-    }
+      const feature = {
+        accession: isoform.id,
+        description,
+        color: isoform.canonical ? '#0053d6' : '#888888',
+        start: 1,
+        end: canonicalLength,
+        locations: [{ fragments }]
+      };
+
+      if (residuesToHighlight.length > 0) feature.residuesToHighlight = residuesToHighlight;
+      return feature;
+    });
+}
+
+export function canonicalToIsoformMap(entry, isoformId) {
+  const isoform = isoformEdits(entry).find((i) => i.id === isoformId);
+  if (!isoform) {
+    throw new Error(`${isoformId} is not listed as an isoform of ${entry?.primaryAccession}`);
   }
-
-  return projected;
+  if (isoform.external) {
+    throw new Error(`${isoformId} is an External isoform: it has no edits to the canonical, so it cannot be aligned`);
+  }
+  const length = entry.sequence.length || entry.sequence.value?.length;
+  const map = new Array(length + 1).fill(null);
+  let canonical = 1;
+  let position = 0;
+  for (const e of isoform.edits) {
+    while (canonical < e.start) map[canonical++] = ++position;
+    position += e.replacement.length; // '' for a deletion
+    canonical = Math.max(canonical, e.end + 1);
+  }
+  while (canonical <= length) map[canonical++] = ++position;
+  return map;
 }
 
-export function projectTo(isoformId) {
-  return function (data) {
-    let features = [];
-    let entry = {};
-    
-    if (Array.isArray(data)) {
-      const rawFeats = data[0];
-      features = Array.isArray(rawFeats) ? rawFeats : rawFeats.features || [];
-      entry = data[1] || {};
-    } else {
-      features = data.features || [];
-      entry = data.entry || data;
+export function projectFeatures(features, entry, isoformId) {
+  const map = canonicalToIsoformMap(entry, isoformId);
+  const projected = [];
+  const dropped = [];
+  for (const feature of features || []) {
+    const begin = Number(feature.begin ?? feature.start);
+    const end = Number(feature.end ?? begin);
+    if (!Number.isInteger(begin) || !Number.isInteger(end)) {
+      dropped.push(feature); 
+      continue;
     }
-
-    return projectFeatures(features, entry, isoformId);
-  };
+    const kept = [];
+    for (let c = begin; c <= end; c++) if (map[c] != null) kept.push(map[c]);
+    if (kept.length === 0) {
+      dropped.push(feature);
+      continue;
+    }
+    const start = Math.min(...kept);
+    const stop = Math.max(...kept);
+    const total = end - begin + 1;
+    const partly = kept.length < total;
+    const note = partly
+      ? `canonical ${begin}-${end}; partly missing in ${isoformId}: ${kept.length} of ${total} residues kept`
+      : `canonical ${begin}-${end}`;
+    
+    projected.push({
+      ...feature,
+      begin: start,
+      start,
+      end: stop,
+      locations: [{ fragments: [{ start, end: stop }] }],
+      description: `${feature.description ? `${feature.description} ` : ''}[${note}]`,
+      ...(partly ? { partlyMissing: true } : {}),
+    });
+  }
+  return { projected, dropped, droppedCount: dropped.length };
 }
 
-export function projectToIsoformAdapter(data, options = {}) {
-  const isoformId = options.isoformId || 'P10636-8';
-  return projectTo(isoformId)(data);
-}
+// Safely handles both array fixtures and API wrapper objects
+export const projectTo = (isoformId) => (featuresBody, entry) => {
+  const feats = featuresBody?.features || featuresBody || [];
+  const { projected, droppedCount } = projectFeatures(feats, entry, isoformId);
+  projected._droppedCount = droppedCount; // Attach property for DOM label updates
+  return projected;
+};
