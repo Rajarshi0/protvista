@@ -164,8 +164,9 @@ it('discovers the expected example directories', () => {
       'sequence-only',
       'sequence-inline',
       'small-peptide',
-      'conservation',
-    , 'isoforms-app'])
+      'conservation', 
+      'isoforms-app'
+    ])
   );
 });
 
@@ -233,10 +234,13 @@ function makeExampleFetchers(exampleDir: string) {
     url: string,
     responseType: 'json' | 'text'
   ): Promise<unknown> => {
-    if (exampleDir.includes("isoforms-app") && url.includes("rest.uniprot.org")) {
-      const fixtureText = await readFile(resolve(exampleDir, "../../src/__fixtures__/isoforms/P05067.json"), "utf8");
-      return responseType === "json" ? JSON.parse(fixtureText) : fixtureText;
+    // NEW: Use the savedUniprotEntry helper
+    const saved = savedUniprotEntry(url, fieldProblems);
+    if (saved) {
+      const text = await readFile(saved, 'utf8');
+      return responseType === 'json' ? JSON.parse(text) : text;
     }
+    
     if (/^https?:\/\//i.test(url)) {
       return responseType === 'json' ? CANNED_FEATURES_RESPONSE : '';
     }
@@ -296,14 +300,18 @@ function findLocalTracks(
 }
 
 describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
-  let urlProblems: string[] = [];
+  const urlProblems: string[] = [];
   let config: NormalizedConfig;
   let result: Awaited<ReturnType<typeof loadProtvistaData>>;
 
   beforeAll(async () => {
     const text = await readFile(configPath, 'utf8');
-    const { extendsFetcher, sequenceFetcher, fetchOne } =
-      makeExampleFetchers(dir);
+    
+    // Capture fetchers correctly and assign to our const array
+    const fetchers = makeExampleFetchers(dir) as any;
+    const { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } = fetchers;
+    if (fieldProblems) urlProblems.push(...fieldProblems);
+
     // A `sequence:` example shows its own protein: an accession beside it is
     // an error, so it gets none.
     const parsed = (await parseConfigText(text)) as { sequence?: unknown };
@@ -324,7 +332,7 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
       resolveAdapter
     );
   });
-
+  
   it('validates against the schema', () => {
     expect(config).toBeDefined();
     expect(config.rows.length).toBeGreaterThan(0);
