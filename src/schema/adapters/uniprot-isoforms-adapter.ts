@@ -1,89 +1,94 @@
-export const isoformEdits = (entry: any): Record<string, any[]> => {
-  const editsByIsoform: Record<string, any[]> = {};
-  const altProducts = entry.comments?.find((c: any) => c.commentType === 'ALTERNATIVE PRODUCTS');
-  if (!altProducts) return editsByIsoform;
+import { isoformEdits, IsoformEdit } from '../../utils/isoform-map.js';
 
-  const varSeqs = entry.features?.filter((f: any) => f.type === 'Alternative sequence') || [];
+function fmtSeq(seq: string): string {
+  if (seq.length > 10) return `${seq.slice(0, 10)}… (${seq.length} aa)`;
+  return seq;
+}
 
-  altProducts.isoforms.forEach((isoform: any) => {
-    const isoformId = isoform.isoformIds[0];
-    editsByIsoform[isoformId] = [];
+function formatEdit(edit: IsoformEdit): string {
+  const range = edit.start === edit.end ? `${edit.start}` : `${edit.start}-${edit.end}`;
+  if (edit.replacement === '') return `${range}: missing`;
+  const isInsertion = edit.replacement.length > edit.original.length;
+  const insText = isInsertion ? ' (insertion)' : '';
+  return `${range}: ${fmtSeq(edit.original)} → ${fmtSeq(edit.replacement)}${insText}`;
+}
 
-    if (isoform.isoformSequenceStatus !== 'External') {
-      if (isoform.sequenceIds) {
-        isoform.sequenceIds.forEach((seqId: string) => {
-          const feature = varSeqs.find((f: any) => f.featureId === seqId);
-          if (feature) {
-            editsByIsoform[isoformId].push({
-              start: feature.location.start.value,
-              end: feature.location.end.value,
-              alternativeSequence: feature.alternativeSequence || 'Missing',
-            });
-          }
-        });
-      }
-    }
-  });
-  return editsByIsoform;
-};
+function formatName(name: string): string {
+  if (/^\d+$/.test(name)) return `isoform ${name}`;
+  return name;
+}
 
-export const uniprotIsoformsAdapter = (data: any) => {
+export function uniprotIsoformsAdapter(data: any) {
+  // Handle single object or array (multi-source adapter payload)
   const entry = Array.isArray(data) ? data[0] : data;
-  if (!entry || !entry.sequence) return [];
+  
+  if (!entry || !entry.sequence || !entry.sequence.value) return [];
+  
+  const canonicalLength = entry.sequence.value.length;
+  const isoforms = isoformEdits(entry);
 
-  const canonicalLength = entry.sequence.length;
-  const altProducts = entry.comments?.find((c: any) => c.commentType === 'ALTERNATIVE PRODUCTS');
-  if (!altProducts) return [];
+  const externals = isoforms.filter((i) => i.external);
+  const extString = externals.length > 0
+    ? `; not shown (External): ` + externals.map((i) => `${i.id} (${formatName(i.name)})`).join(', ')
+    : '';
 
-  const editsMap = isoformEdits(entry);
-  const features: any[] = [];
+  return isoforms
+    .filter((i) => !i.external)
+    .map((isoform) => {
+      const formattedName = formatName(isoform.name);
+      const label = formattedName ? `${isoform.id} (${formattedName})` : isoform.id;
+      let description = label;
 
-  altProducts.isoforms.forEach((isoform: any) => {
-    const isoformId = isoform.isoformIds[0];
-    
-    // The correct Uniprot API check for External isoforms
-    if (isoform.isoformSequenceStatus === 'External') return;
-
-    const isCanonical = isoform.isoformSequenceStatus === "Displayed";
-    const edits = editsMap[isoformId] || [];
-    const tooltipNotes: string[] = [];
-    const missingRegions: {start: number, end: number}[] = [];
-
-    edits.forEach((edit: any) => {
-      if (edit.alternativeSequence === 'Missing') {
-        tooltipNotes.push(`${edit.start}-${edit.end}: missing`);
-        missingRegions.push({ start: edit.start, end: edit.end });
+      if (isoform.canonical) {
+        description += `: canonical sequence${extString}`;
       } else {
-        tooltipNotes.push(`${edit.start}: changed to ${edit.alternativeSequence}`);
+        const editNotes = isoform.edits.map(formatEdit);
+        if (isoform.unresolved.length > 0) {
+          editNotes.push(`edits not in the entry: ${isoform.unresolved.join(', ')}`);
+        }
+        if (editNotes.length === 0) {
+          description += `: no edits listed`;
+        } else {
+          description += `: ` + editNotes.join('; ');
+        }
       }
-    });
 
-    missingRegions.sort((a: any, b: any) => a.start - b.start);
-    const fragments: any[] = [];
-    let currentStart = 1;
+      const fragments: Array<{ start: number; end: number }> = [];
+      const residuesToHighlight: Array<{ position: number; name: string }> = [];
+      let current = 1;
 
-    missingRegions.forEach((reg: any) => {
-      if (reg.start > currentStart) {
-        fragments.push({ start: currentStart, end: reg.start - 1 });
+      for (const edit of isoform.edits) {
+        if (edit.replacement === '') {
+          // Deletion: cut a gap
+          if (edit.start > current) {
+            fragments.push({ start: current, end: edit.start - 1 });
+          }
+          current = edit.end + 1;
+        } else {
+          // Replacement or Insertion: highlight covered canonical positions
+          const name = formatEdit(edit);
+          for (let p = edit.start; p <= edit.end; p++) {
+            residuesToHighlight.push({ position: p, name });
+          }
+        }
       }
-      currentStart = reg.end + 1;
+      if (current <= canonicalLength) {
+        fragments.push({ start: current, end: canonicalLength });
+      }
+
+      const feature: any = {
+        accession: isoform.id,
+        description,
+        color: isoform.canonical ? '#0053d6' : '#888888',
+        start: 1,
+        end: canonicalLength,
+        locations: [{ fragments }]
+      };
+
+      if (residuesToHighlight.length > 0) {
+        feature.residuesToHighlight = residuesToHighlight;
+      }
+
+      return feature;
     });
-    
-    if (currentStart <= canonicalLength) {
-      fragments.push({ start: currentStart, end: canonicalLength });
-    }
-
-    const description = isCanonical
-      ? "Canonical"
-      : `${isoformId}: ` + (tooltipNotes.length > 0 ? tooltipNotes.join("; ") : "No explicit edits");
-
-    features.push({
-      accession: isoformId,
-      description: description,
-      locations: [{ fragments: fragments }],
-      color: isCanonical ? "#0053d6" : "#888888"
-    });
-  });
-
-  return features;
-};
+}

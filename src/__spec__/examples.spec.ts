@@ -165,7 +165,7 @@ it('discovers the expected example directories', () => {
       'sequence-inline',
       'small-peptide',
       'conservation',
-    ])
+    , 'isoforms-app'])
   );
 });
 
@@ -199,7 +199,31 @@ function resolveLocalRef(exampleDir: string, ref: string): string {
   return ref.startsWith('/') ? join(REPO_ROOT, ref) : resolve(exampleDir, ref);
 }
 
+const SAVED_ENTRIES_DIR = join(REPO_ROOT, 'src/__fixtures__/isoforms');
+const SAVED_ENTRY_FIELDS = ['accession', 'sequence', 'ft_var_seq', 'cc_alternative_products'];
+const REQUIRED_ENTRY_FIELDS = SAVED_ENTRY_FIELDS.filter((field) => field !== 'accession');
+const UNIPROTKB_ENTRY_URL = /^https:\/\/rest\.uniprot\.org\/uniprotkb\/([A-Z0-9-]+)\.json(?:\?|$)/;
+
+function savedUniprotEntry(url: string, problems: string[]): string | undefined {
+  const accession = UNIPROTKB_ENTRY_URL.exec(url)?.[1];
+  if (!accession) return undefined;
+  const path = join(SAVED_ENTRIES_DIR, `${accession}.json`);
+  if (!existsSync(path)) return undefined;
+  const fields = new URL(url).searchParams.get('fields')?.split(',') ?? [];
+  const unknown = fields.filter((f) => !SAVED_ENTRY_FIELDS.includes(f));
+  const missing = REQUIRED_ENTRY_FIELDS.filter((f) => !fields.includes(f));
+  if (unknown.length > 0 || missing.length > 0) {
+    problems.push(
+      `${url}: ask for fields=${REQUIRED_ENTRY_FIELDS.join(',')}` +
+        (unknown.length > 0 ? `; not saved: ${unknown.join(', ')}` : '') +
+        (missing.length > 0 ? `; missing: ${missing.join(', ')}` : '')
+    );
+  }
+  return path;
+}
+
 function makeExampleFetchers(exampleDir: string) {
+  const fieldProblems: string[] = [];
   const extendsFetcher = async (ref: string): Promise<string> =>
     readFile(resolveLocalRef(exampleDir, ref), 'utf8');
   // A `sequence:` FASTA file resolves exactly like an `extends:` target.
@@ -220,7 +244,7 @@ function makeExampleFetchers(exampleDir: string) {
     return responseType === 'json' ? JSON.parse(text) : text;
   };
 
-  return { extendsFetcher, sequenceFetcher, fetchOne };
+  return { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } as any;
 }
 
 function buildInstance(overrides: Record<string, unknown>) {
@@ -272,6 +296,7 @@ function findLocalTracks(
 }
 
 describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
+  let urlProblems: string[] = [];
   let config: NormalizedConfig;
   let result: Awaited<ReturnType<typeof loadProtvistaData>>;
 
@@ -303,6 +328,12 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
   it('validates against the schema', () => {
     expect(config).toBeDefined();
     expect(config.rows.length).toBeGreaterThan(0);
+  });
+
+  it('asks UniProt for the fields its saved entry was fetched with', () => {
+    // A saved entry answers in place of UniProt, so a `fields=` value that
+    // UniProt would reject must fail here rather than load the saved copy.
+    expect(urlProblems).toEqual([]);
   });
 
   it('produces data through the real adapter map, including every locally-authored track', () => {

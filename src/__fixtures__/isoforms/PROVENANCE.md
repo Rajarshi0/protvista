@@ -20,3 +20,6 @@ verbatim (not reformatted) on 2026-10-08.
 P42771 (CDKN2A). The FASTA files hold every isoform, canonical first; they
 are the test oracle. CDKN2A's two External isoforms (ARF, `Q8N726`) are
 listed in its JSON but are not in its FASTA.
+\nA0A1B0GTW7 (CIROP): downloaded same as above for insertion tests.
+
+A0A1B0GTW7 (CIROP): downloaded for insertion tests.

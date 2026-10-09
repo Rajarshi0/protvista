@@ -76,3 +76,12 @@ message naming the kinds that *do* read that format. See
 [Load your own data](/protvista/your-data) for each shape's columns.
 
 _Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._
+
+## Isoform rows
+
+The `features` track kind can render multiple isoform rows when powered by the built-in `uniprot-isoforms-json` adapter. point `source` to a UniProt entry URL with `fields=sequence,ft_var_seq,cc_alternative_products`.
+
+- **Gaps:** Indicate parts of the canonical sequence the isoform lacks (deletions).
+- **Darker marks:** Indicate amino acid substitutions or insertions.
+- **External Isoforms:** Isoforms built from different reading frames (e.g., ARF) are not aligned but are listed in the canonical tooltip.
+- **Height:** Isoforms share track height. Set a custom height (e.g., `rendering: { height: 160 }`) to ensure rows remain readable.
