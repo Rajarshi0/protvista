@@ -75,8 +75,6 @@ at a `./x.csv` — and the config is rejected before anything loads, with a
 message naming the kinds that *do* read that format. See
 [Load your own data](/protvista/your-data) for each shape's columns.
 
-_Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)._
-
 ## Isoform rows
 
 A `features` track can also draw one row per isoform of a reviewed UniProt
@@ -85,7 +83,7 @@ the built-in adapter `uniprot-isoforms-json`:
 
 ```yaml
 sources:
-  uniprotEntry: [https://rest.uniprot.org/uniprotkb/](https://rest.uniprot.org/uniprotkb/){accession}.json?fields=sequence,ft_var_seq,cc_alternative_products
+  uniprotEntry: https://rest.uniprot.org/uniprotkb/{accession}.json?fields=sequence,ft_var_seq,cc_alternative_products
 rows:
   - id: isoforms
     label: Isoforms
@@ -98,7 +96,8 @@ rows:
 ```
 
 Each isoform UniProt lists gets a row: the canonical in blue, the others in
-grey. A gap in a row is a stretch of the canonical sequence that the isoform lacks. A darker mark is a canonical residue the isoform replaces with different ones; at an insertion, it marks the residue the new ones follow. Hover a row to see its changes, e.g. `P05067-4 (APP695): 289: E → V; 290-364: missing`.
+grey. A gap in a row is a stretch of the canonical sequence that the isoform lacks. A darker mark is a canonical residue the isoform replaces with different ones; at an insertion, it marks the residue the new ones are added
+next to. Hover a row to see its changes, e.g. `P05067-4 (APP695): 289: E → V; 290-364: missing`.
 
 An External isoform, which UniProt describes in another entry, gets no row,
 and neither does one whose sequence UniProt doesn't know ("Not described").

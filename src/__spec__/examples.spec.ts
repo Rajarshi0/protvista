@@ -307,7 +307,6 @@ describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
   beforeAll(async () => {
     const text = await readFile(configPath, 'utf8');
     
-    // Capture fetchers correctly and assign to our const array
     const { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } =
       makeExampleFetchers(dir);
     urlProblems = fieldProblems;

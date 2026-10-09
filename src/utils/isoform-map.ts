@@ -1,4 +1,6 @@
-/** Canonical ↔ isoform mapping from a UniProt entry's own data.
+/**
+ * Canonical ↔ isoform mapping from a UniProt entry's own data.
+ *
  * A UniProtKB entry lists its isoforms in the ALTERNATIVE PRODUCTS comment
  * and the edits that build each one from the canonical sequence as
  * "Alternative sequence" (VAR_SEQ) features. Each isoform names its edits in
