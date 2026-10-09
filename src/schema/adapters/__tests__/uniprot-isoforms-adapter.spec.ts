@@ -2,14 +2,13 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  uniprotIsoformsAdapter,
+      uniprotIsoformsAdapter,
   type IsoformFeature,
 } from '../uniprot-isoforms-adapter.js';
 
 /** The adapter's rows; adapters are typed to return `unknown`. */
 const adapt = (data: unknown): IsoformFeature[] =>
-  adapt(data) as unknown as IsoformFeature[];
+  uniprotIsoformsAdapter(data) as unknown as IsoformFeature[];
 
 const fixturesDir = path.join(__dirname, '../../../__fixtures__/isoforms');
 
