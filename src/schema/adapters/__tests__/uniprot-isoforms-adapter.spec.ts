@@ -12,7 +12,7 @@ const adapt = (data: unknown): IsoformFeature[] =>
 
 const fixturesDir = path.join(__dirname, '../../../__fixtures__/isoforms');
 
-function readEntry(acc: string) {adapt
+function readEntry(acc: string) {
   const file = path.join(fixturesDir, `${acc}.json`);
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
