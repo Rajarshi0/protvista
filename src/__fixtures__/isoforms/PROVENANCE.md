@@ -16,10 +16,8 @@ verbatim (not reformatted) on 2026-10-08.
 | `<ACC>.fasta` | `https://rest.uniprot.org/uniprotkb/stream?query=accession:<ACC>&format=fasta&includeIsoform=true` |
 | `P10636.features.json` | `https://www.ebi.ac.uk/proteins/api/features/P10636` with `Accept: application/json` (Proteins API; it reported `x-uniprot-release: 2022_02` in its header, but its sequence is identical to the 2026_03 entry) |
 
-`<ACC>` is each of P05067 (APP), P04637 (p53, TP53), P10636 (tau, MAPT) and
-P42771 (CDKN2A). The FASTA files hold every isoform, canonical first; they
-are the test oracle. CDKN2A's two External isoforms (ARF, `Q8N726`) are
-listed in its JSON but are not in its FASTA.
-\nA0A1B0GTW7 (CIROP): downloaded same as above for insertion tests.
-
-A0A1B0GTW7 (CIROP): downloaded for insertion tests.
+`<ACC>` is each of P05067 (APP), P04637 (p53, TP53), P10636 (tau, MAPT),
+P42771 (CDKN2A) and A0A1B0GTW7 (CIROP; added 2026-10-08, same release, for
+its insertion and its three-residue replacement). The FASTA files hold every
+isoform, canonical first; they are the test oracle. CDKN2A's two External
+isoforms (ARF, `Q8N726`) are listed in its JSON but are not in its FASTA.

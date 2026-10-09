@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { uniprotIsoformsAdapter } from '../uniprot-isoforms-adapter.js';
+import {
+  uniprotIsoformsAdapter,
+  type IsoformFeature,
+} from '../uniprot-isoforms-adapter.js';
+
+/** The adapter's rows; adapters are typed to return `unknown`. */
+const adapt = (data: unknown) => uniprotIsoformsAdapter(data) as IsoformFeature[];
 
 const fixturesDir = path.join(__dirname, '../../../__fixtures__/isoforms');
 
@@ -108,5 +114,123 @@ describe('uniprot-isoforms-adapter', () => {
     const bFeats = uniprotIsoformsAdapter(broken);
     const affected = bFeats.find((f: any) => f.description.includes('edits not in the entry: VSP_000002'));
     expect(affected).toBeDefined();
+  });
+});
+
+describe('uniprot-isoforms-adapter: labels, colours and rows it must not draw', () => {
+  // A minimal entry: the canonical X-1 and the given other isoforms.
+  const entryWith = (...isoforms: object[]) => ({
+    primaryAccession: 'X',
+    sequence: { value: 'MAAA', length: 4 },
+    comments: [
+      {
+        commentType: 'ALTERNATIVE PRODUCTS',
+        isoforms: [
+          { isoformIds: ['X-1'], isoformSequenceStatus: 'Displayed' },
+          ...isoforms,
+        ],
+      },
+    ],
+  });
+
+  it('colours the canonical row blue and every other row grey', () => {
+    for (const acc of ['P05067', 'P10636', 'P42771', 'A0A1B0GTW7']) {
+      const rows = adapt(readEntry(acc));
+      expect(rows[0].description).toContain('canonical sequence');
+      expect(rows.map((row) => row.color)).toEqual(
+        rows.map((_, i) => (i === 0 ? '#0053d6' : '#888888'))
+      );
+    }
+  });
+
+  it('calls a longer replacement an insertion only when it keeps the original residues', () => {
+    // CDKN2A isoform 5 swaps its last four residues for 15 others.
+    const cdkn2a = adapt(readEntry('P42771'));
+    expect(cdkn2a.find((f) => f.accession === 'P42771-4').description).toBe(
+      'P42771-4 (isoform 5): 153-156: DIPD → EMIGNHLWVC… (15 aa)'
+    );
+    // Tau-G keeps S502 and adds 18 residues after it.
+    const tau = adapt(readEntry('P10636'));
+    expect(tau.find((f) => f.accession === 'P10636-9').description).toContain(
+      '502: S → SATKQVQRRP… (19 aa) (insertion)'
+    );
+  });
+
+  it('marks every residue of a replacement (CIROP isoform 3, 493-495)', () => {
+    const iso3 = adapt(readEntry('A0A1B0GTW7')).find(
+      (f) => f.accession === 'A0A1B0GTW7-3'
+    );
+    expect(iso3.residuesToHighlight).toEqual([
+      { position: 108, name: '108: V → VPPV (insertion)' },
+      { position: 493, name: '493-495: SEC → VSR' },
+      { position: 494, name: '493-495: SEC → VSR' },
+      { position: 495, name: '493-495: SEC → VSR' },
+    ]);
+  });
+
+  it('says so when a non-canonical isoform lists no edits', () => {
+    const rows = adapt(
+      entryWith({ isoformIds: ['X-2'], isoformSequenceStatus: 'Described' })
+    );
+    expect(rows[1].description).toBe('X-2: no edits listed');
+  });
+
+  it('draws no row for a Not described isoform and names it on the canonical row', () => {
+    // UniProt doesn't know its sequence (e.g. O00712-3), so a full bar
+    // would wrongly say it matches the canonical.
+    const rows = adapt(
+      entryWith({
+        name: { value: '2' },
+        isoformIds: ['X-3'],
+        isoformSequenceStatus: 'Not described',
+      })
+    );
+    expect(rows.map((row) => row.accession)).toEqual(['X-1']);
+    expect(rows[0].description).toBe(
+      'X-1: canonical sequence; not shown (sequence not described): X-3 (isoform 2)'
+    );
+  });
+
+  it('names an External isoform with no name by its id alone', () => {
+    const rows = adapt(
+      entryWith({ isoformIds: ['Y-1'], isoformSequenceStatus: 'External' })
+    );
+    expect(rows[0].description).toBe(
+      'X-1: canonical sequence; not shown (External): Y-1'
+    );
+  });
+
+  it('says on the canonical row too when its edits are not in the entry', () => {
+    const rows = adapt({
+      ...entryWith(),
+      comments: [
+        {
+          commentType: 'ALTERNATIVE PRODUCTS',
+          isoforms: [
+            {
+              isoformIds: ['X-1'],
+              isoformSequenceStatus: 'Displayed',
+              sequenceIds: ['VSP_999999'],
+            },
+          ],
+        },
+      ],
+    });
+    expect(rows[0].description).toBe(
+      'X-1: canonical sequence; edits not in the entry: VSP_999999'
+    );
+  });
+
+  it("draws nothing for an isoform's own entry rather than a false canonical row", () => {
+    // P10636-8.json: Tau-F's 441 residues and every isoform, but no VAR_SEQ.
+    const entry = readEntry('P10636');
+    expect(
+      adapt({
+        ...entry,
+        primaryAccession: 'P10636-8',
+        sequence: { value: 'M'.repeat(441), length: 441 },
+        features: undefined,
+      })
+    ).toEqual([]);
   });
 });

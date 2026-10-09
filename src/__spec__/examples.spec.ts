@@ -248,7 +248,7 @@ function makeExampleFetchers(exampleDir: string) {
     return responseType === 'json' ? JSON.parse(text) : text;
   };
 
-  return { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } as any;
+  return { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems };
 }
 
 function buildInstance(overrides: Record<string, unknown>) {
@@ -300,17 +300,17 @@ function findLocalTracks(
 }
 
 describe.each(discoverExamples())('example: $name', ({ dir, configPath }) => {
-  const urlProblems: string[] = [];
   let config: NormalizedConfig;
   let result: Awaited<ReturnType<typeof loadProtvistaData>>;
+  let urlProblems: string[];
 
   beforeAll(async () => {
     const text = await readFile(configPath, 'utf8');
     
     // Capture fetchers correctly and assign to our const array
-    const fetchers = makeExampleFetchers(dir) as any;
-    const { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } = fetchers;
-    if (fieldProblems) urlProblems.push(...fieldProblems);
+    const { extendsFetcher, sequenceFetcher, fetchOne, fieldProblems } =
+      makeExampleFetchers(dir);
+    urlProblems = fieldProblems;
 
     // A `sequence:` example shows its own protein: an accession beside it is
     // an error, so it gets none.

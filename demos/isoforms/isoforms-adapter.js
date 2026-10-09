@@ -20,12 +20,19 @@ function fmtSeq(seq) {
 function formatEdit(edit) {
   const range = edit.start === edit.end ? `${edit.start}` : `${edit.start}-${edit.end}`;
   if (edit.deletion) return `${range}: missing`;
-  const isInsertion = edit.replacement.length > edit.original.length;
+  // An insertion keeps the original residues and adds more (V → VPPV); a longer
+  // replacement that keeps nothing (CDKN2A's DIPD → EMIGNHLWVC…) is not one.
+  const isInsertion =
+    edit.replacement.length > edit.original.length &&
+    (edit.replacement.startsWith(edit.original) || edit.replacement.endsWith(edit.original));
   const insText = isInsertion ? ' (insertion)' : '';
   return `${range}: ${fmtSeq(edit.original)} → ${fmtSeq(edit.replacement)}${insText}`;
 }
 
 export function isoformEdits(entry) {
+  // An isoform's own entry (P10636-8.json, even P10636-1.json) has no VAR_SEQ
+  // features, so no isoform can be built from it: only P10636.json has the edits.
+  if (/-\d+$/.test(entry?.primaryAccession ?? '')) return [];
   const comment = (entry.comments || []).find((c) => c.commentType === 'ALTERNATIVE PRODUCTS');
   if (!comment) return [];
 
@@ -61,61 +68,67 @@ export function isoformEdits(entry) {
   });
 }
 
+// `P05067-4 (APP695)`; numbered isoforms read `P42771-4 (isoform 5)`.
+function isoformLabel(isoform) {
+  if (!isoform.name) return isoform.id;
+  const name = /^\d+$/.test(isoform.name) ? `isoform ${isoform.name}` : isoform.name;
+  return `${isoform.id} (${name})`;
+}
+
+// External isoforms are built from another entry, and a Not described one's
+// sequence is unknown: neither gets a row, and the canonical row names them.
+const isDrawn = (isoform) => !isoform.external && isoform.status !== 'Not described';
+
 export function uniprotIsoforms(data) {
   const entry = Array.isArray(data) ? data[0] : data;
-  if (!entry || !entry.sequence) return [];
-  
-  const canonicalLength = entry.sequence.length || entry.sequence.value?.length;
+  const canonicalLength = entry?.sequence?.value?.length;
+  if (!canonicalLength) return [];
+
   const isoforms = isoformEdits(entry);
+  const external = isoforms.filter((i) => i.external);
+  const unknown = isoforms.filter((i) => !i.external && !isDrawn(i));
 
-  const externals = isoforms.filter((i) => i.external);
-  const extString = externals.length > 0
-    ? `; not shown (External): ` + externals.map((i) => `${i.id} (${/^\d+$/.test(i.name) ? 'isoform ' + i.name : i.name})`).join(', ')
-    : '';
+  return isoforms.filter(isDrawn).map((isoform) => {
+    const notes = isoform.edits.map(formatEdit);
+    if (isoform.canonical) {
+      notes.push('canonical sequence');
+      if (external.length > 0) {
+        notes.push(`not shown (External): ${external.map(isoformLabel).join(', ')}`);
+      }
+      if (unknown.length > 0) {
+        notes.push(`not shown (sequence not described): ${unknown.map(isoformLabel).join(', ')}`);
+      }
+    }
+    if (isoform.unresolved.length > 0) {
+      notes.push(`edits not in the entry: ${isoform.unresolved.join(', ')}`);
+    }
+    if (notes.length === 0) notes.push('no edits listed');
 
-  return isoforms
-    .filter((i) => !i.external)
-    .map((isoform) => {
-      const formattedName = /^\d+$/.test(isoform.name) ? `isoform ${isoform.name}` : isoform.name;
-      const label = formattedName ? `${isoform.id} (${formattedName})` : isoform.id;
-      let description = label;
-
-      if (isoform.canonical) {
-        description += `: canonical sequence${extString}`;
+    const fragments = [];
+    const residuesToHighlight = [];
+    let current = 1;
+    for (const edit of isoform.edits) {
+      if (edit.deletion) {
+        if (edit.start > current) fragments.push({ start: current, end: edit.start - 1 });
+        current = Math.max(current, edit.end + 1);
       } else {
-        const editNotes = isoform.edits.map(formatEdit);
-        if (isoform.unresolved.length > 0) editNotes.push(`edits not in the entry: ${isoform.unresolved.join(', ')}`);
-        if (editNotes.length === 0) description += `: no edits listed`;
-        else description += `: ` + editNotes.join('; ');
+        const name = formatEdit(edit);
+        for (let p = edit.start; p <= edit.end; p++) residuesToHighlight.push({ position: p, name });
       }
+    }
+    if (current <= canonicalLength) fragments.push({ start: current, end: canonicalLength });
 
-      const fragments = [];
-      const residuesToHighlight = [];
-      let current = 1;
-
-      for (const edit of isoform.edits) {
-        if (edit.deletion) {
-          if (edit.start > current) fragments.push({ start: current, end: edit.start - 1 });
-          current = edit.end + 1;
-        } else {
-          const name = formatEdit(edit);
-          for (let p = edit.start; p <= edit.end; p++) residuesToHighlight.push({ position: p, name });
-        }
-      }
-      if (current <= canonicalLength) fragments.push({ start: current, end: canonicalLength });
-
-      const feature = {
-        accession: isoform.id,
-        description,
-        color: isoform.canonical ? '#0053d6' : '#888888',
-        start: 1,
-        end: canonicalLength,
-        locations: [{ fragments }]
-      };
-
-      if (residuesToHighlight.length > 0) feature.residuesToHighlight = residuesToHighlight;
-      return feature;
-    });
+    const feature = {
+      accession: isoform.id,
+      description: `${isoformLabel(isoform)}: ${notes.join('; ')}`,
+      color: isoform.canonical ? '#0053d6' : '#888888',
+      start: 1,
+      end: canonicalLength,
+      locations: [{ fragments }],
+    };
+    if (residuesToHighlight.length > 0) feature.residuesToHighlight = residuesToHighlight;
+    return feature;
+  });
 }
 
 export function canonicalToIsoformMap(entry, isoformId) {
@@ -125,6 +138,12 @@ export function canonicalToIsoformMap(entry, isoformId) {
   }
   if (isoform.external) {
     throw new Error(`${isoformId} is an External isoform: it has no edits to the canonical, so it cannot be aligned`);
+  }
+  if (isoform.status === 'Not described') {
+    throw new Error(`${isoformId}'s sequence is not described, so it cannot be aligned`);
+  }
+  if (isoform.unresolved.length > 0) {
+    throw new Error(`${isoformId} needs edits the entry does not have (${isoform.unresolved.join(', ')}), so it cannot be aligned`);
   }
   const length = entry.sequence.length || entry.sequence.value?.length;
   const map = new Array(length + 1).fill(null);
@@ -177,10 +196,9 @@ export function projectFeatures(features, entry, isoformId) {
   return { projected, dropped, droppedCount: dropped.length };
 }
 
-// Safely handles both array fixtures and API wrapper objects
-export const projectTo = (isoformId) => (featuresBody, entry) => {
-  const feats = featuresBody?.features || featuresBody || [];
-  const { projected, droppedCount } = projectFeatures(feats, entry, isoformId);
-  projected._droppedCount = droppedCount; // Attach property for DOM label updates
-  return projected;
-};
+/**
+ * Adapter factory. `data: { source: [features, entry], adapter }` calls the
+ * adapter with one argument per source: adapter(featuresBody, entryBody).
+ */
+export const projectTo = (isoformId) => (featuresBody, entry) =>
+  projectFeatures(featuresBody?.features, entry, isoformId).projected;

@@ -1,52 +1,85 @@
 import 'protvista-uniprot';
-import { projectTo } from './isoforms-adapter.js';
+import { projectFeatures, projectTo } from './isoforms-adapter.js';
 
 const iso = 'P10636-8';
 const canon = 'P10636';
 
-// Wraps projectTo to dynamically update track labels with dropped counts
-const baseAdapter = projectTo(iso);
-const trackingAdapter = (featuresBody, entry) => {
-  const projected = baseAdapter(featuresBody, entry);
-  const feats = featuresBody?.features || featuresBody || [];
-  
-  if (feats.length > 0 && projected._droppedCount !== undefined) {
-    const type = feats[0].type.toLowerCase().replace('_', '');
-    const trackId = type === 'modres' ? 'modres-track' : `${type}-track`;
-    const trackEl = document.querySelector(`protvista-track[id="${trackId}"]`);
-    if (trackEl && trackEl.parentElement && trackEl.parentElement.label) {
-       const base = trackEl.parentElement.label.split(' (')[0];
-       const total = projected.length + projected._droppedCount;
-       trackEl.parentElement.label = `${base} (projected; ${projected._droppedCount} of ${total} dropped)`;
+const sources = {
+  canonFeatures: `https://www.ebi.ac.uk/proteins/api/features/${canon}`,
+  canonEntry: `https://rest.uniprot.org/uniprotkb/${canon}.json?fields=sequence,ft_var_seq,cc_alternative_products`,
+};
+
+const TRACKS = [
+  ['repeat', 'Repeats', 'REPEAT'],
+  ['region', 'Regions', 'REGION'],
+  ['variant', 'Natural variants', 'VARIANT'],
+  ['modres', 'Modified residues', 'MOD_RES'],
+];
+
+// Track labels say how many canonical features of their type Tau-F lacks
+// entirely. Counting needs the data before the config, so fetch it here too
+// (the viewer then fetches the same URLs); without it, the labels just omit
+// the count.
+async function countDropped() {
+  try {
+    const [features, entry] = await Promise.all(
+      [sources.canonFeatures, sources.canonEntry].map(async (url) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status} at ${url}`);
+        return response.json();
+      })
+    );
+    const count = {};
+    for (const f of features.features) {
+      count[f.type] ??= { dropped: 0, total: 0 };
+      count[f.type].total++;
     }
+    for (const f of projectFeatures(features.features, entry, iso).dropped) {
+      count[f.type].dropped++;
+    }
+    return count;
+  } catch (error) {
+    console.warn('Could not count the dropped features:', error);
+    return null;
   }
-  return projected;
-};
+}
 
-const viewer = document.createElement('protvista-uniprot');
-viewer.setAttribute('nostructure', '');
-viewer.adapters = { 'project-to-isoform': trackingAdapter };
+function mount(count) {
+  const label = (name, type) =>
+    count?.[type]
+      ? `${name} (projected; ${count[type].dropped} of ${count[type].total} dropped)`
+      : `${name} (projected)`;
 
-viewer.viewerConfig = {
-  accession: iso,
-  sources: {
-    canonFeatures: `https://www.ebi.ac.uk/proteins/api/features/${canon}`,
-    canonEntry: `https://rest.uniprot.org/uniprotkb/${canon}.json?fields=sequence,ft_var_seq,cc_alternative_products`,
-  },
-  rows: [{ 
-    id: 'PROJECTED', 
-    label: 'Canonical annotations on Tau-F', 
-    tracks: [
-      { id: 'repeat-track', label: 'Repeats (projected)', kind: 'features', filter: 'REPEAT',
-        data: { source: ['canonFeatures', 'canonEntry'], adapter: 'project-to-isoform' } },
-      { id: 'region-track', label: 'Regions (projected)', kind: 'features', filter: 'REGION',
-        data: { source: ['canonFeatures', 'canonEntry'], adapter: 'project-to-isoform' } },
-      { id: 'variant-track', label: 'Natural variants (projected)', kind: 'features', filter: 'VARIANT',
-        data: { source: ['canonFeatures', 'canonEntry'], adapter: 'project-to-isoform' } },
-      { id: 'modres-track', label: 'Modified residues (projected)', kind: 'features', filter: 'MOD_RES',
-        data: { source: ['canonFeatures', 'canonEntry'], adapter: 'project-to-isoform' } }
-    ] 
-  }],
-};
+  const viewer = document.createElement('protvista-uniprot');
+  viewer.setAttribute('nostructure', '');
+  viewer.adapters = { 'project-to-isoform': projectTo(iso) };
+  viewer.viewerConfig = {
+    accession: iso,
+    sources,
+    rows: [
+      {
+        id: 'PROJECTED',
+        label: 'Canonical annotations on Tau-F',
+        tracks: TRACKS.map(([id, name, type]) => ({
+          id,
+          label: label(name, type),
+          kind: 'features',
+          filter: type,
+          data: {
+            source: ['canonFeatures', 'canonEntry'],
+            adapter: 'project-to-isoform',
+          },
+        })),
+      },
+    ],
+  };
 
-document.body.append(viewer);
+  viewer.addEventListener('protvista-error', (e) =>
+    console.log('PVERR', JSON.stringify(e.detail).slice(0, 400))
+  );
+  document.body.append(viewer);
+  window.__viewer = viewer;
+}
+
+// Not awaited, so the page's loader sees the module finish straight away.
+countDropped().then(mount);

@@ -83,3 +83,86 @@ describe('isoform-map', () => {
     expect(affected).toBeDefined();
   });
 });
+
+describe('isoform-map: edits, insertions and entries it cannot map', () => {
+  // A minimal entry with one isoform of the given status.
+  const withStatus = (status: 'Described' | 'Not described') => ({
+    sequence: { value: 'MAAA', length: 4 },
+    comments: [
+      {
+        commentType: 'ALTERNATIVE PRODUCTS',
+        isoforms: [
+          { isoformIds: ['X-1'], isoformSequenceStatus: 'Displayed' as const },
+          { isoformIds: ['X-2'], isoformSequenceStatus: status },
+        ],
+      },
+    ],
+  });
+
+  it('reads a deletion ({}) as an empty replacement and a replacement as its residues', () => {
+    const entry = readEntry('P05067');
+    const app4 = isoformEdits(entry).find((i) => i.id === 'P05067-4');
+    expect(app4?.edits).toEqual([
+      { featureId: 'VSP_000002', start: 289, end: 289, original: 'E', replacement: 'V' },
+      {
+        featureId: 'VSP_000004',
+        start: 290,
+        end: 364,
+        // A deletion has no originalSequence, so it is read from the canonical.
+        original: entry.sequence.value.slice(289, 364),
+        replacement: '',
+      },
+    ]);
+  });
+
+  it('maps inserted residues to null (CIROP isoform 3: V108 becomes VPPV)', () => {
+    const map = isoformPositionMap(readEntry('A0A1B0GTW7'), 'A0A1B0GTW7-3');
+    expect(map?.canonicalToIsoform(107)).toBe(107);
+    expect(map?.canonicalToIsoform(108)).toBeNull();
+    expect([108, 109, 110, 111].map((p) => map?.isoformToCanonical(p))).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(map?.canonicalToIsoform(109)).toBe(112);
+    expect(map?.isoformToCanonical(112)).toBe(109);
+  });
+
+  it('returns no isoforms for a comment without isoforms', () => {
+    expect(
+      isoformEdits({ comments: [{ commentType: 'ALTERNATIVE PRODUCTS' }] })
+    ).toEqual([]);
+  });
+
+  it('has no position map for an entry without a sequence', () => {
+    const entry = { ...readEntry('P05067'), sequence: undefined };
+    expect(isoformPositionMap(entry, 'P05067-4')).toBeNull();
+  });
+
+  it('has no position map for an isoform whose edits are missing', () => {
+    const entry = { ...readEntry('P05067'), features: [] };
+    expect(isoformPositionMap(entry, 'P05067-4')).toBeNull();
+  });
+
+  it('has no position map for a Not described isoform, whose sequence is unknown', () => {
+    expect(isoformPositionMap(withStatus('Described'), 'X-2')).not.toBeNull();
+    expect(isoformPositionMap(withStatus('Not described'), 'X-2')).toBeNull();
+  });
+
+  it("returns no isoforms for an isoform's own entry, which has no VAR_SEQ", () => {
+    // What UniProt returns for P10636-8.json: Tau-F's 441 residues and the
+    // full ALTERNATIVE PRODUCTS comment, but no features.
+    const tau = readEntry('P10636');
+    const tauF = {
+      ...tau,
+      primaryAccession: 'P10636-8',
+      sequence: { value: readFasta('P10636').get('P10636-8'), length: 441 },
+      features: undefined,
+    };
+    expect(isoformEdits(tauF)).toEqual([]);
+    expect(isoformPositionMap(tauF, 'P10636-8')).toBeNull();
+    // Even the canonical's own -1 entry has no edits to read.
+    expect(isoformEdits({ ...tau, primaryAccession: 'P10636-1' })).toEqual([]);
+  });
+});
